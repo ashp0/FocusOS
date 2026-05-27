@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=FocusOS
+Comment=Intentional-work desktop shell
+Exec=/usr/local/bin/focusos-session
+Type=Application
+DesktopNames=FocusOS

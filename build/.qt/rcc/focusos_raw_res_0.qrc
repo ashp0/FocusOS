@@ -1,0 +1,11 @@
+<RCC>
+  <qresource prefix="/qt/qml/FocusOS/">
+    <file alias="assets/qml/theme.js">/Users/ashwinpaudel/Desktop/FocusOS/assets/qml/theme.js</file>
+    <file alias="assets/music/README.txt">/Users/ashwinpaudel/Desktop/FocusOS/assets/music/README.txt</file>
+    <file alias="assets/music/ambient_default.ogg">/Users/ashwinpaudel/Desktop/FocusOS/assets/music/ambient_default.ogg</file>
+    <file alias="assets/fonts/ShareTechMono-Regular.ttf">/Users/ashwinpaudel/Desktop/FocusOS/assets/fonts/ShareTechMono-Regular.ttf</file>
+    <file alias="assets/fonts/IBMPlexMono-Regular.ttf">/Users/ashwinpaudel/Desktop/FocusOS/assets/fonts/IBMPlexMono-Regular.ttf</file>
+    <file alias="assets/fonts/IBMPlexMono-SemiBold.ttf">/Users/ashwinpaudel/Desktop/FocusOS/assets/fonts/IBMPlexMono-SemiBold.ttf</file>
+  </qresource>
+</RCC>
+

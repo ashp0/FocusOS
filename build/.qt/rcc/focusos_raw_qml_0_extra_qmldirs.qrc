@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/qt/qml/FocusOS/">
+    <file alias="src/shell/qmldir">/Users/ashwinpaudel/Desktop/FocusOS/build/FocusOS/src/shell/qmldir</file>
+  </qresource>
+</RCC>
+

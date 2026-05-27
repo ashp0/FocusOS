@@ -1,0 +1,35 @@
+{
+    "classes": [
+        {
+            "className": "UrlGate",
+            "final": true,
+            "lineNumber": 7,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 0,
+                    "isConst": true,
+                    "lineNumber": 15,
+                    "name": "isAllowed",
+                    "returnType": "bool"
+                }
+            ],
+            "object": true,
+            "qualifiedClassName": "UrlGate",
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QWebEngineUrlRequestInterceptor"
+                }
+            ]
+        }
+    ],
+    "inputFile": "UrlGate.h",
+    "outputRevision": 69
+}

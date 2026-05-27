@@ -1,0 +1,15 @@
+--resource
+/Users/ashwinpaudel/Desktop/FocusOS/build/.qt/rcc/qmake_FocusOS.qrc
+--resource
+/Users/ashwinpaudel/Desktop/FocusOS/build/.qt/rcc/focusos_raw_qml_0.qrc
+--resource
+/Users/ashwinpaudel/Desktop/FocusOS/build/.qt/rcc/focusos_raw_res_0.qrc
+--resource
+/Users/ashwinpaudel/Desktop/FocusOS/build/.qt/rcc/focusos_raw_qml_0_extra_qmldirs.qrc
+/qt/qml/FocusOS/src/shell/Main.qml
+/qt/qml/FocusOS/src/shell/ActivitiesPanel.qml
+/qt/qml/FocusOS/src/shell/InfoPanel.qml
+/qt/qml/FocusOS/src/shell/AmbientLayer.qml
+/qt/qml/FocusOS/src/shell/MissionView.qml
+/qt/qml/FocusOS/src/shell/NotesDrawer.qml
+/qt/qml/FocusOS/src/shell/UnlockModal.qml

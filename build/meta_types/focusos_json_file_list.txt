@@ -1,0 +1,9 @@
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../7N4ZH4YPN6/moc_ShellWindow.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_InspirationStore.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_MusicEngine.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_NotesStore.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_RoutineManager.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_StatsStore.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_SystemStatus.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_TOTPEngine.cpp.json
+/Users/ashwinpaudel/Desktop/FocusOS/build/focusos_autogen/include/../PRMOGMWJPH/moc_Timer.cpp.json

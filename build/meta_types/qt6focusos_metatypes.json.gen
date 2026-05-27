@@ -1,0 +1,1789 @@
+[
+    {
+        "classes": [
+            {
+                "className": "ShellWindow",
+                "final": true,
+                "lineNumber": 13,
+                "object": true,
+                "qualifiedClassName": "ShellWindow",
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QQuickView"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "ShellWindow.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "InspirationStore",
+                "final": true,
+                "lineNumber": 8,
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 11,
+                        "name": "assets",
+                        "notify": "assetsChanged",
+                        "override": false,
+                        "read": "assets",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QVariantList",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": true,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 12,
+                        "name": "directory",
+                        "override": false,
+                        "read": "directory",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "InspirationStore",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 21,
+                        "name": "assetsChanged",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "InspirationStore.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "MusicEngine",
+                "final": true,
+                "lineNumber": 9,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "enabled",
+                                "type": "bool"
+                            }
+                        ],
+                        "index": 4,
+                        "lineNumber": 27,
+                        "name": "setEnabled",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "volume",
+                                "type": "int"
+                            }
+                        ],
+                        "index": 5,
+                        "lineNumber": 28,
+                        "name": "setVolume",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "behavior",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 6,
+                        "lineNumber": 29,
+                        "name": "setEngageBehavior",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 7,
+                        "lineNumber": 30,
+                        "name": "refreshMusicFiles",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 8,
+                        "isConst": true,
+                        "lineNumber": 31,
+                        "name": "openMusicFolder",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "engaged",
+                                "type": "bool"
+                            }
+                        ],
+                        "index": 9,
+                        "lineNumber": 32,
+                        "name": "setRoutineEngaged",
+                        "returnType": "void"
+                    }
+                ],
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 12,
+                        "name": "enabled",
+                        "notify": "enabledChanged",
+                        "override": false,
+                        "read": "enabled",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setEnabled"
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 13,
+                        "name": "available",
+                        "notify": "musicFilesChanged",
+                        "override": false,
+                        "read": "available",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 2,
+                        "lineNumber": 14,
+                        "name": "volume",
+                        "notify": "volumeChanged",
+                        "override": false,
+                        "read": "volume",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setVolume"
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 3,
+                        "lineNumber": 15,
+                        "name": "engageBehavior",
+                        "notify": "engageBehaviorChanged",
+                        "override": false,
+                        "read": "engageBehavior",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setEngageBehavior"
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 4,
+                        "lineNumber": 16,
+                        "name": "musicFiles",
+                        "notify": "musicFilesChanged",
+                        "override": false,
+                        "read": "musicFiles",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QStringList",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "MusicEngine",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 35,
+                        "name": "enabledChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 1,
+                        "lineNumber": 36,
+                        "name": "volumeChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 2,
+                        "lineNumber": 37,
+                        "name": "engageBehaviorChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 3,
+                        "lineNumber": 38,
+                        "name": "musicFilesChanged",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "MusicEngine.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "NotesStore",
+                "final": true,
+                "lineNumber": 21,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "sessionId",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 5,
+                        "isConst": true,
+                        "lineNumber": 40,
+                        "name": "sessionNoteText",
+                        "returnType": "QString"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "sessionId",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 6,
+                        "isConst": true,
+                        "lineNumber": 41,
+                        "name": "sessionNote",
+                        "returnType": "QVariantMap"
+                    }
+                ],
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 24,
+                        "name": "text",
+                        "notify": "textChanged",
+                        "override": false,
+                        "read": "text",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setText"
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 25,
+                        "name": "draftRoutineName",
+                        "notify": "draftChanged",
+                        "override": false,
+                        "read": "draftRoutineName",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 2,
+                        "lineNumber": 26,
+                        "name": "todayCombinedNotes",
+                        "notify": "archiveChanged",
+                        "override": false,
+                        "read": "todayCombinedNotes",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 3,
+                        "lineNumber": 27,
+                        "name": "todayNoteCount",
+                        "notify": "archiveChanged",
+                        "override": false,
+                        "read": "todayNoteCount",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 4,
+                        "lineNumber": 28,
+                        "name": "sessionHistory",
+                        "notify": "archiveChanged",
+                        "override": false,
+                        "read": "sessionHistory",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QVariantList",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "NotesStore",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 53,
+                        "name": "textChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 1,
+                        "lineNumber": 54,
+                        "name": "draftChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 2,
+                        "lineNumber": 55,
+                        "name": "archiveChanged",
+                        "returnType": "void"
+                    }
+                ],
+                "slots": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "routineName",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 3,
+                        "lineNumber": 44,
+                        "name": "onRoutineEngaged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "routineName",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "minutes",
+                                "type": "int"
+                            },
+                            {
+                                "name": "result",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "startedAt",
+                                "type": "QDateTime"
+                            },
+                            {
+                                "name": "endedAt",
+                                "type": "QDateTime"
+                            }
+                        ],
+                        "index": 4,
+                        "lineNumber": 45,
+                        "name": "onRoutineSessionFinished",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "NotesStore.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "RoutineManager",
+                "enums": [
+                    {
+                        "isClass": false,
+                        "isFlag": false,
+                        "lineNumber": 48,
+                        "name": "Role",
+                        "values": [
+                            "RoutineIdRole",
+                            "NameRole",
+                            "DescriptionRole",
+                            "AppsRole",
+                            "AppsDisplayRole",
+                            "AllowedUrlsRole",
+                            "TimeLimitMinutesRole",
+                            "MinTimeMinutesRole",
+                            "IsActiveRole",
+                            "TimeLabelRole",
+                            "ButtonLabelRole",
+                            "ButtonEnabledRole"
+                        ]
+                    }
+                ],
+                "final": true,
+                "lineNumber": 23,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 12,
+                        "lineNumber": 93,
+                        "name": "engage",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 13,
+                        "lineNumber": 94,
+                        "name": "togglePause",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 14,
+                        "lineNumber": 95,
+                        "name": "endActiveRoutine",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 15,
+                        "lineNumber": 96,
+                        "name": "closeOtherAccess",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 16,
+                        "lineNumber": 97,
+                        "name": "launchDesktopShell",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 17,
+                        "lineNumber": 98,
+                        "name": "unlockOtherAccess",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 18,
+                        "lineNumber": 99,
+                        "name": "continueFinishedSession",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 19,
+                        "lineNumber": 100,
+                        "name": "quitFinishedSession",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 20,
+                        "isConst": true,
+                        "lineNumber": 101,
+                        "name": "routinesForEditing",
+                        "returnType": "QVariantList"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routines",
+                                "type": "QVariantList"
+                            }
+                        ],
+                        "index": 21,
+                        "lineNumber": 102,
+                        "name": "saveRoutines",
+                        "returnType": "bool"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "description",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 22,
+                        "lineNumber": 103,
+                        "name": "updateRoutineDescription",
+                        "returnType": "bool"
+                    },
+                    {
+                        "access": "public",
+                        "index": 23,
+                        "isConst": true,
+                        "lineNumber": 104,
+                        "name": "pickApplication",
+                        "returnType": "QString"
+                    }
+                ],
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 26,
+                        "name": "active",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "active",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 27,
+                        "name": "activeRoutineId",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "activeRoutineId",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 2,
+                        "lineNumber": 28,
+                        "name": "activeRoutineName",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "activeRoutineName",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 3,
+                        "lineNumber": 29,
+                        "name": "activeRoutineTotalSeconds",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "activeRoutineTotalSeconds",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 4,
+                        "lineNumber": 30,
+                        "name": "activeRoutineDescription",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "activeRoutineDescription",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 5,
+                        "lineNumber": 31,
+                        "name": "remainingSeconds",
+                        "notify": "remainingSecondsChanged",
+                        "override": false,
+                        "read": "remainingSeconds",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 6,
+                        "lineNumber": 32,
+                        "name": "elapsedSeconds",
+                        "notify": "remainingSecondsChanged",
+                        "override": false,
+                        "read": "elapsedSeconds",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 7,
+                        "lineNumber": 33,
+                        "name": "accessGranted",
+                        "notify": "accessChanged",
+                        "override": false,
+                        "read": "accessGranted",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 8,
+                        "lineNumber": 34,
+                        "name": "accessRemainingSeconds",
+                        "notify": "accessChanged",
+                        "override": false,
+                        "read": "accessRemainingSeconds",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 9,
+                        "lineNumber": 35,
+                        "name": "accessStatus",
+                        "notify": "accessChanged",
+                        "override": false,
+                        "read": "accessStatus",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 10,
+                        "lineNumber": 36,
+                        "name": "otherAccessMinutes",
+                        "notify": "configChanged",
+                        "override": false,
+                        "read": "otherAccessMinutes",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setOtherAccessMinutes"
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 11,
+                        "lineNumber": 37,
+                        "name": "sessionPromptVisible",
+                        "notify": "sessionPromptChanged",
+                        "override": false,
+                        "read": "sessionPromptVisible",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 12,
+                        "lineNumber": 38,
+                        "name": "finishedSessionName",
+                        "notify": "sessionPromptChanged",
+                        "override": false,
+                        "read": "finishedSessionName",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 13,
+                        "lineNumber": 39,
+                        "name": "finishedSessionMinutes",
+                        "notify": "sessionPromptChanged",
+                        "override": false,
+                        "read": "finishedSessionMinutes",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 14,
+                        "lineNumber": 40,
+                        "name": "finishedSessionResult",
+                        "notify": "sessionPromptChanged",
+                        "override": false,
+                        "read": "finishedSessionResult",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 15,
+                        "lineNumber": 41,
+                        "name": "paused",
+                        "notify": "pausedChanged",
+                        "override": false,
+                        "read": "paused",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 16,
+                        "lineNumber": 42,
+                        "name": "editMode",
+                        "notify": "editModeChanged",
+                        "override": false,
+                        "read": "editMode",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setEditMode"
+                    },
+                    {
+                        "constant": true,
+                        "designable": true,
+                        "final": false,
+                        "index": 17,
+                        "lineNumber": 43,
+                        "name": "desktopShellSupported",
+                        "override": false,
+                        "read": "desktopShellSupported",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 18,
+                        "lineNumber": 44,
+                        "name": "desktopShellRunning",
+                        "notify": "desktopShellChanged",
+                        "override": false,
+                        "read": "desktopShellRunning",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 19,
+                        "lineNumber": 45,
+                        "name": "routineCount",
+                        "notify": "routineCountChanged",
+                        "override": false,
+                        "read": "routineCount",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "RoutineManager",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 109,
+                        "name": "activeChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 1,
+                        "lineNumber": 110,
+                        "name": "remainingSecondsChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 2,
+                        "lineNumber": 111,
+                        "name": "accessChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 3,
+                        "lineNumber": 112,
+                        "name": "configChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 4,
+                        "lineNumber": 113,
+                        "name": "sessionPromptChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 5,
+                        "lineNumber": 114,
+                        "name": "pausedChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 6,
+                        "lineNumber": 115,
+                        "name": "editModeChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 7,
+                        "lineNumber": 116,
+                        "name": "desktopShellChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 8,
+                        "lineNumber": 117,
+                        "name": "routineCountChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "message",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 9,
+                        "lineNumber": 118,
+                        "name": "statusMessageChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "routineName",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "minutes",
+                                "type": "int"
+                            },
+                            {
+                                "name": "result",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "startedAt",
+                                "type": "QDateTime"
+                            },
+                            {
+                                "name": "endedAt",
+                                "type": "QDateTime"
+                            }
+                        ],
+                        "index": 10,
+                        "lineNumber": 119,
+                        "name": "routineSessionFinished",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "routineName",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "elapsedSeconds",
+                                "type": "int"
+                            },
+                            {
+                                "name": "startedAt",
+                                "type": "QDateTime"
+                            },
+                            {
+                                "name": "updatedAt",
+                                "type": "QDateTime"
+                            }
+                        ],
+                        "index": 11,
+                        "lineNumber": 125,
+                        "name": "routineSessionProgress",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QAbstractListModel"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "RoutineManager.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "StatsStore",
+                "final": true,
+                "lineNumber": 19,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "reflection",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 4,
+                        "lineNumber": 51,
+                        "name": "recordLastSessionReflection",
+                        "returnType": "void"
+                    }
+                ],
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 22,
+                        "name": "dailyStats",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "dailyStats",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QVariantList",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 23,
+                        "name": "focusHistory",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "focusHistory",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QVariantList",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 2,
+                        "lineNumber": 24,
+                        "name": "todayFocusMinutes",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "todayFocusMinutes",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 3,
+                        "lineNumber": 25,
+                        "name": "totalFocusMinutes",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "totalFocusMinutes",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 4,
+                        "lineNumber": 26,
+                        "name": "completedSessions",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "completedSessions",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 5,
+                        "lineNumber": 27,
+                        "name": "unlockedSessions",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "unlockedSessions",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 6,
+                        "lineNumber": 28,
+                        "name": "interruptedSessions",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "interruptedSessions",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 7,
+                        "lineNumber": 29,
+                        "name": "currentStreakDays",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "currentStreakDays",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 8,
+                        "lineNumber": 30,
+                        "name": "lastSessionSummary",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "lastSessionSummary",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 9,
+                        "lineNumber": 31,
+                        "name": "lastSessionReflection",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "lastSessionReflection",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 10,
+                        "lineNumber": 32,
+                        "name": "dailyTargetMinutes",
+                        "notify": "targetChanged",
+                        "override": false,
+                        "read": "dailyTargetMinutes",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false,
+                        "write": "setDailyTargetMinutes"
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 11,
+                        "lineNumber": 33,
+                        "name": "todayTargetProgress",
+                        "notify": "statsChanged",
+                        "override": false,
+                        "read": "todayTargetProgress",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "double",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "StatsStore",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 67,
+                        "name": "statsChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 1,
+                        "lineNumber": 68,
+                        "name": "targetChanged",
+                        "returnType": "void"
+                    }
+                ],
+                "slots": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "routineName",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "minutes",
+                                "type": "int"
+                            },
+                            {
+                                "name": "result",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "startedAt",
+                                "type": "QDateTime"
+                            },
+                            {
+                                "name": "endedAt",
+                                "type": "QDateTime"
+                            }
+                        ],
+                        "index": 2,
+                        "lineNumber": 54,
+                        "name": "recordRoutineSession",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "routineId",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "routineName",
+                                "type": "QString"
+                            },
+                            {
+                                "name": "elapsedSeconds",
+                                "type": "int"
+                            },
+                            {
+                                "name": "startedAt",
+                                "type": "QDateTime"
+                            },
+                            {
+                                "name": "updatedAt",
+                                "type": "QDateTime"
+                            }
+                        ],
+                        "index": 3,
+                        "lineNumber": 60,
+                        "name": "recordRoutineSessionProgress",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "StatsStore.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "SystemStatus",
+                "final": true,
+                "lineNumber": 6,
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 9,
+                        "name": "batteryLabel",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "batteryLabel",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 10,
+                        "name": "batteryPercent",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "batteryPercent",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 2,
+                        "lineNumber": 11,
+                        "name": "batteryCharging",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "batteryCharging",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "SystemStatus",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 21,
+                        "name": "statusChanged",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "SystemStatus.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "TOTPEngine",
+                "final": true,
+                "lineNumber": 5,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "code",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 1,
+                        "isConst": true,
+                        "lineNumber": 21,
+                        "name": "validate",
+                        "returnType": "bool"
+                    },
+                    {
+                        "access": "public",
+                        "index": 2,
+                        "lineNumber": 22,
+                        "name": "completeFirstLaunchEnrollment",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 3,
+                        "lineNumber": 23,
+                        "name": "resetSecret",
+                        "returnType": "void"
+                    }
+                ],
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 8,
+                        "name": "secret",
+                        "notify": "secretChanged",
+                        "override": false,
+                        "read": "secret",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 9,
+                        "name": "enrollmentUri",
+                        "notify": "secretChanged",
+                        "override": false,
+                        "read": "enrollmentUri",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 2,
+                        "lineNumber": 10,
+                        "name": "qrCodeDataUrl",
+                        "notify": "secretChanged",
+                        "override": false,
+                        "read": "qrCodeDataUrl",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 3,
+                        "lineNumber": 11,
+                        "name": "firstLaunch",
+                        "notify": "secretChanged",
+                        "override": false,
+                        "read": "firstLaunch",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "TOTPEngine",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 27,
+                        "name": "secretChanged",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "TOTPEngine.h",
+        "outputRevision": 69
+    },
+    {
+        "classes": [
+            {
+                "className": "FocusTimer",
+                "final": true,
+                "lineNumber": 6,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "seconds",
+                                "type": "int"
+                            }
+                        ],
+                        "index": 4,
+                        "lineNumber": 18,
+                        "name": "start",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 5,
+                        "lineNumber": 19,
+                        "name": "stop",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 6,
+                        "lineNumber": 20,
+                        "name": "pause",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 7,
+                        "lineNumber": 21,
+                        "name": "resume",
+                        "returnType": "void"
+                    }
+                ],
+                "object": true,
+                "properties": [
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 0,
+                        "lineNumber": 9,
+                        "name": "remainingSeconds",
+                        "notify": "remainingSecondsChanged",
+                        "override": false,
+                        "read": "remainingSeconds",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 1,
+                        "lineNumber": 10,
+                        "name": "active",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "active",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    }
+                ],
+                "qualifiedClassName": "FocusTimer",
+                "signals": [
+                    {
+                        "access": "public",
+                        "index": 0,
+                        "lineNumber": 25,
+                        "name": "remainingSecondsChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 1,
+                        "lineNumber": 26,
+                        "name": "activeChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 2,
+                        "lineNumber": 27,
+                        "name": "pausedChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 3,
+                        "lineNumber": 28,
+                        "name": "expired",
+                        "returnType": "void"
+                    }
+                ],
+                "superClasses": [
+                    {
+                        "access": "public",
+                        "name": "QObject"
+                    }
+                ]
+            }
+        ],
+        "inputFile": "Timer.h",
+        "outputRevision": 69
+    }
+]
