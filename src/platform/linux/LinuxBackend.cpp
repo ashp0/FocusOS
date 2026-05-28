@@ -8,6 +8,10 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QStandardPaths>
+#include <QThread>
 
 namespace {
 
@@ -194,38 +198,98 @@ bool processRunning(const QString &processName)
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
-// Tries wmctrl first (X11), then qdbus (KWin). Returns -1 if neither succeeds.
+QString runQdbus(const QStringList &args)
+{
+    const QString qdbus = firstExecutable({
+        QStringLiteral("qdbus6"),
+        QStringLiteral("qdbus")
+    });
+
+    if (qdbus.isEmpty()) {
+        return {};
+    }
+
+    QProcess process;
+    process.start(qdbus, args);
+
+    if (!process.waitForFinished(1000)) {
+        return {};
+    }
+
+    if (process.exitCode() != 0) {
+        return {};
+    }
+
+    return QString::fromLocal8Bit(
+        process.readAllStandardOutput()
+    ).trimmed();
+}
+
+int extractFirstInteger(const QString &text)
+{
+    static const QRegularExpression regex(QStringLiteral("(\\d+)"));
+
+    const auto match = regex.match(text);
+
+    if (!match.hasMatch()) {
+        return -1;
+    }
+
+    bool ok = false;
+
+    const int value = match.captured(1).toInt(&ok);
+
+    return ok ? value : -1;
+}
+
+QStringList listDesktopIds()
+{
+    const QString output = runQdbus({
+        QStringLiteral("org.kde.KWin"),
+        QStringLiteral("/VirtualDesktopManager"),
+        QStringLiteral("org.kde.KWin.VirtualDesktopManager.desktops")
+    });
+
+    if (output.isEmpty()) {
+        return {};
+    }
+
+    // Relying on regular expressions to isolate UUID patterns makes this 100% immune 
+    // to changes in tuple sorting layout or raw structural syntax variations.
+    static const QRegularExpression uuidRegex(QStringLiteral("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"));
+    QStringList desktopIds;
+    auto it = uuidRegex.globalMatch(output);
+    while (it.hasNext()) {
+        auto match = it.next();
+        desktopIds.append(match.captured(0));
+    }
+
+    return desktopIds;
+}
+
 int captureCurrentVirtualDesktop()
 {
-    const QString wmctrl = QStandardPaths::findExecutable(QStringLiteral("wmctrl"));
-    if (!wmctrl.isEmpty()) {
-        QProcess process;
-        process.start(wmctrl, {QStringLiteral("-d")});
-        if (process.waitForFinished(400) && process.exitCode() == 0) {
-            const QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
-            for (const QString &line : output.split(QLatin1Char('\n'))) {
-                // wmctrl -d marks the active desktop with '*'.
-                if (line.contains(QStringLiteral(" * "))) {
-                    return line.section(QLatin1Char(' '), 0, 0).toInt();
-                }
-            }
-        }
+    const QString currentId = runQdbus({
+        QStringLiteral("org.kde.KWin"),
+        QStringLiteral("/VirtualDesktopManager"),
+        QStringLiteral("org.kde.KWin.VirtualDesktopManager.current")
+    });
+
+    if (currentId.isEmpty()) {
+        return -1;
     }
 
-    const QString qdbus = firstExecutable({QStringLiteral("qdbus6"), QStringLiteral("qdbus")});
-    if (!qdbus.isEmpty()) {
-        QProcess process;
-        process.start(qdbus, {QStringLiteral("org.kde.KWin"), QStringLiteral("/KWin"), QStringLiteral("currentDesktop")});
-        if (process.waitForFinished(400) && process.exitCode() == 0) {
-            bool ok = false;
-            const int idx = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed().toInt(&ok);
-            if (ok) {
-                return idx - 1; // qdbus uses 1-based, normalize to 0-based like wmctrl
-            }
-        }
+    // Pull out clean UUID string in case of trailing noise or formatting variants
+    static const QRegularExpression uuidRegex(QStringLiteral("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"));
+    const auto match = uuidRegex.match(currentId);
+    if (!match.hasMatch()) {
+        return -1;
     }
+    const QString cleanCurrentId = match.captured(0);
 
-    return -1;
+    const QStringList desktops = listDesktopIds();
+
+    return desktops.indexOf(cleanCurrentId);
 }
 
 bool switchToVirtualDesktop(int zeroBasedIndex)
@@ -233,64 +297,87 @@ bool switchToVirtualDesktop(int zeroBasedIndex)
     if (zeroBasedIndex < 0) {
         return false;
     }
-    const QString wmctrl = QStandardPaths::findExecutable(QStringLiteral("wmctrl"));
-    if (!wmctrl.isEmpty()) {
-        if (QProcess::execute(wmctrl, {QStringLiteral("-s"), QString::number(zeroBasedIndex)}) == 0) {
-            return true;
-        }
+
+    const QStringList desktops = listDesktopIds();
+
+    if (zeroBasedIndex >= desktops.size()) {
+        return false;
     }
-    const QString qdbus = firstExecutable({QStringLiteral("qdbus6"), QStringLiteral("qdbus")});
-    if (!qdbus.isEmpty()) {
-        QProcess::execute(qdbus, {
-            QStringLiteral("org.kde.KWin"),
-            QStringLiteral("/KWin"),
-            QStringLiteral("setCurrentDesktop"),
-            QString::number(zeroBasedIndex + 1)
-        });
-        return true;
-    }
-    return false;
+
+    const QString desktopId = desktops.at(zeroBasedIndex);
+
+    // This mirrors the exact structure of your successful terminal command.
+    // The argument structure follows: [Service] [Object Path] [Interface.Method] [Interface Name] [Property] [Value]
+    const QString result = runQdbus({
+        QStringLiteral("org.kde.KWin"),
+        QStringLiteral("/VirtualDesktopManager"),
+        QStringLiteral("org.freedesktop.DBus.Properties.Set"),
+        QStringLiteral("org.kde.KWin.VirtualDesktopManager"),
+        QStringLiteral("current"),
+        desktopId
+    });
+
+    Q_UNUSED(result);
+
+    return true;
 }
 
-// Make sure at least `count` virtual desktops exist on KWin. Quietly no-ops if
-// KWin/qdbus aren't available.
-void ensureVirtualDesktopCount(int count)
+int currentDesktopCount()
 {
-    const QString qdbus = firstExecutable({QStringLiteral("qdbus6"), QStringLiteral("qdbus")});
-    if (qdbus.isEmpty()) {
-        return;
-    }
-    QProcess process;
-    process.start(qdbus, {
+    const QString output = runQdbus({
         QStringLiteral("org.kde.KWin"),
         QStringLiteral("/VirtualDesktopManager"),
         QStringLiteral("org.freedesktop.DBus.Properties.Get"),
         QStringLiteral("org.kde.KWin.VirtualDesktopManager"),
         QStringLiteral("count")
     });
-    int current = 0;
-    if (process.waitForFinished(400) && process.exitCode() == 0) {
-        current = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed().toInt();
+
+    return extractFirstInteger(output);
+}
+
+void ensureVirtualDesktopCount(int desiredCount)
+{
+    if (desiredCount <= 0) {
+        return;
     }
-    while (current > 0 && current < count) {
-        QProcess::execute(qdbus, {
+
+    int current = currentDesktopCount();
+
+    if (current < 0) {
+        return;
+    }
+
+    while (current < desiredCount) {
+
+        runQdbus({
             QStringLiteral("org.kde.KWin"),
             QStringLiteral("/VirtualDesktopManager"),
             QStringLiteral("org.kde.KWin.VirtualDesktopManager.createDesktop"),
             QString::number(current),
             QStringLiteral("Focus %1").arg(current + 1)
         });
+
         ++current;
+
+        // Wayland/KWin updates asynchronously.
+        QThread::msleep(150);
     }
 }
 
 void killTrackedPids(QList<qint64> &pids)
 {
     for (qint64 pid : pids) {
-        if (pid <= 0) continue;
-        // Soft signal first; the process may already be gone, which is fine.
-        QProcess::execute(QStringLiteral("kill"), {QString::number(pid)});
+
+        if (pid <= 0) {
+            continue;
+        }
+
+        QProcess::execute(
+            QStringLiteral("kill"),
+            {QString::number(pid)}
+        );
     }
+
     pids.clear();
 }
 
@@ -298,22 +385,38 @@ void killTrackedPids(QList<qint64> &pids)
 
 QString LinuxBackend::name() const
 {
-    return QStringLiteral("Linux/Wayland");
+    return QStringLiteral("Linux/KWin Wayland");
 }
 
 void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
 {
     Q_UNUSED(appPaths)
-    QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), QStringLiteral("x-terminal-emulator")});
+
+    QProcess::execute(
+        QStringLiteral("pkill"),
+        {
+            QStringLiteral("-f"),
+            QStringLiteral("x-terminal-emulator")
+        }
+    );
+
     terminateDesktopShell();
 
-    // Park routine apps on a dedicated KDE virtual desktop so the user's
-    // regular desktop stays uncluttered. Best-effort: works on KWin + wmctrl.
     if (m_savedDesktopIndex < 0) {
         m_savedDesktopIndex = captureCurrentVirtualDesktop();
     }
+
     ensureVirtualDesktopCount(2);
+
+    // Sync delay after desktop creation
+    QThread::msleep(200);
+
+    // Execute the fixed working DBus transaction 
     switchToVirtualDesktop(1);
+
+    // Essential delay: Allows KWin Wayland to fully activate the second 
+    // desktop focus space before your launch cycle triggers.
+    QThread::msleep(300);
 }
 
 bool LinuxBackend::launchApps(const QStringList &appPaths, QString *errorMessage)

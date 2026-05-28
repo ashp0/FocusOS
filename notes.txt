@@ -1,0 +1,75 @@
+* There is an issue with switching to the new virtual desktop. It creates the second virtual desktop but does not switch over there. the applications still launch in the same space. and I hate the clutter it brings. the mission control (FocusOS) should have its own space and so should the programs. 
+* the routine editor menu does not show anymore. I cannot customize routines anymore which is weird. 
+* when the routine is done, make FocusOS at the centre of the screen.
+* Be a bit stricter when routines are enabled. Stop users from randomly opening other applications. Disable that Linux version of spotlight search. Stop other applications from spawning in.
+* 
+
+
+This is my experiment with the virtual desktop creation code:
+ashwinpaudel@fedora:~$ QDBUS=$(command -v qdbus6 || command -v qdbus)
+ashwinpaudel@fedora:~$ "$QDBUS" --literal org.kde.KWin /VirtualDesktopManager org.kde.KWin.VirtualDesktopManager.desktops
+[Variant: [Argument: a(uss) {[Argument: (uss) 0, "2685f651-69ca-4176-8de3-004f3940f37f", "Desktop 2"], [Argument: (uss) 1, "b7608246-9f0f-4bb7-b245-4e18e6e11c14", "Focus 2"]}]]
+ashwinpaudel@fedora:~$ "$QDBUS" org.kde.KWin /VirtualDesktopManager
+property read uint org.kde.KWin.VirtualDesktopManager.count
+property readwrite QString org.kde.KWin.VirtualDesktopManager.current
+property read QDBusRawType::a(iss) org.kde.KWin.VirtualDesktopManager.desktops
+property readwrite bool org.kde.KWin.VirtualDesktopManager.navigationWrappingAround
+property readwrite uint org.kde.KWin.VirtualDesktopManager.rows
+signal void org.kde.KWin.VirtualDesktopManager.countChanged(uint count)
+method void org.kde.KWin.VirtualDesktopManager.createDesktop(uint position, QString name)
+signal void org.kde.KWin.VirtualDesktopManager.currentChanged(QString id)
+signal void org.kde.KWin.VirtualDesktopManager.desktopCreated(QString id, QDBusRawType::(iss desktopData)
+signal void org.kde.KWin.VirtualDesktopManager.desktopDataChanged(QString id, QDBusRawType::(iss desktopData)
+signal void org.kde.KWin.VirtualDesktopManager.desktopRemoved(QString id)
+signal void org.kde.KWin.VirtualDesktopManager.navigationWrappingAroundChanged(bool navigationWrappingAround)
+method void org.kde.KWin.VirtualDesktopManager.removeDesktop(QString id)
+signal void org.kde.KWin.VirtualDesktopManager.rowsChanged(uint rows)
+method void org.kde.KWin.VirtualDesktopManager.setDesktopName(QString id, QString name)
+method QDBusVariant org.freedesktop.DBus.Properties.Get(QString interface_name, QString property_name)
+method QVariantMap org.freedesktop.DBus.Properties.GetAll(QString interface_name)
+signal void org.freedesktop.DBus.Properties.PropertiesChanged(QString interface_name, QVariantMap changed_properties, QStringList invalidated_properties)
+method void org.freedesktop.DBus.Properties.Set(QString interface_name, QString property_name, QDBusVariant value)
+method QString org.freedesktop.DBus.Introspectable.Introspect()
+method QString org.freedesktop.DBus.Peer.GetMachineId()
+method void org.freedesktop.DBus.Peer.Ping()
+ashwinpaudel@fedora:~$ "$QDBUS" org.kde.KWin /VirtualDesktopManager org.kde.KWin.VirtualDesktopManager.currentDesktop
+Error: org.freedesktop.DBus.Error.UnknownMethod
+No such method 'currentDesktop' in interface 'org.kde.KWin.VirtualDesktopManager' at object path '/VirtualDesktopManager' (signature '')
+ashwinpaudel@fedora:~$ "$QDBUS" org.kde.KWin /VirtualDesktopManager org.kde.KWin.VirtualDesktopManager.setCurrent "b7608246-9f0f-4bb7-b245-4e18e6e11c14"
+Cannot find 'org.kde.KWin.VirtualDesktopManager.setCurrent' in object /VirtualDesktopManager at org.kde.KWin
+ashwinpaudel@fedora:~$ "$QDBUS" org.kde.KWin /VirtualDesktopManager org.kde.KWin.VirtualDesktopManager.setCurrentDesktop "b7608246-9f0f-4bb7-b245-4e18e6e11c14"
+Cannot find 'org.kde.KWin.VirtualDesktopManager.setCurrentDesktop' in object /VirtualDesktopManager at org.kde.KWin
+ashwinpaudel@fedora:~$ "$QDBUS" org.kde.KWin /VirtualDesktopManager org.kde.KWin.VirtualDesktopManager.createDesktop 2 "Focus 2"
+
+ashwinpaudel@fedora:~$ echo "This creates a second desktop"
+This creates a second desktop
+ashwinpaudel@fedora:~$ echo "on the other terminal, firefox does open"
+on the other terminal, firefox does open
+ashwinpaudel@fedora:~$ echo "Even brave-origin works too!"
+Even brave-origin works too!
+ashwinpaudel@fedora:~$ "$QDBUS" org.kde.KWin /VirtualDesktopManager
+property read uint org.kde.KWin.VirtualDesktopManager.count
+property readwrite QString org.kde.KWin.VirtualDesktopManager.current
+property read QDBusRawType::a(iss) org.kde.KWin.VirtualDesktopManager.desktops
+property readwrite bool org.kde.KWin.VirtualDesktopManager.navigationWrappingAround
+property readwrite uint org.kde.KWin.VirtualDesktopManager.rows
+signal void org.kde.KWin.VirtualDesktopManager.countChanged(uint count)
+method void org.kde.KWin.VirtualDesktopManager.createDesktop(uint position, QString name)
+signal void org.kde.KWin.VirtualDesktopManager.currentChanged(QString id)
+signal void org.kde.KWin.VirtualDesktopManager.desktopCreated(QString id, QDBusRawType::(iss desktopData)
+signal void org.kde.KWin.VirtualDesktopManager.desktopDataChanged(QString id, QDBusRawType::(iss desktopData)
+signal void org.kde.KWin.VirtualDesktopManager.desktopRemoved(QString id)
+signal void org.kde.KWin.VirtualDesktopManager.navigationWrappingAroundChanged(bool navigationWrappingAround)
+method void org.kde.KWin.VirtualDesktopManager.removeDesktop(QString id)
+signal void org.kde.KWin.VirtualDesktopManager.rowsChanged(uint rows)
+method void org.kde.KWin.VirtualDesktopManager.setDesktopName(QString id, QString name)
+method QDBusVariant org.freedesktop.DBus.Properties.Get(QString interface_name, QString property_name)
+method QVariantMap org.freedesktop.DBus.Properties.GetAll(QString interface_name)
+signal void org.freedesktop.DBus.Properties.PropertiesChanged(QString interface_name, QVariantMap changed_properties, QStringList invalidated_properties)
+method void org.freedesktop.DBus.Properties.Set(QString interface_name, QString property_name, QDBusVariant value)
+method QString org.freedesktop.DBus.Introspectable.Introspect()
+method QString org.freedesktop.DBus.Peer.GetMachineId()
+method void org.freedesktop.DBus.Peer.Ping()
+
+echo "qdbus org.kde.KWin /VirtualDesktopManager org.freedesktop.DBus.Properties.Set org.kde.KWin.VirtualDesktopManager current 1b65c48c-266b-4550-969a-83eff32716a5"
+echo "The above command switches me to the other desktop"
