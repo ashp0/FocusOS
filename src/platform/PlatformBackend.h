@@ -20,4 +20,7 @@ public:
     virtual bool launchDesktopShell(QString *errorMessage = nullptr) { Q_UNUSED(errorMessage); return false; }
     virtual void terminateDesktopShell() {}
     virtual bool desktopShellSupported() const { return false; }
+    // Return the FocusOS shell to its home workspace + clean up any routine
+    // window-management state. Called when a routine ends.
+    virtual void restoreShellPlacement() {}
 };

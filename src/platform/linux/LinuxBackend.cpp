@@ -1,19 +1,28 @@
 #include "platform/linux/LinuxBackend.h"
 
+#include <QDBusArgument>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusMessage>
+#include <QDBusReply>
+#include <QDBusVariant>
+#include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QUrl>
-#include <QProcess>
-#include <QRegularExpression>
-#include <QStandardPaths>
 #include <QThread>
+#include <QUrl>
 
 namespace {
+
+constexpr const char *kKWinService = "org.kde.KWin";
+constexpr const char *kVdmPath = "/VirtualDesktopManager";
+constexpr const char *kVdmIface = "org.kde.KWin.VirtualDesktopManager";
 
 QString expandedPath(const QString &path)
 {
@@ -135,11 +144,18 @@ bool launchCommand(const QStringList &parts, qint64 *pidOut = nullptr)
     return ok;
 }
 
-bool launchDesktopFile(const QString &desktopFilePath, qint64 *pidOut = nullptr)
+bool launchDesktopFile(const QString &desktopFilePath, const QStringList &extraArgs, qint64 *pidOut = nullptr)
 {
-    const QStringList parts = desktopExecParts(desktopFilePath);
+    QStringList parts = desktopExecParts(desktopFilePath);
+    parts.append(extraArgs);
     if (launchCommand(parts, pidOut)) {
         return true;
+    }
+
+    // gtk-launch doesn't let us pass arguments cleanly, so fall back only when
+    // the routine didn't ask for extra args.
+    if (!extraArgs.isEmpty()) {
+        return false;
     }
 
     const QString gtkLaunch = QStandardPaths::findExecutable(QStringLiteral("gtk-launch"));
@@ -157,6 +173,63 @@ bool launchDesktopFile(const QString &desktopFilePath, qint64 *pidOut = nullptr)
         return ok;
     }
     return false;
+}
+
+bool launchKioskBrowser(const QString &url, qint64 *pidOut = nullptr, QString *errorMessage = nullptr)
+{
+    const QString browser = firstExecutable({
+        QStringLiteral("brave-browser"),
+        QStringLiteral("brave"),
+        QStringLiteral("google-chrome-stable"),
+        QStringLiteral("google-chrome"),
+        QStringLiteral("chromium"),
+        QStringLiteral("chromium-browser"),
+        QStringLiteral("microsoft-edge-stable"),
+        QStringLiteral("microsoft-edge")
+    });
+    if (browser.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("No chromium-family browser installed for kiosk mode");
+        }
+        return false;
+    }
+
+    // Use a throwaway profile per kiosk so the routine doesn't bleed into the
+    // user's main browser session (no logged-in accounts, no extensions, no
+    // history). The dir is created under XDG_RUNTIME_DIR so it cleans up at
+    // session end.
+    const QString runtimeDir = QProcessEnvironment::systemEnvironment().value(
+        QStringLiteral("XDG_RUNTIME_DIR"),
+        QStringLiteral("/tmp"));
+    const QString kioskProfile = QStringLiteral("%1/focusos-kiosk-%2")
+                                     .arg(runtimeDir)
+                                     .arg(QDateTime::currentMSecsSinceEpoch());
+    QDir().mkpath(kioskProfile);
+
+    const QStringList args {
+        QStringLiteral("--app=%1").arg(url),
+        QStringLiteral("--user-data-dir=%1").arg(kioskProfile),
+        QStringLiteral("--start-fullscreen"),
+        QStringLiteral("--no-first-run"),
+        QStringLiteral("--no-default-browser-check"),
+        QStringLiteral("--password-store=basic"),
+        QStringLiteral("--use-mock-keychain"),
+        QStringLiteral("--disable-features=Translate")
+    };
+
+    QProcess process;
+    process.setProgram(browser);
+    process.setArguments(args);
+    process.setProcessEnvironment(routineLaunchEnvironment());
+    qint64 pid = 0;
+    const bool ok = process.startDetached(&pid);
+    if (ok && pidOut) {
+        *pidOut = pid;
+    }
+    if (!ok && errorMessage) {
+        *errorMessage = QStringLiteral("Unable to launch kiosk browser %1").arg(browser);
+    }
+    return ok;
 }
 
 bool startDetachedWithKdeEnvironment(const QString &program, const QStringList &arguments = {})
@@ -198,170 +271,179 @@ bool processRunning(const QString &processName)
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
-QString runQdbus(const QStringList &args)
+// ─── KWin DBus helpers ───────────────────────────────────────────────────────
+//
+// We talk to KWin's VirtualDesktopManager directly over the user session bus
+// instead of shelling out to `qdbus`. Subprocess qdbus made the switch racy:
+// the property set returned 0 even when KWin had not yet processed the new
+// "current" value, so apps launched before the desktop actually flipped.
+
+QStringList kwinListDesktopIds()
 {
-    const QString qdbus = firstExecutable({
-        QStringLiteral("qdbus6"),
-        QStringLiteral("qdbus")
-    });
-
-    if (qdbus.isEmpty()) {
+    QDBusInterface iface(QString::fromLatin1(kKWinService),
+                         QString::fromLatin1(kVdmPath),
+                         QStringLiteral("org.freedesktop.DBus.Properties"),
+                         QDBusConnection::sessionBus());
+    if (!iface.isValid()) {
         return {};
     }
 
-    QProcess process;
-    process.start(qdbus, args);
-
-    if (!process.waitForFinished(1000)) {
+    const QDBusMessage reply = iface.call(QStringLiteral("Get"),
+                                          QString::fromLatin1(kVdmIface),
+                                          QStringLiteral("desktops"));
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
         return {};
     }
 
-    if (process.exitCode() != 0) {
-        return {};
+    // The reply variant wraps an a(uss). We don't care about the position
+    // ordering KWin uses internally — KWin already returns them in the order
+    // the user sees, and we only need the ids.
+    QDBusArgument arg = reply.arguments().first().value<QDBusVariant>().variant().value<QDBusArgument>();
+    QStringList ids;
+    arg.beginArray();
+    while (!arg.atEnd()) {
+        arg.beginStructure();
+        uint position = 0;
+        QString id;
+        QString name;
+        arg >> position >> id >> name;
+        arg.endStructure();
+        Q_UNUSED(position)
+        Q_UNUSED(name)
+        if (!id.isEmpty()) {
+            ids.append(id);
+        }
     }
-
-    return QString::fromLocal8Bit(
-        process.readAllStandardOutput()
-    ).trimmed();
+    arg.endArray();
+    return ids;
 }
 
-int extractFirstInteger(const QString &text)
+QString kwinCurrentDesktopId()
 {
-    static const QRegularExpression regex(QStringLiteral("(\\d+)"));
-
-    const auto match = regex.match(text);
-
-    if (!match.hasMatch()) {
-        return -1;
-    }
-
-    bool ok = false;
-
-    const int value = match.captured(1).toInt(&ok);
-
-    return ok ? value : -1;
-}
-
-QStringList listDesktopIds()
-{
-    const QString output = runQdbus({
-        QStringLiteral("org.kde.KWin"),
-        QStringLiteral("/VirtualDesktopManager"),
-        QStringLiteral("org.kde.KWin.VirtualDesktopManager.desktops")
-    });
-
-    if (output.isEmpty()) {
+    QDBusInterface iface(QString::fromLatin1(kKWinService),
+                         QString::fromLatin1(kVdmPath),
+                         QStringLiteral("org.freedesktop.DBus.Properties"),
+                         QDBusConnection::sessionBus());
+    if (!iface.isValid()) {
         return {};
     }
 
-    // Relying on regular expressions to isolate UUID patterns makes this 100% immune 
-    // to changes in tuple sorting layout or raw structural syntax variations.
-    static const QRegularExpression uuidRegex(QStringLiteral("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"));
-    QStringList desktopIds;
-    auto it = uuidRegex.globalMatch(output);
-    while (it.hasNext()) {
-        auto match = it.next();
-        desktopIds.append(match.captured(0));
+    const QDBusMessage reply = iface.call(QStringLiteral("Get"),
+                                          QString::fromLatin1(kVdmIface),
+                                          QStringLiteral("current"));
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
+        return {};
     }
-
-    return desktopIds;
+    return reply.arguments().first().value<QDBusVariant>().variant().toString();
 }
 
-int captureCurrentVirtualDesktop()
+int kwinCurrentDesktopIndex()
 {
-    const QString currentId = runQdbus({
-        QStringLiteral("org.kde.KWin"),
-        QStringLiteral("/VirtualDesktopManager"),
-        QStringLiteral("org.kde.KWin.VirtualDesktopManager.current")
-    });
-
+    const QString currentId = kwinCurrentDesktopId();
     if (currentId.isEmpty()) {
         return -1;
     }
-
-    // Pull out clean UUID string in case of trailing noise or formatting variants
-    static const QRegularExpression uuidRegex(QStringLiteral("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"));
-    const auto match = uuidRegex.match(currentId);
-    if (!match.hasMatch()) {
-        return -1;
-    }
-    const QString cleanCurrentId = match.captured(0);
-
-    const QStringList desktops = listDesktopIds();
-
-    return desktops.indexOf(cleanCurrentId);
+    return kwinListDesktopIds().indexOf(currentId);
 }
 
-bool switchToVirtualDesktop(int zeroBasedIndex)
+uint kwinDesktopCount()
 {
-    if (zeroBasedIndex < 0) {
+    QDBusInterface iface(QString::fromLatin1(kKWinService),
+                         QString::fromLatin1(kVdmPath),
+                         QStringLiteral("org.freedesktop.DBus.Properties"),
+                         QDBusConnection::sessionBus());
+    if (!iface.isValid()) {
+        return 0;
+    }
+    const QDBusMessage reply = iface.call(QStringLiteral("Get"),
+                                          QString::fromLatin1(kVdmIface),
+                                          QStringLiteral("count"));
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
+        return 0;
+    }
+    return reply.arguments().first().value<QDBusVariant>().variant().toUInt();
+}
+
+bool kwinSetCurrentDesktop(const QString &desktopId)
+{
+    if (desktopId.isEmpty()) {
         return false;
     }
 
-    const QStringList desktops = listDesktopIds();
-
-    if (zeroBasedIndex >= desktops.size()) {
+    QDBusInterface iface(QString::fromLatin1(kKWinService),
+                         QString::fromLatin1(kVdmPath),
+                         QStringLiteral("org.freedesktop.DBus.Properties"),
+                         QDBusConnection::sessionBus());
+    if (!iface.isValid()) {
         return false;
     }
 
-    const QString desktopId = desktops.at(zeroBasedIndex);
-
-    // This mirrors the exact structure of your successful terminal command.
-    // The argument structure follows: [Service] [Object Path] [Interface.Method] [Interface Name] [Property] [Value]
-    const QString result = runQdbus({
-        QStringLiteral("org.kde.KWin"),
-        QStringLiteral("/VirtualDesktopManager"),
-        QStringLiteral("org.freedesktop.DBus.Properties.Set"),
-        QStringLiteral("org.kde.KWin.VirtualDesktopManager"),
-        QStringLiteral("current"),
-        desktopId
-    });
-
-    Q_UNUSED(result);
-
-    return true;
-}
-
-int currentDesktopCount()
-{
-    const QString output = runQdbus({
-        QStringLiteral("org.kde.KWin"),
-        QStringLiteral("/VirtualDesktopManager"),
-        QStringLiteral("org.freedesktop.DBus.Properties.Get"),
-        QStringLiteral("org.kde.KWin.VirtualDesktopManager"),
-        QStringLiteral("count")
-    });
-
-    return extractFirstInteger(output);
-}
-
-void ensureVirtualDesktopCount(int desiredCount)
-{
-    if (desiredCount <= 0) {
-        return;
+    // Properties.Set expects a variant; QDBusVariant ensures KWin sees a
+    // string variant rather than us being silently coerced.
+    const QDBusMessage reply = iface.call(QStringLiteral("Set"),
+                                          QString::fromLatin1(kVdmIface),
+                                          QStringLiteral("current"),
+                                          QVariant::fromValue(QDBusVariant(desktopId)));
+    if (reply.type() == QDBusMessage::ErrorMessage) {
+        return false;
     }
 
-    int current = currentDesktopCount();
+    // Poll until KWin reports the new current desktop — the property change is
+    // applied asynchronously, and we don't want to launch routine apps before
+    // KWin has actually flipped to the focus desktop.
+    QElapsedTimer waitTimer;
+    waitTimer.start();
+    while (waitTimer.elapsed() < 1500) {
+        if (kwinCurrentDesktopId() == desktopId) {
+            return true;
+        }
+        QThread::msleep(40);
+    }
+    return kwinCurrentDesktopId() == desktopId;
+}
 
-    if (current < 0) {
-        return;
+QString kwinEnsureDesktop(int desiredCount, const QString &nameForNew)
+{
+    const QStringList existing = kwinListDesktopIds();
+    if (existing.size() >= desiredCount) {
+        return existing.at(desiredCount - 1);
     }
 
+    QDBusInterface vdm(QString::fromLatin1(kKWinService),
+                       QString::fromLatin1(kVdmPath),
+                       QString::fromLatin1(kVdmIface),
+                       QDBusConnection::sessionBus());
+    if (!vdm.isValid()) {
+        return {};
+    }
+
+    int current = existing.size();
     while (current < desiredCount) {
+        vdm.call(QStringLiteral("createDesktop"),
+                 static_cast<uint>(current),
+                 nameForNew);
 
-        runQdbus({
-            QStringLiteral("org.kde.KWin"),
-            QStringLiteral("/VirtualDesktopManager"),
-            QStringLiteral("org.kde.KWin.VirtualDesktopManager.createDesktop"),
-            QString::number(current),
-            QStringLiteral("Focus %1").arg(current + 1)
-        });
-
-        ++current;
-
-        // Wayland/KWin updates asynchronously.
-        QThread::msleep(150);
+        // KWin emits desktopCreated after the new id is allocated, but our
+        // synchronous call returns before the emission propagates. Poll until
+        // the desktops list grows.
+        QElapsedTimer waitTimer;
+        waitTimer.start();
+        QStringList updated = kwinListDesktopIds();
+        while (updated.size() <= current && waitTimer.elapsed() < 1500) {
+            QThread::msleep(50);
+            updated = kwinListDesktopIds();
+        }
+        if (updated.size() <= current) {
+            return {};
+        }
+        current = updated.size();
     }
+
+    const QStringList finalIds = kwinListDesktopIds();
+    if (finalIds.size() < desiredCount) {
+        return {};
+    }
+    return finalIds.at(desiredCount - 1);
 }
 
 void killTrackedPids(QList<qint64> &pids)
@@ -381,7 +463,63 @@ void killTrackedPids(QList<qint64> &pids)
     pids.clear();
 }
 
+// Parse a routine app entry. Routine apps are stored as command strings now
+// rather than bare paths, so the user can pass arguments — e.g.
+//   "/usr/bin/code /home/me/project"
+// or kiosk-mode browser windows pinned to a single URL via:
+//   "kiosk:https://www.youtube.com/watch?v=ABCDEFG"
+struct ParsedAppEntry
+{
+    bool kiosk = false;
+    QString kioskUrl;
+    QString path;         // first token (path or program name) for non-kiosk entries
+    QStringList args;     // remaining tokens
+};
+
+ParsedAppEntry parseAppEntry(const QString &rawEntry)
+{
+    ParsedAppEntry parsed;
+    const QString trimmed = rawEntry.trimmed();
+    if (trimmed.isEmpty()) {
+        return parsed;
+    }
+    if (trimmed.startsWith(QStringLiteral("kiosk:"), Qt::CaseInsensitive)) {
+        parsed.kiosk = true;
+        parsed.kioskUrl = trimmed.mid(QStringLiteral("kiosk:").size()).trimmed();
+        return parsed;
+    }
+
+    QStringList parts = QProcess::splitCommand(trimmed);
+    if (parts.isEmpty()) {
+        parsed.path = expandedPath(trimmed);
+        return parsed;
+    }
+    parsed.path = expandedPath(parts.takeFirst());
+    for (QString &arg : parts) {
+        arg = expandedPath(arg);
+    }
+    parsed.args = parts;
+    return parsed;
+}
+
 } // namespace
+
+LinuxBackend::LinuxBackend()
+{
+    m_lockdownTimer.setInterval(1500);
+    m_lockdownTimer.setSingleShot(false);
+    // Receiver is the timer itself so the lambda lifetime is tied to it; we
+    // never make LinuxBackend a QObject because it would force moc + a parent
+    // pointer dance that the call sites don't need.
+    QObject::connect(&m_lockdownTimer, &QTimer::timeout, &m_lockdownTimer, [this] {
+        tickLockdownWatchdog();
+    });
+}
+
+LinuxBackend::~LinuxBackend()
+{
+    stopLockdownWatchdog();
+}
 
 QString LinuxBackend::name() const
 {
@@ -403,42 +541,70 @@ void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
     terminateDesktopShell();
 
     if (m_savedDesktopIndex < 0) {
-        m_savedDesktopIndex = captureCurrentVirtualDesktop();
+        m_savedDesktopIndex = kwinCurrentDesktopIndex();
     }
 
-    ensureVirtualDesktopCount(2);
+    const QString focusDesktopId = kwinEnsureDesktop(2, QStringLiteral("Focus 2"));
 
-    // Sync delay after desktop creation
+    if (!focusDesktopId.isEmpty()) {
+        kwinSetCurrentDesktop(focusDesktopId);
+    }
+
+    // Even after the property echo confirms the switch, KWin sometimes still
+    // races the very first window creation. A small extra settle window beats
+    // the alternative (apps appearing on the old desktop).
     QThread::msleep(200);
 
-    // Execute the fixed working DBus transaction 
-    switchToVirtualDesktop(1);
-
-    // Essential delay: Allows KWin Wayland to fully activate the second 
-    // desktop focus space before your launch cycle triggers.
-    QThread::msleep(300);
+    startLockdownWatchdog();
 }
 
 bool LinuxBackend::launchApps(const QStringList &appPaths, QString *errorMessage)
 {
-    for (const QString &appPath : appPaths) {
-        const QString path = expandedPath(appPath);
-        if (path.isEmpty()) {
+    for (const QString &rawEntry : appPaths) {
+        const ParsedAppEntry parsed = parseAppEntry(rawEntry);
+
+        if (parsed.kiosk) {
+            if (parsed.kioskUrl.isEmpty()) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Kiosk entry has no URL: %1").arg(rawEntry);
+                }
+                return false;
+            }
+            qint64 pid = 0;
+            QString launchError;
+            if (!launchKioskBrowser(parsed.kioskUrl, &pid, &launchError)) {
+                if (errorMessage) {
+                    *errorMessage = launchError.isEmpty()
+                                        ? QStringLiteral("Kiosk launch failed for %1").arg(parsed.kioskUrl)
+                                        : launchError;
+                }
+                return false;
+            }
+            if (pid > 0) {
+                m_sessionPids.append(pid);
+            }
             continue;
         }
 
-        const QFileInfo info(path);
+        if (parsed.path.isEmpty()) {
+            continue;
+        }
+
+        const QFileInfo info(parsed.path);
         bool launched = false;
         qint64 pid = 0;
         if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0) {
-            launched = launchDesktopFile(path, &pid);
+            launched = launchDesktopFile(parsed.path, parsed.args, &pid);
         } else {
-            launched = launchCommand({path}, &pid);
+            QStringList parts;
+            parts << parsed.path;
+            parts.append(parsed.args);
+            launched = launchCommand(parts, &pid);
         }
 
         if (!launched) {
             if (errorMessage) {
-                *errorMessage = QStringLiteral("Unable to launch %1").arg(path);
+                *errorMessage = QStringLiteral("Unable to launch %1").arg(parsed.path);
             }
             return false;
         }
@@ -493,32 +659,36 @@ bool LinuxBackend::openUrls(const QStringList &urls, QString *errorMessage)
 
 void LinuxBackend::terminateApps(const QStringList &appPaths)
 {
+    stopLockdownWatchdog();
+
     // Kill anything we tracked from launchApps/openUrls first — this catches
     // browser windows that opened on free PIDs we wouldn't otherwise reach.
     killTrackedPids(m_sessionPids);
 
-    for (const QString &appPath : appPaths) {
-        const QString trimmed = expandedPath(appPath);
-        if (trimmed.isEmpty()) {
+    for (const QString &rawEntry : appPaths) {
+        const ParsedAppEntry parsed = parseAppEntry(rawEntry);
+        if (parsed.kiosk) {
+            // Kiosk browsers are tracked by PID, killed above. Nothing else to
+            // do — we can't match on the temporary user-data-dir reliably.
             continue;
         }
 
-        const QFileInfo info(trimmed);
+        const QString candidate = parsed.path;
+        if (candidate.isEmpty()) {
+            continue;
+        }
+
+        const QFileInfo info(candidate);
         if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0) {
-            const QStringList parts = desktopExecParts(trimmed);
+            const QStringList parts = desktopExecParts(candidate);
             if (!parts.isEmpty()) {
                 QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), QFileInfo(parts.first()).fileName()});
             }
         }
-        QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), trimmed});
+        QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), candidate});
     }
 
-    // Drop back to the user's original virtual desktop so they don't land on
-    // the empty "Focus" desktop after their routine ends.
-    if (m_savedDesktopIndex >= 0) {
-        switchToVirtualDesktop(m_savedDesktopIndex);
-        m_savedDesktopIndex = -1;
-    }
+    restoreShellPlacement();
 }
 
 bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
@@ -551,6 +721,8 @@ bool LinuxBackend::openSystemTerminal(QString *errorMessage)
 
 void LinuxBackend::terminateUnrestrictedApps()
 {
+    stopLockdownWatchdog();
+
     // The 30-min Other Access timer fires this. We want to take the user back
     // to a clean FocusOS state: kill terminals, the desktop shell, and any
     // routine-spawned apps we still track.
@@ -569,10 +741,7 @@ void LinuxBackend::terminateUnrestrictedApps()
     killTrackedPids(m_sessionPids);
     terminateDesktopShell();
 
-    if (m_savedDesktopIndex >= 0) {
-        switchToVirtualDesktop(m_savedDesktopIndex);
-        m_savedDesktopIndex = -1;
-    }
+    restoreShellPlacement();
 }
 
 bool LinuxBackend::launchDesktopShell(QString *errorMessage)
@@ -584,10 +753,12 @@ bool LinuxBackend::launchDesktopShell(QString *errorMessage)
     // The desktop shell goes on its own virtual desktop too so the user can
     // swipe between FocusOS and the real desktop instead of layering them.
     if (m_savedDesktopIndex < 0) {
-        m_savedDesktopIndex = captureCurrentVirtualDesktop();
+        m_savedDesktopIndex = kwinCurrentDesktopIndex();
     }
-    ensureVirtualDesktopCount(2);
-    switchToVirtualDesktop(1);
+    const QString focusDesktopId = kwinEnsureDesktop(2, QStringLiteral("Focus 2"));
+    if (!focusDesktopId.isEmpty()) {
+        kwinSetCurrentDesktop(focusDesktopId);
+    }
 
     const QStringList sidecars {
         QStringLiteral("kded6"),
@@ -609,6 +780,12 @@ bool LinuxBackend::launchDesktopShell(QString *errorMessage)
     if (launched && !krunner.isEmpty()) {
         startDetachedWithKdeEnvironment(krunner);
     }
+
+    // Open a terminal alongside the shell so unrestricted access actually
+    // gives the user something to do — this used to fire from
+    // RoutineManager::unlockOtherAccess but that obscured the admin modal.
+    QString terminalError;
+    openSystemTerminal(&terminalError);
 
     if (!launched && errorMessage) {
         *errorMessage = QStringLiteral("Unable to launch plasmashell");
@@ -638,5 +815,61 @@ void LinuxBackend::terminateDesktopShell()
     };
     for (const QString &process : shellProcesses) {
         pkillExact(process);
+    }
+}
+
+void LinuxBackend::restoreShellPlacement()
+{
+    if (m_savedDesktopIndex < 0) {
+        return;
+    }
+
+    const QStringList desktops = kwinListDesktopIds();
+    if (m_savedDesktopIndex < desktops.size()) {
+        kwinSetCurrentDesktop(desktops.at(m_savedDesktopIndex));
+    }
+    m_savedDesktopIndex = -1;
+}
+
+void LinuxBackend::startLockdownWatchdog()
+{
+    m_lockdownActive = true;
+    if (!m_lockdownTimer.isActive()) {
+        m_lockdownTimer.start();
+    }
+    // Fire once immediately so the first kill happens before the user can
+    // open the spotlight.
+    tickLockdownWatchdog();
+}
+
+void LinuxBackend::stopLockdownWatchdog()
+{
+    m_lockdownActive = false;
+    if (m_lockdownTimer.isActive()) {
+        m_lockdownTimer.stop();
+    }
+}
+
+void LinuxBackend::tickLockdownWatchdog() const
+{
+    if (!m_lockdownActive) {
+        return;
+    }
+    // While a routine is engaged we keep killing the spotlight / launcher
+    // processes that let the user pull up arbitrary apps. plasmashell is in
+    // here because kded6 happily respawns it; krunner is the KDE spotlight.
+    static const QStringList outlawed {
+        QStringLiteral("krunner"),
+        QStringLiteral("plasmashell"),
+        QStringLiteral("kickoff"),
+        QStringLiteral("rofi"),
+        QStringLiteral("dmenu"),
+        QStringLiteral("wofi"),
+        QStringLiteral("synapse"),
+        QStringLiteral("ulauncher"),
+        QStringLiteral("albert")
+    };
+    for (const QString &name : outlawed) {
+        pkillExact(name);
     }
 }

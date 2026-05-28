@@ -374,8 +374,22 @@ void RoutineManager::endActiveRoutine()
     const int elapsedSecondsValue = qMax(0, routine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
     const int elapsedMinutes = elapsedSecondsValue <= 0 ? 0 : (elapsedSecondsValue + 59) / 60;
 
+    // Strict mode: the END button cannot release the routine before
+    // min_time_minutes has elapsed. The escape hatch is Other Access (TOTP),
+    // which honors the same floor.
+    const int minSeconds = routine.minTimeMinutes * 60;
+    if (minSeconds > 0 && elapsedSecondsValue < minSeconds) {
+        const int remaining = minSeconds - elapsedSecondsValue;
+        const int remainingMinutes = (remaining + 59) / 60;
+        setStatusMessage(QStringLiteral("MIN-TIME LOCK ACTIVE — %1 MIN REMAINING").arg(remainingMinutes));
+        return;
+    }
+
     if (m_backend) {
         m_backend->dropNetworkPolicy();
+        // Bring the user back to FocusOS's home workspace so the completion
+        // prompt isn't sitting on top of the Focus apps the user just left.
+        m_backend->restoreShellPlacement();
     }
     emitActiveSessionProgress();
     emit routineSessionFinished(routine.id,
@@ -517,6 +531,27 @@ void RoutineManager::unlockOtherAccess()
 {
     clearFinishedSessionPrompt();
 
+    // Honor each routine's min_time_minutes as a hard floor on early exits.
+    // The user set this value precisely so a moment-of-weakness TOTP entry
+    // doesn't dissolve the session — refuse the unlock and tell them how much
+    // longer they're committed to.
+    if (active()) {
+        const int activeIndex = indexOfRoutine(m_activeRoutineId);
+        if (activeIndex >= 0) {
+            const Routine &activeRoutine = m_routines.at(activeIndex);
+            const int minSeconds = activeRoutine.minTimeMinutes * 60;
+            if (minSeconds > 0) {
+                const int elapsed = qMax(0, activeRoutine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
+                if (elapsed < minSeconds) {
+                    const int remaining = minSeconds - elapsed;
+                    const int minutes = (remaining + 59) / 60;
+                    setStatusMessage(QStringLiteral("MIN-TIME LOCK ACTIVE — %1 MIN REMAINING").arg(minutes));
+                    return;
+                }
+            }
+        }
+    }
+
     if (m_backend) {
         m_backend->dropNetworkPolicy();
     }
@@ -546,7 +581,11 @@ void RoutineManager::unlockOtherAccess()
     }
 
     m_accessRemainingSeconds = qMax(1, m_otherAccessMinutes) * 60;
-    if (m_backend) {
+    // The terminal used to pop here, but on Linux it stole focus from the
+    // admin modal and made the user think the ROUTINES tab disappeared. On
+    // Linux the user opens the terminal via the Access Desktop button now.
+    // macOS still pops Terminal because it has no separate desktop shell path.
+    if (m_backend && !m_backend->desktopShellSupported()) {
         QString error;
         m_backend->openSystemTerminal(&error);
     }
@@ -921,6 +960,7 @@ void RoutineManager::onRoutineExpired()
 
     if (m_backend) {
         m_backend->dropNetworkPolicy();
+        m_backend->restoreShellPlacement();
     }
     m_activeRoutineId.clear();
     m_activeStartedAt = {};

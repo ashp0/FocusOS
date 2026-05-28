@@ -808,7 +808,7 @@ Item {
                                                     Layout.fillWidth: true
                                                     Layout.preferredHeight: 34
                                                     text: root.toArray(routineCard.modelData.apps)[index]
-                                                    placeholderText: "/usr/share/applications/firefox.desktop or /usr/bin/code"
+                                                    placeholderText: "/usr/bin/code /path/to/project  ·  kiosk:https://youtu.be/…  ·  *.desktop"
                                                     onTextChanged: root.updateApp(routineCard.index, index, text)
                                                 }
 

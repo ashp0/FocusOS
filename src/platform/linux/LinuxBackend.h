@@ -5,10 +5,15 @@
 
 #include <QList>
 #include <QString>
+#include <QStringList>
+#include <QTimer>
 
 class LinuxBackend final : public PlatformBackend
 {
 public:
+    LinuxBackend();
+    ~LinuxBackend() override;
+
     QString name() const override;
     void prepareRoutineSession(const QStringList &appPaths) override;
     bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) override;
@@ -21,9 +26,16 @@ public:
     bool launchDesktopShell(QString *errorMessage = nullptr) override;
     void terminateDesktopShell() override;
     bool desktopShellSupported() const override { return true; }
+    void restoreShellPlacement() override;
 
 private:
+    void startLockdownWatchdog();
+    void stopLockdownWatchdog();
+    void tickLockdownWatchdog() const;
+
     NetGate m_netGate;
     QList<qint64> m_sessionPids;
     int m_savedDesktopIndex = -1;
+    QTimer m_lockdownTimer;
+    bool m_lockdownActive = false;
 };
