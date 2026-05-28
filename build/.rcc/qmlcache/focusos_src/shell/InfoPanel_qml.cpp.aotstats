@@ -520,7 +520,7 @@
                         {
                             "codegenResult": 2,
                             "column": 27,
-                            "durationMicroseconds": 1000,
+                            "durationMicroseconds": 0,
                             "functionName": "text",
                             "line": 224,
                             "message": "Cannot access value for name statsStore"
@@ -824,7 +824,7 @@
                         {
                             "codegenResult": 2,
                             "column": 30,
-                            "durationMicroseconds": 5000,
+                            "durationMicroseconds": 4000,
                             "functionName": "onPaint",
                             "line": 327,
                             "message": "Cannot load property length from call to method graphDays, returning QVariant."

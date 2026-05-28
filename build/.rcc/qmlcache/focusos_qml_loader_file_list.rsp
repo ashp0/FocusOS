@@ -12,4 +12,5 @@
 /qt/qml/FocusOS/src/shell/AmbientLayer.qml
 /qt/qml/FocusOS/src/shell/MissionView.qml
 /qt/qml/FocusOS/src/shell/NotesDrawer.qml
+/qt/qml/FocusOS/src/shell/RoutineEditorDialog.qml
 /qt/qml/FocusOS/src/shell/UnlockModal.qml

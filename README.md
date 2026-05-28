@@ -31,25 +31,25 @@ FOCUSOS_MODE=cage   # Single-app kiosk, strongest immediate lock, no external ap
 
 ## Install Dependencies
 
-FocusOS requires Qt 6.7 or newer, CMake, Ninja, a C++20 compiler, Wayland support, nftables, and either KWin Wayland or Cage. For inspiration videos, make sure the Qt Multimedia runtime backend and normal system codecs are installed; many distros provide this through FFmpeg or GStreamer packages alongside Qt Multimedia.
+FocusOS requires Qt 6.7 or newer, CMake, Ninja, a C++20 compiler, Wayland support, nftables, xdg-open, `pactl`, writable backlight permissions, and either KWin Wayland or Cage. For inspiration videos, make sure the Qt Multimedia runtime backend and normal system codecs are installed; many distros provide this through FFmpeg or GStreamer packages alongside Qt Multimedia.
 
 Arch:
 
 ```bash
-sudo pacman -S --needed base-devel cmake ninja qt6-base qt6-declarative qt6-multimedia qt6-wayland qt6-tools kwin cage nftables sddm
+sudo pacman -S --needed base-devel cmake ninja ccache qt6-base qt6-declarative qt6-multimedia qt6-wayland qt6-tools kwin cage nftables sddm xdg-utils wireplumber libpulse
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtwayland kwin-wayland cage nftables sddm
+sudo dnf install cmake ninja-build ccache gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtwayland kwin-wayland cage nftables sddm xdg-utils wireplumber pulseaudio-utils
 ```
 
 Ubuntu package names vary by release. Install the Qt 6.7+ development packages from your distro, KDE/Qt PPA, or the Qt online installer, plus:
 
 ```bash
 sudo apt update
-sudo apt install build-essential cmake ninja-build nftables sddm cage
+sudo apt install build-essential cmake ninja-build ccache nftables sddm cage xdg-utils wireplumber pulseaudio-utils
 ```
 
 ## Build And Install FocusOS
@@ -61,6 +61,13 @@ cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-linux
 sudo mkdir -p /opt/focusos/bin
 sudo install -m 0755 build-linux/focusos /opt/focusos/bin/focusos
+```
+
+For faster incremental rebuilds on Linux, configure with ccache:
+
+```bash
+cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build build-linux -j"$(nproc)"
 ```
 
 If your Linux build output path differs, locate the binary with:
@@ -166,9 +173,19 @@ echo 'kernel.sysrq = 0' | sudo tee /etc/sysctl.d/90-focusos.conf
 sudo sysctl --system
 ```
 
+## Enable Volume, Brightness, And Battery Status
+
+FocusOS exposes system volume and brightness controls in the bottom toolbar so routine sessions do not require Plasma. On Linux it checks, in order:
+
+- Volume: `pactl get-sink-volume @DEFAULT_SINK@` and `pactl set-sink-volume @DEFAULT_SINK@ <value>%`.
+- Brightness: `/sys/class/backlight/*/max_brightness` and `brightness`; if no backlight device exists, the slider is hidden.
+- Battery: `/sys/class/power_supply/BAT*` or any supply reporting `type=Battery`, including Asahi-style names such as `macsmc-battery`; if no battery exists, the widget is hidden.
+
+If brightness changes do not apply, add a narrow udev rule or group permission that allows the FocusOS user to write the chosen `brightness` file, then log out and back in.
+
 ## Enable Network Locking
 
-FocusOS uses nftables for routine network policy. During a routine, outbound traffic is dropped except loopback, DNS, and resolved IPv4 addresses for the routine allowlist.
+FocusOS uses nftables for routine network policy. During a routine, outbound traffic is dropped except loopback, DNS, and resolved IPv4/IPv6 addresses for the routine allowlist. Routine engagement now fails closed: if FocusOS cannot install the nftables table, the routine does not start.
 
 Enable nftables:
 
@@ -191,6 +208,43 @@ nft delete table inet focusos
 ```
 
 That keeps the daily user from getting a general firewall administration tool.
+
+## Development / Fast Iteration
+
+Use three loops instead of trying to make one environment do everything:
+
+- macOS loop: fastest for QML layout, animations, typography, and basic C++ compile checks.
+- Linux VM loop: best for KWin, nftables, xdg-open, `.desktop` launch files, `pactl` volume, backlight permissions, and session behavior.
+- Bare-metal Asahi loop: final pass for battery, backlight, real input devices, suspend/resume, and the actual daily-driver login session.
+
+From macOS, create an arm64 Fedora or Arch Linux VM in UTM with hardware virtualization enabled. On Linux hosts, use `virt-manager` with QEMU/KVM and a Fedora or Arch image. Give the VM enough CPU cores for Ninja builds, enable OpenSSH in the guest, and install the FocusOS dependencies from the section above.
+
+Mount this repository into the guest so editing stays fast on the host and compilation happens in Linux:
+
+- UTM: add the repo as a shared directory and mount it in the guest with virtiofs, for example at `/mnt/focusos`.
+- QEMU/KVM or virt-manager: add a virtiofs filesystem device, or use `sshfs ashwin@host:/Users/ashwinpaudel/Desktop/FocusOS ~/FocusOS` from the guest if virtiofs is inconvenient.
+
+Configure the VM build with ccache:
+
+```bash
+cd /mnt/focusos
+cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build build-linux -j"$(nproc)"
+```
+
+One host-side rebuild and relaunch loop:
+
+```bash
+ssh focusos-vm 'cd /mnt/focusos && cmake --build build-linux -j"$(nproc)" && { pkill -x focusos || true; } && FOCUSOS_BIN="$PWD/build-linux/focusos" FOCUSOS_MODE=kwin packaging/linux/focusos-session.sh >/tmp/focusos.log 2>&1 &'
+```
+
+For destructive session tests, keep a clean base qcow2 and boot disposable overlays:
+
+```bash
+qemu-img create -f qcow2 -F qcow2 -b focusos-base.qcow2 focusos-test.qcow2
+```
+
+Delete `focusos-test.qcow2` after each broken experiment and recreate it from the base image. This is much faster than reinstalling a desktop stack after testing SDDM, logind, nftables, or KDE shell teardown.
 
 ## TOTP Setup On iPhone
 
@@ -254,6 +308,11 @@ The current Linux session replacement is strong enough for a non-admin productiv
 
 - Freedesktop Desktop Entry Specification: https://specifications.freedesktop.org/desktop-entry/latest-single/
 - Cage Wayland kiosk compositor: https://github.com/cage-kiosk/cage
+- UTM shared directories: https://docs.getutm.app/settings-qemu/sharing/
+- Apple Virtualization Linux guests: https://developer.apple.com/documentation/virtualization/virtualize-linux-on-a-mac
+- QEMU qcow2 images: https://www.qemu.org/docs/master/system/images
+- QEMU image utility: https://www.qemu.org/docs/master/tools/qemu-img.html
+- CMake compiler launcher / ccache support: https://cmake.org/cmake/help/latest/prop_tgt/LANG_COMPILER_LAUNCHER.html
 - systemd service restart behavior: https://www.freedesktop.org/software/systemd/man/249/systemd.service.html
 - systemd process killing behavior: https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html
 - systemd-logind virtual terminal options: https://www.freedesktop.org/software/systemd/man/latest/logind.conf.html

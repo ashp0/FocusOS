@@ -24,4 +24,11 @@ public:
                 InspirationStore *inspirationStore);
 
     void showFocusShell();
+
+private:
+    void showWallpaper();
+    void setRootWindowBackground();
+    void minimizeFocusShell();
+
+    QQuickView m_wallpaperWindow;
 };

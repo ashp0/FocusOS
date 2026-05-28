@@ -8,7 +8,7 @@
                         {
                             "codegenResult": 2,
                             "column": 37,
-                            "durationMicroseconds": 0,
+                            "durationMicroseconds": 1000,
                             "functionName": "inspirationAssets",
                             "line": 8,
                             "message": "Cannot access value for name inspirationStore"

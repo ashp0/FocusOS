@@ -11,6 +11,7 @@ Item {
     property bool sidebarCollapsed: false
     property bool otherRoutinesExpanded: false
     signal unlockRequested()
+    signal editRoutinesRequested()
     signal showSidebar()
 
     function formatSecondsClock(seconds) {
@@ -19,6 +20,175 @@ Item {
         const minutes = Math.floor((value % 3600) / 60)
         const secs = value % 60
         return Theme.pad2(hours) + ":" + Theme.pad2(minutes) + ":" + Theme.pad2(secs)
+    }
+
+    component SystemStepper: Row {
+        id: stepper
+        property string label: ""
+        property int value: -1
+        property bool controlAvailable: false
+        signal decrement()
+        signal increment()
+
+        height: 28
+        spacing: 2
+        opacity: controlAvailable ? 1 : 0.42
+
+        Rectangle {
+            width: 24
+            height: stepper.height
+            color: minusMouse.containsMouse && stepper.controlAvailable ? Theme.steel : "transparent"
+            border.width: 1
+            border.color: minusMouse.containsMouse && stepper.controlAvailable ? Theme.goldDim : Theme.textGhost
+
+            Text {
+                anchors.centerIn: parent
+                text: "-"
+                color: stepper.controlAvailable ? Theme.goldDim : Theme.textGhost
+                font.family: root.headerFont
+                font.pixelSize: 12
+                font.letterSpacing: 0
+            }
+
+            MouseArea {
+                id: minusMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: stepper.controlAvailable
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: stepper.decrement()
+            }
+        }
+
+        Rectangle {
+            width: 76
+            height: stepper.height
+            color: "transparent"
+            border.width: 1
+            border.color: Theme.textGhost
+
+            Text {
+                anchors.centerIn: parent
+                text: stepper.label + " " + (stepper.controlAvailable ? (stepper.value + "%") : "--")
+                color: stepper.controlAvailable ? Theme.textDim : Theme.textGhost
+                elide: Text.ElideRight
+                font.family: root.headerFont
+                font.pixelSize: 10
+                font.letterSpacing: 0
+            }
+        }
+
+        Rectangle {
+            width: 24
+            height: stepper.height
+            color: plusMouse.containsMouse && stepper.controlAvailable ? Theme.steel : "transparent"
+            border.width: 1
+            border.color: plusMouse.containsMouse && stepper.controlAvailable ? Theme.goldDim : Theme.textGhost
+
+            Text {
+                anchors.centerIn: parent
+                text: "+"
+                color: stepper.controlAvailable ? Theme.goldDim : Theme.textGhost
+                font.family: root.headerFont
+                font.pixelSize: 12
+                font.letterSpacing: 0
+            }
+
+            MouseArea {
+                id: plusMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: stepper.controlAvailable
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: stepper.increment()
+            }
+        }
+    }
+
+    component SystemSlider: Item {
+        id: slider
+        property string label: ""
+        property int value: 0
+        property bool controlAvailable: false
+        signal valueEdited(int value)
+
+        width: 132
+        height: 28
+        visible: controlAvailable
+
+        function valueFromX(position) {
+            return Math.max(0, Math.min(100, Math.round(position / Math.max(1, rail.width) * 100)))
+        }
+
+        Text {
+            id: sliderLabel
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: 34
+            text: slider.label
+            color: Theme.textDim
+            elide: Text.ElideRight
+            font.family: root.headerFont
+            font.pixelSize: 10
+            font.letterSpacing: 0
+        }
+
+        Rectangle {
+            id: rail
+            anchors.left: sliderLabel.right
+            anchors.right: valueLabel.left
+            anchors.leftMargin: 6
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            height: 2
+            color: Theme.textGhost
+        }
+
+        Rectangle {
+            anchors.left: rail.left
+            anchors.verticalCenter: rail.verticalCenter
+            width: Math.max(0, Math.min(rail.width, rail.width * slider.value / 100))
+            height: 2
+            color: Theme.goldDim
+        }
+
+        Rectangle {
+            width: 8
+            height: 16
+            x: rail.x + Math.max(0, Math.min(rail.width - width, rail.width * slider.value / 100 - width / 2))
+            anchors.verticalCenter: rail.verticalCenter
+            color: sliderMouse.containsMouse ? Theme.gold : Theme.goldDim
+            border.width: 1
+            border.color: Theme.voidColor
+        }
+
+        Text {
+            id: valueLabel
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: 32
+            text: slider.value + "%"
+            color: Theme.textDim
+            horizontalAlignment: Text.AlignRight
+            font.family: root.headerFont
+            font.pixelSize: 10
+            font.letterSpacing: 0
+        }
+
+        MouseArea {
+            id: sliderMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onPressed: function(mouse) {
+                slider.valueEdited(slider.valueFromX(mouse.x - rail.x))
+            }
+            onPositionChanged: function(mouse) {
+                if (pressed) {
+                    slider.valueEdited(slider.valueFromX(mouse.x - rail.x))
+                }
+            }
+        }
     }
 
     Rectangle {
@@ -761,15 +931,107 @@ Item {
                         }
                     }
                 }
+
+                SystemSlider {
+                    label: "VOL"
+                    value: systemStatus.volumePercent
+                    controlAvailable: systemStatus.volumeAvailable
+                    onValueEdited: function(nextValue) {
+                        systemStatus.setSystemVolume(nextValue)
+                    }
+                }
+
+                SystemSlider {
+                    label: "BRI"
+                    value: systemStatus.brightnessPercent
+                    controlAvailable: systemStatus.brightnessAvailable
+                    onValueEdited: function(nextValue) {
+                        systemStatus.setBrightness(nextValue)
+                    }
+                }
             }
 
-            Row {
-                anchors.right: parent.right
-                anchors.rightMargin: 22
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 8
+                Row {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 22
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
 
-                // Launch Desktop button — Linux only, when access is open
+                Rectangle {
+                    visible: systemStatus.batteryPercent >= 0
+                    width: 104
+                    height: 28
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Theme.textGhost
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: systemStatus.batteryLabel
+                        color: systemStatus.batteryCharging ? Theme.gold : Theme.textDim
+                        elide: Text.ElideRight
+                        font.family: root.headerFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+                }
+
+                Rectangle {
+                    visible: routineManager.accessGranted
+                    width: 128
+                    height: 28
+                    color: editRoutinesMouse.containsMouse ? Theme.steel : "transparent"
+                    border.width: 1
+                    border.color: editRoutinesMouse.containsMouse ? Theme.goldDim : Theme.textGhost
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "EDIT ROUTINES"
+                        color: editRoutinesMouse.containsMouse ? Theme.goldDim : Theme.textDim
+                        elide: Text.ElideRight
+                        font.family: root.headerFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    MouseArea {
+                        id: editRoutinesMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.editRoutinesRequested()
+                    }
+                }
+
+                // Re-open admin menu during Other Access if it was dismissed.
+                Rectangle {
+                    visible: routineManager.accessGranted
+                    width: 126
+                    height: 28
+                    color: adminMouse.containsMouse ? Theme.steel : "transparent"
+                    border.width: 1
+                    border.color: adminMouse.containsMouse ? Theme.goldDim : Theme.textGhost
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "▣ OTHER MENU"
+                        color: adminMouse.containsMouse ? Theme.goldDim : Theme.textDim
+                        elide: Text.ElideRight
+                        font.family: root.headerFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    MouseArea {
+                        id: adminMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.unlockRequested()
+                    }
+                }
+
+                // Access Desktop button — Linux only, when access is open
                 Rectangle {
                     visible: routineManager.accessGranted && routineManager.desktopShellSupported
                     width: 138
@@ -780,10 +1042,8 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: routineManager.desktopShellRunning ? "⊞ DESKTOP RUNNING" : "⊞ LAUNCH DESKTOP"
-                        color: routineManager.desktopShellRunning
-                               ? Theme.gold
-                               : (desktopMouse.containsMouse ? Theme.goldDim : Theme.textDim)
+                        text: "ACCESS DESKTOP"
+                        color: desktopMouse.containsMouse ? Theme.goldDim : Theme.textDim
                         elide: Text.ElideRight
                         font.family: root.headerFont
                         font.pixelSize: 10
@@ -794,7 +1054,6 @@ Item {
                         id: desktopMouse
                         anchors.fill: parent
                         hoverEnabled: true
-                        enabled: !routineManager.desktopShellRunning
                         cursorShape: Qt.PointingHandCursor
                         onClicked: routineManager.launchDesktopShell()
                     }

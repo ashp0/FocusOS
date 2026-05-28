@@ -4,6 +4,67 @@
             "className": "SystemStatus",
             "final": true,
             "lineNumber": 6,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "deltaPercent",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 1,
+                    "lineNumber": 28,
+                    "name": "adjustSystemVolume",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "percent",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 2,
+                    "lineNumber": 29,
+                    "name": "setSystemVolume",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "deltaPercent",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 3,
+                    "lineNumber": 30,
+                    "name": "adjustBrightness",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "percent",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 4,
+                    "lineNumber": 31,
+                    "name": "setBrightness",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 5,
+                    "lineNumber": 32,
+                    "name": "refresh",
+                    "returnType": "void"
+                }
+            ],
             "object": true,
             "properties": [
                 {
@@ -56,6 +117,74 @@
                     "type": "bool",
                     "user": false,
                     "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 12,
+                    "name": "volumePercent",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "volumePercent",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 13,
+                    "name": "volumeAvailable",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "volumeAvailable",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 5,
+                    "lineNumber": 14,
+                    "name": "brightnessPercent",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "brightnessPercent",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 6,
+                    "lineNumber": 15,
+                    "name": "brightnessAvailable",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "brightnessAvailable",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
                 }
             ],
             "qualifiedClassName": "SystemStatus",
@@ -63,7 +192,7 @@
                 {
                     "access": "public",
                     "index": 0,
-                    "lineNumber": 21,
+                    "lineNumber": 35,
                     "name": "statusChanged",
                     "returnType": "void"
                 }

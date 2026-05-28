@@ -6,6 +6,7 @@
     <file alias="src/shell/AmbientLayer.qml">/Users/ashwinpaudel/Desktop/FocusOS/src/shell/AmbientLayer.qml</file>
     <file alias="src/shell/MissionView.qml">/Users/ashwinpaudel/Desktop/FocusOS/src/shell/MissionView.qml</file>
     <file alias="src/shell/NotesDrawer.qml">/Users/ashwinpaudel/Desktop/FocusOS/src/shell/NotesDrawer.qml</file>
+    <file alias="src/shell/RoutineEditorDialog.qml">/Users/ashwinpaudel/Desktop/FocusOS/src/shell/RoutineEditorDialog.qml</file>
     <file alias="src/shell/UnlockModal.qml">/Users/ashwinpaudel/Desktop/FocusOS/src/shell/UnlockModal.qml</file>
   </qresource>
 </RCC>

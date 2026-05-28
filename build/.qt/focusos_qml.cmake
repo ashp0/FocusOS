@@ -14,6 +14,8 @@ set(src_and_dest_list
     "/Users/ashwinpaudel/Desktop/FocusOS/build/FocusOS/src/shell/MissionView.qml"
     "/Users/ashwinpaudel/Desktop/FocusOS/src/shell/NotesDrawer.qml"
     "/Users/ashwinpaudel/Desktop/FocusOS/build/FocusOS/src/shell/NotesDrawer.qml"
+    "/Users/ashwinpaudel/Desktop/FocusOS/src/shell/RoutineEditorDialog.qml"
+    "/Users/ashwinpaudel/Desktop/FocusOS/build/FocusOS/src/shell/RoutineEditorDialog.qml"
     "/Users/ashwinpaudel/Desktop/FocusOS/src/shell/UnlockModal.qml"
     "/Users/ashwinpaudel/Desktop/FocusOS/build/FocusOS/src/shell/UnlockModal.qml"
 

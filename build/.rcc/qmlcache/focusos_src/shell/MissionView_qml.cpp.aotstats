@@ -312,7 +312,7 @@
                         {
                             "codegenResult": 0,
                             "column": 20,
-                            "durationMicroseconds": 1000,
+                            "durationMicroseconds": 0,
                             "functionName": "width",
                             "line": 165,
                             "message": ""
@@ -887,10 +887,18 @@
                         },
                         {
                             "codegenResult": 2,
+                            "column": 26,
+                            "durationMicroseconds": 0,
+                            "functionName": "visible",
+                            "line": 355,
+                            "message": "Cannot access value for name routineManager"
+                        },
+                        {
+                            "codegenResult": 2,
                             "column": 24,
                             "durationMicroseconds": 0,
                             "functionName": "color",
-                            "line": 357,
+                            "line": 358,
                             "message": "Cannot generate efficient code for script lookup"
                         },
                         {
@@ -898,7 +906,7 @@
                             "column": 31,
                             "durationMicroseconds": 0,
                             "functionName": "color",
-                            "line": 359,
+                            "line": 360,
                             "message": "Cannot generate efficient code for script lookup"
                         },
                         {
@@ -906,7 +914,7 @@
                             "column": 28,
                             "durationMicroseconds": 0,
                             "functionName": "color",
-                            "line": 364,
+                            "line": 365,
                             "message": "Cannot generate efficient code for script lookup"
                         },
                         {
@@ -914,7 +922,7 @@
                             "column": 39,
                             "durationMicroseconds": 0,
                             "functionName": "centerIn",
-                            "line": 362,
+                            "line": 363,
                             "message": ""
                         },
                         {
@@ -922,7 +930,7 @@
                             "column": 34,
                             "durationMicroseconds": 0,
                             "functionName": "family",
-                            "line": 365,
+                            "line": 366,
                             "message": ""
                         },
                         {
@@ -930,7 +938,71 @@
                             "column": 34,
                             "durationMicroseconds": 0,
                             "functionName": "cursorShape",
-                            "line": 374,
+                            "line": 375,
+                            "message": ""
+                        },
+                        {
+                            "codegenResult": 2,
+                            "column": 32,
+                            "durationMicroseconds": 0,
+                            "functionName": "onClicked",
+                            "line": 376,
+                            "message": "Cannot access value for name routineManager"
+                        },
+                        {
+                            "codegenResult": 0,
+                            "column": 35,
+                            "durationMicroseconds": 0,
+                            "functionName": "fill",
+                            "line": 373,
+                            "message": ""
+                        },
+                        {
+                            "codegenResult": 2,
+                            "column": 24,
+                            "durationMicroseconds": 0,
+                            "functionName": "color",
+                            "line": 383,
+                            "message": "Cannot generate efficient code for script lookup"
+                        },
+                        {
+                            "codegenResult": 2,
+                            "column": 31,
+                            "durationMicroseconds": 0,
+                            "functionName": "color",
+                            "line": 385,
+                            "message": "Cannot generate efficient code for script lookup"
+                        },
+                        {
+                            "codegenResult": 2,
+                            "column": 28,
+                            "durationMicroseconds": 0,
+                            "functionName": "color",
+                            "line": 390,
+                            "message": "Cannot generate efficient code for script lookup"
+                        },
+                        {
+                            "codegenResult": 0,
+                            "column": 39,
+                            "durationMicroseconds": 0,
+                            "functionName": "centerIn",
+                            "line": 388,
+                            "message": ""
+                        },
+                        {
+                            "codegenResult": 0,
+                            "column": 34,
+                            "durationMicroseconds": 0,
+                            "functionName": "family",
+                            "line": 391,
+                            "message": ""
+                        },
+                        {
+                            "codegenResult": 0,
+                            "column": 34,
+                            "durationMicroseconds": 0,
+                            "functionName": "cursorShape",
+                            "line": 400,
                             "message": ""
                         },
                         {
@@ -938,7 +1010,7 @@
                             "column": 32,
                             "durationMicroseconds": 0,
                             "functionName": "onClicked",
-                            "line": 375,
+                            "line": 401,
                             "message": ""
                         },
                         {
@@ -946,7 +1018,7 @@
                             "column": 35,
                             "durationMicroseconds": 0,
                             "functionName": "fill",
-                            "line": 372,
+                            "line": 398,
                             "message": ""
                         }
                     ],

@@ -352,6 +352,32 @@ Item {
             }
 
             Rectangle {
+                visible: routineManager.activeRoutineHasLaunchTargets
+                width: 150
+                height: 40
+                color: relaunchHover.containsMouse ? Theme.steel : "#33141420"
+                border.width: 1
+                border.color: relaunchHover.containsMouse ? Theme.gold : Theme.goldDim
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "↻ RELAUNCH"
+                    color: relaunchHover.containsMouse ? Theme.gold : Theme.goldDim
+                    font.family: root.headerFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                }
+
+                MouseArea {
+                    id: relaunchHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: routineManager.relaunchActiveRoutine()
+                }
+            }
+
+            Rectangle {
                 width: 160
                 height: 40
                 color: endHover.containsMouse ? Theme.crimsonHot : "#33141420"

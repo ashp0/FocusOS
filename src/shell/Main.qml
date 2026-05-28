@@ -7,10 +7,22 @@ Item {
     height: 900
     focus: true
 
-    property bool sidebarCollapsed: false
+    property bool sidebarCollapsed: true
     property bool helpOpen: false
 
     Keys.onEscapePressed: function(event) {
+        if (routineManager.networkLockPromptVisible) {
+            routineManager.abortPendingRoutineStart()
+            event.accepted = true
+            root.forceActiveFocus()
+            return
+        }
+        if (routineEditor.open) {
+            routineEditor.closeEditor()
+            event.accepted = true
+            root.forceActiveFocus()
+            return
+        }
         if (unlockModal.modalOpen) {
             unlockModal.closeModal()
             event.accepted = true
@@ -121,6 +133,7 @@ Item {
             bodyBoldFont: root.bodyBoldFont
             sidebarCollapsed: root.sidebarCollapsed
             onUnlockRequested: unlockModal.openModal()
+            onEditRoutinesRequested: routineEditor.openEditor()
             onShowSidebar: root.sidebarCollapsed = false
 
             Behavior on width {
@@ -180,6 +193,14 @@ Item {
         headerFont: root.headerFont
         bodyFont: root.bodyFont
         z: 30
+    }
+
+    RoutineEditorDialog {
+        id: routineEditor
+        anchors.fill: parent
+        headerFont: root.headerFont
+        bodyFont: root.bodyFont
+        z: 32
     }
 
     Item {
@@ -364,6 +385,336 @@ Item {
         }
     }
 
+    Item {
+        id: completionBurst
+        anchors.fill: parent
+        z: 34
+        visible: running || opacity > 0
+        opacity: running ? 1 : 0
+        property bool running: false
+        property real age: 0
+        property var particles: []
+
+        function ignite() {
+            const next = []
+            const cx = width * 0.5
+            const cy = height * 0.5
+            const colors = ["#E8A020", "#C0392B", "#F5F0E8"]
+            for (let i = 0; i < 52; ++i) {
+                const angle = Math.random() * Math.PI * 2
+                const speed = 220 + Math.random() * 560
+                next.push({
+                    x: cx,
+                    y: cy,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 40,
+                    width: 2 + Math.random() * 3,
+                    length: 12 + Math.random() * 26,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    rotation: angle + Math.PI / 2 + (Math.random() - 0.5) * 0.8,
+                    spin: (Math.random() - 0.5) * 5.5,
+                    life: 0.8 + Math.random() * 0.8
+                })
+            }
+            particles = next
+            age = 0
+            running = true
+            burstTimer.restart()
+            burstCanvas.requestPaint()
+        }
+
+        Behavior on opacity {
+            NumberAnimation { duration: 600; easing.type: Easing.OutQuad }
+        }
+
+        Canvas {
+            id: burstCanvas
+            anchors.fill: parent
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+                if (!completionBurst.running && completionBurst.age <= 0) {
+                    return
+                }
+
+                const t = completionBurst.age
+                const cx = width * 0.5
+                const cy = height * 0.5
+                const flash = Math.max(0, 1 - t * 1.5)
+                const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * 0.45)
+                halo.addColorStop(0, "rgba(232,160,32," + (0.34 * flash) + ")")
+                halo.addColorStop(0.35, "rgba(192,57,43," + (0.18 * flash) + ")")
+                halo.addColorStop(1, "rgba(5,5,8,0)")
+                ctx.fillStyle = halo
+                ctx.fillRect(0, 0, width, height)
+
+                ctx.save()
+                ctx.translate(cx, cy - 58 - t * 90)
+                ctx.rotate(-0.08)
+                ctx.fillStyle = "rgba(232,220,200," + Math.max(0, 0.9 - t) + ")"
+                ctx.beginPath()
+                ctx.moveTo(0, -34)
+                ctx.lineTo(13, 20)
+                ctx.lineTo(-13, 20)
+                ctx.closePath()
+                ctx.fill()
+                ctx.fillStyle = "rgba(192,57,43," + Math.max(0, 0.85 - t) + ")"
+                ctx.fillRect(-15, 10, 30, 12)
+                ctx.restore()
+
+                for (let i = 0; i < completionBurst.particles.length; ++i) {
+                    const p = completionBurst.particles[i]
+                    const lifeT = Math.min(1, t / p.life)
+                    const alpha = Math.max(0, 1 - lifeT)
+                    const x = p.x + p.vx * t
+                    const y = p.y + p.vy * t + 260 * t * t
+                    ctx.save()
+                    ctx.translate(x, y)
+                    ctx.rotate(p.rotation + p.spin * t)
+                    ctx.globalAlpha = alpha
+                    ctx.fillStyle = p.color
+                    ctx.fillRect(-p.width / 2, -p.length / 2, p.width, p.length * (1 + lifeT * 0.35))
+                    ctx.globalAlpha = alpha * 0.28
+                    ctx.fillRect(-p.width, -p.length / 2, p.width * 2, p.length * 1.6)
+                    ctx.restore()
+                }
+                ctx.globalAlpha = 1
+            }
+        }
+
+        Timer {
+            id: burstTimer
+            interval: 16
+            repeat: true
+            onTriggered: {
+                completionBurst.age += 0.016
+                if (completionBurst.age > 1.7) {
+                    completionBurst.running = false
+                    stop()
+                }
+                burstCanvas.requestPaint()
+            }
+        }
+
+        Connections {
+            target: routineManager
+            function onSessionPromptChanged() {
+                if (routineManager.sessionPromptVisible && routineManager.finishedSessionResult === "completed") {
+                    completionBurst.ignite()
+                }
+            }
+        }
+    }
+
+    Item {
+        id: statusToast
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 94
+        z: 38
+        height: 42
+        visible: opacity > 0
+        opacity: 0
+        property string message: ""
+
+        function show(messageText) {
+            message = String(messageText || "")
+            if (message.length === 0) {
+                return
+            }
+            opacity = 1
+            toastTimer.restart()
+        }
+
+        Behavior on opacity {
+            NumberAnimation { duration: 180; easing.type: Easing.InOutQuad }
+        }
+
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 48, toastText.implicitWidth + 36)
+            height: parent.height
+            color: "#ee0f0f14"
+            border.width: 1
+            border.color: Theme.gold
+
+            Text {
+                id: toastText
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                text: statusToast.message
+                color: Theme.gold
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignHCenter
+                font.family: root.bodyFont
+                font.pixelSize: 12
+                font.letterSpacing: 0
+            }
+        }
+
+        Timer {
+            id: toastTimer
+            interval: 3600
+            onTriggered: statusToast.opacity = 0
+        }
+
+        Connections {
+            target: routineManager
+            function onStatusMessageChanged(message) {
+                statusToast.show(message)
+            }
+        }
+    }
+
+    Item {
+        id: networkLockPrompt
+        anchors.fill: parent
+        z: 37
+        visible: opacity > 0
+        opacity: routineManager.networkLockPromptVisible ? 1 : 0
+
+        Behavior on opacity {
+            NumberAnimation { duration: 180; easing.type: Easing.InOutQuad }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#e8050508"
+        }
+
+        MouseArea {
+            anchors.fill: parent
+        }
+
+        Rectangle {
+            width: Math.min(620, parent.width - 64)
+            height: 286
+            anchors.centerIn: parent
+            color: Theme.iron
+            border.width: 1
+            border.color: Theme.crimsonHot
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 48
+                color: Theme.crimson
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "NETWORK LOCK FAILED"
+                    color: Theme.gold
+                    font.family: root.headerFont
+                    font.pixelSize: 16
+                    font.letterSpacing: 0
+                }
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 76
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                text: routineManager.networkLockRoutineName
+                color: Theme.textPrimary
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                font.family: root.headerFont
+                font.pixelSize: 20
+                font.letterSpacing: 0
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 118
+                anchors.leftMargin: 34
+                anchors.rightMargin: 34
+                text: "Network restrictions could not be applied. The routine can start only if you explicitly continue without the network lock."
+                color: Theme.goldDim
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.family: root.bodyFont
+                font.pixelSize: 12
+                font.letterSpacing: 0
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 174
+                anchors.leftMargin: 34
+                anchors.rightMargin: 34
+                text: routineManager.networkLockError
+                color: Theme.textDim
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                font.family: root.bodyFont
+                font.pixelSize: 11
+                font.letterSpacing: 0
+            }
+
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 26
+                spacing: 14
+
+                Repeater {
+                    model: [
+                        {"label": "ABORT", "continue": false},
+                        {"label": "START WITHOUT LOCK", "continue": true}
+                    ]
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        width: modelData.continue ? 192 : 136
+                        height: 38
+                        color: promptButtonMouse.containsMouse
+                               ? (modelData.continue ? Theme.crimsonHot : Theme.steel)
+                               : (modelData.continue ? Theme.crimson : Theme.iron)
+                        border.width: 1
+                        border.color: promptButtonMouse.containsMouse ? Theme.gold : Theme.goldDim
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: Theme.gold
+                            font.family: root.headerFont
+                            font.pixelSize: 12
+                            font.letterSpacing: 0
+                        }
+
+                        MouseArea {
+                            id: promptButtonMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (modelData.continue) {
+                                    routineManager.startPendingRoutineWithoutNetworkLock()
+                                } else {
+                                    routineManager.abortPendingRoutineStart()
+                                }
+                                root.forceActiveFocus()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Help overlay (press ?)
     Item {
         id: helpOverlay
@@ -461,6 +812,93 @@ Item {
                 font.family: root.bodyFont
                 font.pixelSize: 11
             }
+        }
+    }
+
+    Item {
+        id: countdownBorder
+        anchors.fill: parent
+        z: 999
+        visible: routineManager.active
+
+        property int sampledElapsedSeconds: 0
+        property int sampledTotalSeconds: 0
+        property real pulsePhase: 0
+        property real progressValue: sampledTotalSeconds > 0
+                                     ? Math.max(0, Math.min(1, sampledElapsedSeconds / sampledTotalSeconds))
+                                     : 0
+        property real lateProgress: progressValue <= 0.8 ? 0 : Math.min(1, (progressValue - 0.8) / 0.2)
+        property real barOpacity: progressValue <= 0.8
+                                  ? 0.18 + (0.55 - 0.18) * (progressValue / 0.8)
+                                  : 0.55 + Math.sin(pulsePhase) * 0.15
+        property real barWidth: 3 + lateProgress * 2
+
+        function sampleProgress() {
+            sampledElapsedSeconds = routineManager.elapsedSeconds
+            sampledTotalSeconds = routineManager.activeRoutineTotalSeconds
+        }
+
+        onVisibleChanged: {
+            if (visible) {
+                pulsePhase = 0
+                sampleProgress()
+                progressTimer.restart()
+            } else {
+                progressTimer.stop()
+                pulseTimer.stop()
+            }
+        }
+
+        Timer {
+            id: progressTimer
+            interval: 1000
+            running: countdownBorder.visible
+            repeat: true
+            onTriggered: countdownBorder.sampleProgress()
+        }
+
+        Timer {
+            id: pulseTimer
+            interval: 100
+            running: countdownBorder.visible && countdownBorder.progressValue >= 0.8
+            repeat: true
+            onTriggered: countdownBorder.pulsePhase += Math.PI / 10
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            width: countdownBorder.barWidth
+            height: parent.height * countdownBorder.progressValue
+            color: "#E8A020"
+            opacity: countdownBorder.barOpacity
+        }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            width: parent.width * countdownBorder.progressValue
+            height: countdownBorder.barWidth
+            color: "#E8A020"
+            opacity: countdownBorder.barOpacity
+        }
+
+        Rectangle {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: countdownBorder.barWidth
+            height: parent.height * countdownBorder.progressValue
+            color: "#E8A020"
+            opacity: countdownBorder.barOpacity
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            width: parent.width * countdownBorder.progressValue
+            height: countdownBorder.barWidth
+            color: "#E8A020"
+            opacity: countdownBorder.barOpacity
         }
     }
 

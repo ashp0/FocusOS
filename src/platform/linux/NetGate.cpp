@@ -6,13 +6,15 @@
 #include <QHostInfo>
 #include <QProcess>
 #include <QSet>
+#include <QStandardPaths>
 #include <QUrl>
 #endif
 
 QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 {
 #ifdef Q_OS_LINUX
-    QSet<QString> resolvedAddresses;
+    QSet<QString> resolvedIpv4Addresses;
+    QSet<QString> resolvedIpv6Addresses;
     for (const QString &entry : allowedHosts) {
         QString host = entry.trimmed().toLower();
         if (host.isEmpty()) {
@@ -27,15 +29,21 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
         }
 
         const QHostAddress literalAddress(host);
-        if (!literalAddress.isNull() && literalAddress.protocol() == QAbstractSocket::IPv4Protocol) {
-            resolvedAddresses.insert(literalAddress.toString());
+        if (!literalAddress.isNull()) {
+            if (literalAddress.protocol() == QAbstractSocket::IPv4Protocol) {
+                resolvedIpv4Addresses.insert(literalAddress.toString());
+            } else if (literalAddress.protocol() == QAbstractSocket::IPv6Protocol) {
+                resolvedIpv6Addresses.insert(literalAddress.toString());
+            }
             continue;
         }
 
         const QHostInfo info = QHostInfo::fromName(host);
         for (const QHostAddress &address : info.addresses()) {
             if (address.protocol() == QAbstractSocket::IPv4Protocol) {
-                resolvedAddresses.insert(address.toString());
+                resolvedIpv4Addresses.insert(address.toString());
+            } else if (address.protocol() == QAbstractSocket::IPv6Protocol) {
+                resolvedIpv6Addresses.insert(address.toString());
             }
         }
     }
@@ -43,26 +51,43 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 
     QString rules;
     rules += QStringLiteral("table inet focusos {\n");
-    rules += QStringLiteral("  set allowed_hosts {\n");
-    rules += QStringLiteral("    type ipv4_addr\n");
-    rules += QStringLiteral("    flags interval\n");
+    rules += QStringLiteral("  set allowed_ipv4 {\n");
+    rules += QStringLiteral("    type ipv4_addr;\n");
+    rules += QStringLiteral("    flags interval;\n");
 #ifdef Q_OS_LINUX
-    if (!resolvedAddresses.isEmpty()) {
+    if (!resolvedIpv4Addresses.isEmpty()) {
         QStringList sortedAddresses;
-        sortedAddresses.reserve(resolvedAddresses.size());
-        for (const QString &address : resolvedAddresses) {
+        sortedAddresses.reserve(resolvedIpv4Addresses.size());
+        for (const QString &address : resolvedIpv4Addresses) {
             sortedAddresses.append(address);
         }
         sortedAddresses.sort();
-        rules += QStringLiteral("    elements = { %1 }\n").arg(sortedAddresses.join(QStringLiteral(", ")));
+        rules += QStringLiteral("    elements = { %1 };\n").arg(sortedAddresses.join(QStringLiteral(", ")));
+    }
+#endif
+    rules += QStringLiteral("  }\n");
+    rules += QStringLiteral("  set allowed_ipv6 {\n");
+    rules += QStringLiteral("    type ipv6_addr;\n");
+    rules += QStringLiteral("    flags interval;\n");
+#ifdef Q_OS_LINUX
+    if (!resolvedIpv6Addresses.isEmpty()) {
+        QStringList sortedAddresses;
+        sortedAddresses.reserve(resolvedIpv6Addresses.size());
+        for (const QString &address : resolvedIpv6Addresses) {
+            sortedAddresses.append(address);
+        }
+        sortedAddresses.sort();
+        rules += QStringLiteral("    elements = { %1 };\n").arg(sortedAddresses.join(QStringLiteral(", ")));
     }
 #endif
     rules += QStringLiteral("  }\n");
     rules += QStringLiteral("  chain output {\n");
     rules += QStringLiteral("    type filter hook output priority 0; policy drop;\n");
-    rules += QStringLiteral("    oifname \"lo\" accept\n");
-    rules += QStringLiteral("    meta l4proto { tcp, udp } th dport 53 accept\n");
-    rules += QStringLiteral("    ip daddr @allowed_hosts accept\n");
+    rules += QStringLiteral("    oifname \"lo\" accept;\n");
+    rules += QStringLiteral("    meta l4proto { tcp, udp } th dport 53 accept;\n");
+    rules += QStringLiteral("    ip daddr @allowed_ipv4 accept;\n");
+    rules += QStringLiteral("    ip6 daddr @allowed_ipv6 accept;\n");
+    rules += QStringLiteral("    counter drop;\n");
     rules += QStringLiteral("  }\n");
     rules += QStringLiteral("}\n");
     rules += QStringLiteral("# Host allowlist resolved by the Linux backend:\n");
@@ -75,8 +100,18 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) const
 {
 #ifdef Q_OS_LINUX
+    const QString nftPath = QStandardPaths::findExecutable(QStringLiteral("nft"));
+    if (nftPath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("nftables is not installed; install nftables and enable the FocusOS network lock");
+        }
+        return false;
+    }
+
+    QProcess::execute(nftPath, {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
+
     QProcess nft;
-    nft.start(QStringLiteral("nft"), {QStringLiteral("-f"), QStringLiteral("-")});
+    nft.start(nftPath, {QStringLiteral("-f"), QStringLiteral("-")});
     if (!nft.waitForStarted()) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Unable to start nft");
@@ -105,6 +140,9 @@ bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) cons
 void NetGate::drop() const
 {
 #ifdef Q_OS_LINUX
-    QProcess::execute(QStringLiteral("nft"), {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
+    const QString nftPath = QStandardPaths::findExecutable(QStringLiteral("nft"));
+    if (!nftPath.isEmpty()) {
+        QProcess::execute(nftPath, {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
+    }
 #endif
 }

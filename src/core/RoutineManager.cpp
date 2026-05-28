@@ -12,6 +12,7 @@
 #include <QJsonParseError>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSettings>
 #include <QSet>
 #include <QStandardPaths>
 #include <QVariantMap>
@@ -149,10 +150,7 @@ QVariant RoutineManager::data(const QModelIndex &index, int role) const
         QStringList appNames;
         appNames.reserve(routine.apps.size());
         for (const QString &app : routine.apps) {
-            QString name = QFileInfo(app).completeBaseName();
-            if (name.isEmpty()) {
-                name = app;
-            }
+            QString name = applicationDisplayName(app);
             appNames.append(name.toUpper());
         }
         return appNames.join(QStringLiteral("  ■  "));
@@ -163,6 +161,12 @@ QVariant RoutineManager::data(const QModelIndex &index, int role) const
         return routine.timeLimitMinutes;
     case MinTimeMinutesRole:
         return routine.minTimeMinutes;
+    case NetworkLockRole:
+        return routine.networkLock;
+    case BreakFrequencyMinutesRole:
+        return routine.breakFrequencyMinutes;
+    case BreakDurationMinutesRole:
+        return routine.breakDurationMinutes;
     case IsActiveRole:
         return routineIsActive;
     case TimeLabelRole:
@@ -190,6 +194,9 @@ QHash<int, QByteArray> RoutineManager::roleNames() const
         {AllowedUrlsRole, "allowedUrls"},
         {TimeLimitMinutesRole, "timeLimitMinutes"},
         {MinTimeMinutesRole, "minTimeMinutes"},
+        {NetworkLockRole, "networkLock"},
+        {BreakFrequencyMinutesRole, "breakFrequencyMinutes"},
+        {BreakDurationMinutesRole, "breakDurationMinutes"},
         {IsActiveRole, "isActive"},
         {TimeLabelRole, "timeLabel"},
         {ButtonLabelRole, "buttonLabel"},
@@ -324,6 +331,36 @@ bool RoutineManager::desktopShellRunning() const
     return m_desktopShellRunning;
 }
 
+bool RoutineManager::activeRoutineHasLaunchTargets() const
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    if (routineIndex < 0) {
+        return false;
+    }
+    const Routine &routine = m_routines.at(routineIndex);
+    return !routine.apps.isEmpty() || !routine.allowedUrls.isEmpty();
+}
+
+QString RoutineManager::statusMessage() const
+{
+    return m_statusMessage;
+}
+
+bool RoutineManager::networkLockPromptVisible() const
+{
+    return !m_pendingNetworkRoutineId.isEmpty();
+}
+
+QString RoutineManager::networkLockError() const
+{
+    return m_networkLockError;
+}
+
+QString RoutineManager::networkLockRoutineName() const
+{
+    return m_networkLockRoutineName;
+}
+
 void RoutineManager::endActiveRoutine()
 {
     if (!active()) {
@@ -375,7 +412,23 @@ void RoutineManager::launchDesktopShell()
         m_desktopShellRunning = true;
         emit desktopShellChanged();
     } else if (!error.isEmpty()) {
-        emit statusMessageChanged(error);
+        setStatusMessage(error);
+    }
+    emit desktopAccessRequested();
+}
+
+void RoutineManager::relaunchActiveRoutine()
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    if (routineIndex < 0 || !m_backend) {
+        return;
+    }
+
+    QString error;
+    if (!launchRoutineTargets(m_routines.at(routineIndex), &error) && !error.isEmpty()) {
+        setStatusMessage(error);
+    } else {
+        setStatusMessage(QStringLiteral("ROUTINE WINDOWS RELAUNCHED"));
     }
 }
 
@@ -397,6 +450,7 @@ void RoutineManager::engage(const QString &routineId)
         return;
     }
     clearFinishedSessionPrompt();
+    clearNetworkLockPrompt();
 
     const int routineIndex = indexOfRoutine(routineId);
     if (routineIndex < 0) {
@@ -405,17 +459,45 @@ void RoutineManager::engage(const QString &routineId)
 
     const Routine &routine = m_routines.at(routineIndex);
     QString error;
-    if (m_backend) {
-        m_backend->launchApps(routine.apps, &error);
-        m_backend->applyNetworkPolicy(routine.allowedUrls, &error);
+    if (!startRoutine(routine, routine.networkLock, &error)) {
+        if (routine.networkLock && error.startsWith(QStringLiteral("network:"), Qt::CaseInsensitive)) {
+            setNetworkLockPrompt(routine, error.mid(QStringLiteral("network:").size()).trimmed());
+            return;
+        }
+        setStatusMessage(error.isEmpty()
+                             ? QStringLiteral("ROUTINE START FAILED")
+                             : error);
+    }
+}
+
+void RoutineManager::startPendingRoutineWithoutNetworkLock()
+{
+    if (m_pendingNetworkRoutineId.isEmpty() || active() || accessGranted()) {
+        clearNetworkLockPrompt();
+        return;
     }
 
-    m_activeRoutineId = routine.id;
-    m_activeStartedAt = QDateTime::currentDateTimeUtc();
-    emit activeChanged();
-    emitRowsChanged();
-    m_routineTimer.start(routine.timeLimitMinutes * 60);
-    emitActiveSessionProgress();
+    const int routineIndex = indexOfRoutine(m_pendingNetworkRoutineId);
+    if (routineIndex < 0) {
+        clearNetworkLockPrompt();
+        return;
+    }
+
+    const Routine routine = m_routines.at(routineIndex);
+    clearNetworkLockPrompt();
+
+    QString error;
+    if (!startRoutine(routine, false, &error)) {
+        setStatusMessage(error.isEmpty()
+                             ? QStringLiteral("ROUTINE START FAILED")
+                             : error);
+    }
+}
+
+void RoutineManager::abortPendingRoutineStart()
+{
+    clearNetworkLockPrompt();
+    setStatusMessage(QStringLiteral("ROUTINE START ABORTED"));
 }
 
 void RoutineManager::unlockOtherAccess()
@@ -486,6 +568,9 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("allowed_urls"), routine.allowedUrls);
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
+        object.insert(QStringLiteral("network_lock"), routine.networkLock);
+        object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
+        object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         routines.append(object);
     }
     return routines;
@@ -540,6 +625,9 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("allowed_urls"), urlArray);
         routine.insert(QStringLiteral("time_limit_minutes"), qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60)));
         routine.insert(QStringLiteral("min_time_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0)));
+        routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
+        routine.insert(QStringLiteral("break_frequency_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0)));
+        routine.insert(QStringLiteral("break_duration_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0)));
         array.append(routine);
     }
 
@@ -548,18 +636,18 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
 
     QSaveFile file(routinesPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        emit statusMessageChanged(QStringLiteral("ROUTINE SAVE FAILED"));
+        setStatusMessage(QStringLiteral("ROUTINE SAVE FAILED"));
         return false;
     }
 
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     if (!file.commit()) {
-        emit statusMessageChanged(QStringLiteral("ROUTINE SAVE FAILED"));
+        setStatusMessage(QStringLiteral("ROUTINE SAVE FAILED"));
         return false;
     }
 
     loadRoutines();
-    emit statusMessageChanged(QStringLiteral("ROUTINES SAVED"));
+    setStatusMessage(QStringLiteral("ROUTINES SAVED"));
     return true;
 }
 
@@ -594,6 +682,9 @@ bool RoutineManager::updateRoutineDescription(const QString &routineId, const QS
         object.insert(QStringLiteral("allowed_urls"), urlArray);
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
+        object.insert(QStringLiteral("network_lock"), routine.networkLock);
+        object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
+        object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         array.append(object);
     }
 
@@ -622,18 +713,56 @@ QString RoutineManager::pickApplication() const
         QStringLiteral("/Applications"),
         QStringLiteral("Applications (*.app)"));
 #elif defined(Q_OS_LINUX)
+    const QString applicationsPath = QFileInfo::exists(QStringLiteral("/usr/share/applications"))
+        ? QStringLiteral("/usr/share/applications")
+        : QDir::homePath();
     const QString path = QFileDialog::getOpenFileName(
         nullptr,
-        QStringLiteral("Select Allowed Executable"),
-        QDir::homePath(),
-        QStringLiteral("Executables (*)"));
-    if (!path.isEmpty() && !QFileInfo(path).isExecutable()) {
+        QStringLiteral("Select Allowed Application"),
+        applicationsPath,
+        QStringLiteral("Applications (*.desktop);;Executables (*)"));
+    const QFileInfo info(path);
+    if (!path.isEmpty() &&
+        info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) != 0 &&
+        !info.isExecutable()) {
         return {};
     }
     return path;
 #else
     return {};
 #endif
+}
+
+QString RoutineManager::applicationDisplayName(const QString &path) const
+{
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty()) {
+        return {};
+    }
+
+    const QFileInfo info(trimmed);
+    if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0 && info.exists()) {
+        QSettings desktopFile(trimmed, QSettings::IniFormat);
+        desktopFile.beginGroup(QStringLiteral("Desktop Entry"));
+        QString name = desktopFile.value(QStringLiteral("Name")).toString().trimmed();
+        if (name.isEmpty()) {
+            name = desktopFile.value(QStringLiteral("GenericName")).toString().trimmed();
+        }
+        desktopFile.endGroup();
+        if (!name.isEmpty()) {
+            return name;
+        }
+    }
+
+    if (trimmed.endsWith(QStringLiteral(".app"), Qt::CaseInsensitive)) {
+        return info.completeBaseName();
+    }
+
+    QString name = info.completeBaseName();
+    if (name.isEmpty()) {
+        name = info.fileName();
+    }
+    return name.isEmpty() ? trimmed : name;
 }
 
 void RoutineManager::loadConfig()
@@ -695,6 +824,9 @@ void RoutineManager::loadRoutines()
         routine.allowedUrls = jsonArrayToStringList(object.value(QStringLiteral("allowed_urls")).toArray());
         routine.timeLimitMinutes = qMax(1, object.value(QStringLiteral("time_limit_minutes")).toInt(60));
         routine.minTimeMinutes = qMax(0, object.value(QStringLiteral("min_time_minutes")).toInt(0));
+        routine.networkLock = object.value(QStringLiteral("network_lock")).toBool(true);
+        routine.breakFrequencyMinutes = qMax(0, object.value(QStringLiteral("break_frequency_minutes")).toInt(0));
+        routine.breakDurationMinutes = qMax(0, object.value(QStringLiteral("break_duration_minutes")).toInt(0));
         if (!routine.id.isEmpty() && !routine.name.isEmpty()) {
             m_routines.append(routine);
         }
@@ -715,6 +847,9 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     deepWork.insert(QStringLiteral("allowed_urls"), QJsonArray {});
     deepWork.insert(QStringLiteral("time_limit_minutes"), 120);
     deepWork.insert(QStringLiteral("min_time_minutes"), 25);
+    deepWork.insert(QStringLiteral("network_lock"), true);
+    deepWork.insert(QStringLiteral("break_frequency_minutes"), 0);
+    deepWork.insert(QStringLiteral("break_duration_minutes"), 0);
     routines.append(deepWork);
 
     QJsonObject research;
@@ -728,6 +863,9 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     });
     research.insert(QStringLiteral("time_limit_minutes"), 60);
     research.insert(QStringLiteral("min_time_minutes"), 0);
+    research.insert(QStringLiteral("network_lock"), true);
+    research.insert(QStringLiteral("break_frequency_minutes"), 0);
+    research.insert(QStringLiteral("break_duration_minutes"), 0);
     routines.append(research);
 
     QJsonObject reflection;
@@ -738,6 +876,9 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     reflection.insert(QStringLiteral("allowed_urls"), QJsonArray {});
     reflection.insert(QStringLiteral("time_limit_minutes"), 30);
     reflection.insert(QStringLiteral("min_time_minutes"), 10);
+    reflection.insert(QStringLiteral("network_lock"), true);
+    reflection.insert(QStringLiteral("break_frequency_minutes"), 0);
+    reflection.insert(QStringLiteral("break_duration_minutes"), 0);
     routines.append(reflection);
 
     QJsonObject root;
@@ -847,6 +988,88 @@ void RoutineManager::emitRowsChanged()
     });
 }
 
+bool RoutineManager::startRoutine(const Routine &routine, bool applyNetworkLock, QString *errorMessage)
+{
+    if (m_backend) {
+        QString error;
+        if (applyNetworkLock && !m_backend->applyNetworkPolicy(routine.allowedUrls, &error)) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("network: %1").arg(error.isEmpty()
+                                                                       ? QStringLiteral("network restrictions could not be applied")
+                                                                       : error);
+            }
+            return false;
+        }
+
+        m_backend->prepareRoutineSession(routine.apps);
+        if (!launchRoutineTargets(routine, &error)) {
+            if (applyNetworkLock) {
+                m_backend->dropNetworkPolicy();
+            }
+            if (errorMessage) {
+                *errorMessage = error.isEmpty()
+                    ? QStringLiteral("ROUTINE LAUNCH FAILED")
+                    : QStringLiteral("ROUTINE LAUNCH FAILED: %1").arg(error);
+            }
+            return false;
+        }
+    }
+
+    m_activeRoutineId = routine.id;
+    m_activeStartedAt = QDateTime::currentDateTimeUtc();
+    emit activeChanged();
+    emitRowsChanged();
+    m_routineTimer.start(routine.timeLimitMinutes * 60);
+    emitActiveSessionProgress();
+    return true;
+}
+
+bool RoutineManager::launchRoutineTargets(const Routine &routine, QString *errorMessage)
+{
+    if (!m_backend) {
+        return true;
+    }
+
+    if (!routine.apps.isEmpty() && !m_backend->launchApps(routine.apps, errorMessage)) {
+        return false;
+    }
+
+    if (!routine.allowedUrls.isEmpty() && !m_backend->openUrls(routine.allowedUrls, errorMessage)) {
+        return false;
+    }
+
+    return true;
+}
+
+void RoutineManager::setStatusMessage(const QString &message)
+{
+    m_statusMessage = message;
+    emit statusMessageChanged(m_statusMessage);
+}
+
+void RoutineManager::setNetworkLockPrompt(const Routine &routine, const QString &error)
+{
+    m_pendingNetworkRoutineId = routine.id;
+    m_networkLockRoutineName = routine.name;
+    m_networkLockError = error.isEmpty()
+        ? QStringLiteral("Network restrictions could not be applied.")
+        : error;
+    setStatusMessage(QStringLiteral("NETWORK LOCK FAILED"));
+    emit networkLockPromptChanged();
+}
+
+void RoutineManager::clearNetworkLockPrompt()
+{
+    if (m_pendingNetworkRoutineId.isEmpty() && m_networkLockError.isEmpty() && m_networkLockRoutineName.isEmpty()) {
+        return;
+    }
+
+    m_pendingNetworkRoutineId.clear();
+    m_networkLockError.clear();
+    m_networkLockRoutineName.clear();
+    emit networkLockPromptChanged();
+}
+
 void RoutineManager::setFinishedSessionPrompt(const Routine &routine, int minutes, const QString &result)
 {
     m_sessionPromptVisible = true;
@@ -854,6 +1077,7 @@ void RoutineManager::setFinishedSessionPrompt(const Routine &routine, int minute
     m_finishedSessionMinutes = qMax(0, minutes);
     m_finishedSessionResult = result;
     m_finishedSessionApps = routine.apps;
+    m_finishedSessionUrls = routine.allowedUrls;
     emit sessionPromptChanged();
 }
 
@@ -863,7 +1087,8 @@ void RoutineManager::clearFinishedSessionPrompt()
         m_finishedSessionName.isEmpty() &&
         m_finishedSessionMinutes == 0 &&
         m_finishedSessionResult.isEmpty() &&
-        m_finishedSessionApps.isEmpty()) {
+        m_finishedSessionApps.isEmpty() &&
+        m_finishedSessionUrls.isEmpty()) {
         return;
     }
 
@@ -872,6 +1097,7 @@ void RoutineManager::clearFinishedSessionPrompt()
     m_finishedSessionMinutes = 0;
     m_finishedSessionResult.clear();
     m_finishedSessionApps.clear();
+    m_finishedSessionUrls.clear();
     emit sessionPromptChanged();
 }
 

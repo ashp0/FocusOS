@@ -34,6 +34,25 @@ bool MacBackend::launchApps(const QStringList &appPaths, QString *errorMessage)
     return true;
 }
 
+bool MacBackend::openUrls(const QStringList &urls, QString *errorMessage)
+{
+    for (const QString &url : urls) {
+        const QString trimmed = url.trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+
+        if (!QProcess::startDetached(QStringLiteral("/usr/bin/open"), {trimmed})) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Unable to open %1").arg(trimmed);
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void MacBackend::terminateApps(const QStringList &appPaths)
 {
     for (const QString &appPath : appPaths) {

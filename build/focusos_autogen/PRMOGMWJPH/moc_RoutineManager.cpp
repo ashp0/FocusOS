@@ -51,6 +51,8 @@ template <> constexpr inline auto RoutineManager::qt_create_metaobjectdata<qt_me
         "routineCountChanged",
         "statusMessageChanged",
         "message",
+        "networkLockPromptChanged",
+        "desktopAccessRequested",
         "routineSessionFinished",
         "routineId",
         "routineName",
@@ -62,10 +64,13 @@ template <> constexpr inline auto RoutineManager::qt_create_metaobjectdata<qt_me
         "elapsedSeconds",
         "updatedAt",
         "engage",
+        "startPendingRoutineWithoutNetworkLock",
+        "abortPendingRoutineStart",
         "togglePause",
         "endActiveRoutine",
         "closeOtherAccess",
         "launchDesktopShell",
+        "relaunchActiveRoutine",
         "unlockOtherAccess",
         "continueFinishedSession",
         "quitFinishedSession",
@@ -76,6 +81,8 @@ template <> constexpr inline auto RoutineManager::qt_create_metaobjectdata<qt_me
         "updateRoutineDescription",
         "description",
         "pickApplication",
+        "applicationDisplayName",
+        "path",
         "active",
         "activeRoutineId",
         "activeRoutineName",
@@ -95,6 +102,11 @@ template <> constexpr inline auto RoutineManager::qt_create_metaobjectdata<qt_me
         "desktopShellSupported",
         "desktopShellRunning",
         "routineCount",
+        "activeRoutineHasLaunchTargets",
+        "statusMessage",
+        "networkLockPromptVisible",
+        "networkLockError",
+        "networkLockRoutineName",
         "Role",
         "RoutineIdRole",
         "NameRole",
@@ -104,6 +116,9 @@ template <> constexpr inline auto RoutineManager::qt_create_metaobjectdata<qt_me
         "AllowedUrlsRole",
         "TimeLimitMinutesRole",
         "MinTimeMinutesRole",
+        "NetworkLockRole",
+        "BreakFrequencyMinutesRole",
+        "BreakDurationMinutesRole",
         "IsActiveRole",
         "TimeLabelRole",
         "ButtonLabelRole",
@@ -133,104 +148,131 @@ template <> constexpr inline auto RoutineManager::qt_create_metaobjectdata<qt_me
         QtMocHelpers::SignalData<void(const QString &)>(11, 2, QMC::AccessPublic, QMetaType::Void, {{
             { QMetaType::QString, 12 },
         }}),
+        // Signal 'networkLockPromptChanged'
+        QtMocHelpers::SignalData<void()>(13, 2, QMC::AccessPublic, QMetaType::Void),
+        // Signal 'desktopAccessRequested'
+        QtMocHelpers::SignalData<void()>(14, 2, QMC::AccessPublic, QMetaType::Void),
         // Signal 'routineSessionFinished'
-        QtMocHelpers::SignalData<void(const QString &, const QString &, int, const QString &, const QDateTime &, const QDateTime &)>(13, 2, QMC::AccessPublic, QMetaType::Void, {{
-            { QMetaType::QString, 14 }, { QMetaType::QString, 15 }, { QMetaType::Int, 16 }, { QMetaType::QString, 17 },
-            { QMetaType::QDateTime, 18 }, { QMetaType::QDateTime, 19 },
+        QtMocHelpers::SignalData<void(const QString &, const QString &, int, const QString &, const QDateTime &, const QDateTime &)>(15, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::QString, 16 }, { QMetaType::QString, 17 }, { QMetaType::Int, 18 }, { QMetaType::QString, 19 },
+            { QMetaType::QDateTime, 20 }, { QMetaType::QDateTime, 21 },
         }}),
         // Signal 'routineSessionProgress'
-        QtMocHelpers::SignalData<void(const QString &, const QString &, int, const QDateTime &, const QDateTime &)>(20, 2, QMC::AccessPublic, QMetaType::Void, {{
-            { QMetaType::QString, 14 }, { QMetaType::QString, 15 }, { QMetaType::Int, 21 }, { QMetaType::QDateTime, 18 },
-            { QMetaType::QDateTime, 22 },
+        QtMocHelpers::SignalData<void(const QString &, const QString &, int, const QDateTime &, const QDateTime &)>(22, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::QString, 16 }, { QMetaType::QString, 17 }, { QMetaType::Int, 23 }, { QMetaType::QDateTime, 20 },
+            { QMetaType::QDateTime, 24 },
         }}),
         // Method 'engage'
-        QtMocHelpers::MethodData<void(const QString &)>(23, 2, QMC::AccessPublic, QMetaType::Void, {{
-            { QMetaType::QString, 14 },
+        QtMocHelpers::MethodData<void(const QString &)>(25, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::QString, 16 },
         }}),
-        // Method 'togglePause'
-        QtMocHelpers::MethodData<void()>(24, 2, QMC::AccessPublic, QMetaType::Void),
-        // Method 'endActiveRoutine'
-        QtMocHelpers::MethodData<void()>(25, 2, QMC::AccessPublic, QMetaType::Void),
-        // Method 'closeOtherAccess'
+        // Method 'startPendingRoutineWithoutNetworkLock'
         QtMocHelpers::MethodData<void()>(26, 2, QMC::AccessPublic, QMetaType::Void),
-        // Method 'launchDesktopShell'
+        // Method 'abortPendingRoutineStart'
         QtMocHelpers::MethodData<void()>(27, 2, QMC::AccessPublic, QMetaType::Void),
-        // Method 'unlockOtherAccess'
+        // Method 'togglePause'
         QtMocHelpers::MethodData<void()>(28, 2, QMC::AccessPublic, QMetaType::Void),
-        // Method 'continueFinishedSession'
+        // Method 'endActiveRoutine'
         QtMocHelpers::MethodData<void()>(29, 2, QMC::AccessPublic, QMetaType::Void),
-        // Method 'quitFinishedSession'
+        // Method 'closeOtherAccess'
         QtMocHelpers::MethodData<void()>(30, 2, QMC::AccessPublic, QMetaType::Void),
+        // Method 'launchDesktopShell'
+        QtMocHelpers::MethodData<void()>(31, 2, QMC::AccessPublic, QMetaType::Void),
+        // Method 'relaunchActiveRoutine'
+        QtMocHelpers::MethodData<void()>(32, 2, QMC::AccessPublic, QMetaType::Void),
+        // Method 'unlockOtherAccess'
+        QtMocHelpers::MethodData<void()>(33, 2, QMC::AccessPublic, QMetaType::Void),
+        // Method 'continueFinishedSession'
+        QtMocHelpers::MethodData<void()>(34, 2, QMC::AccessPublic, QMetaType::Void),
+        // Method 'quitFinishedSession'
+        QtMocHelpers::MethodData<void()>(35, 2, QMC::AccessPublic, QMetaType::Void),
         // Method 'routinesForEditing'
-        QtMocHelpers::MethodData<QVariantList() const>(31, 2, QMC::AccessPublic, 0x80000000 | 32),
+        QtMocHelpers::MethodData<QVariantList() const>(36, 2, QMC::AccessPublic, 0x80000000 | 37),
         // Method 'saveRoutines'
-        QtMocHelpers::MethodData<bool(const QVariantList &)>(33, 2, QMC::AccessPublic, QMetaType::Bool, {{
-            { 0x80000000 | 32, 34 },
+        QtMocHelpers::MethodData<bool(const QVariantList &)>(38, 2, QMC::AccessPublic, QMetaType::Bool, {{
+            { 0x80000000 | 37, 39 },
         }}),
         // Method 'updateRoutineDescription'
-        QtMocHelpers::MethodData<bool(const QString &, const QString &)>(35, 2, QMC::AccessPublic, QMetaType::Bool, {{
-            { QMetaType::QString, 14 }, { QMetaType::QString, 36 },
+        QtMocHelpers::MethodData<bool(const QString &, const QString &)>(40, 2, QMC::AccessPublic, QMetaType::Bool, {{
+            { QMetaType::QString, 16 }, { QMetaType::QString, 41 },
         }}),
         // Method 'pickApplication'
-        QtMocHelpers::MethodData<QString() const>(37, 2, QMC::AccessPublic, QMetaType::QString),
+        QtMocHelpers::MethodData<QString() const>(42, 2, QMC::AccessPublic, QMetaType::QString),
+        // Method 'applicationDisplayName'
+        QtMocHelpers::MethodData<QString(const QString &) const>(43, 2, QMC::AccessPublic, QMetaType::QString, {{
+            { QMetaType::QString, 44 },
+        }}),
     };
     QtMocHelpers::UintData qt_properties {
         // property 'active'
-        QtMocHelpers::PropertyData<bool>(38, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<bool>(45, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
         // property 'activeRoutineId'
-        QtMocHelpers::PropertyData<QString>(39, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<QString>(46, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
         // property 'activeRoutineName'
-        QtMocHelpers::PropertyData<QString>(40, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<QString>(47, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
         // property 'activeRoutineTotalSeconds'
-        QtMocHelpers::PropertyData<int>(41, QMetaType::Int, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<int>(48, QMetaType::Int, QMC::DefaultPropertyFlags, 0),
         // property 'activeRoutineDescription'
-        QtMocHelpers::PropertyData<QString>(42, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<QString>(49, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
         // property 'remainingSeconds'
-        QtMocHelpers::PropertyData<int>(43, QMetaType::Int, QMC::DefaultPropertyFlags, 1),
+        QtMocHelpers::PropertyData<int>(50, QMetaType::Int, QMC::DefaultPropertyFlags, 1),
         // property 'elapsedSeconds'
-        QtMocHelpers::PropertyData<int>(21, QMetaType::Int, QMC::DefaultPropertyFlags, 1),
+        QtMocHelpers::PropertyData<int>(23, QMetaType::Int, QMC::DefaultPropertyFlags, 1),
         // property 'accessGranted'
-        QtMocHelpers::PropertyData<bool>(44, QMetaType::Bool, QMC::DefaultPropertyFlags, 2),
+        QtMocHelpers::PropertyData<bool>(51, QMetaType::Bool, QMC::DefaultPropertyFlags, 2),
         // property 'accessRemainingSeconds'
-        QtMocHelpers::PropertyData<int>(45, QMetaType::Int, QMC::DefaultPropertyFlags, 2),
+        QtMocHelpers::PropertyData<int>(52, QMetaType::Int, QMC::DefaultPropertyFlags, 2),
         // property 'accessStatus'
-        QtMocHelpers::PropertyData<QString>(46, QMetaType::QString, QMC::DefaultPropertyFlags, 2),
+        QtMocHelpers::PropertyData<QString>(53, QMetaType::QString, QMC::DefaultPropertyFlags, 2),
         // property 'otherAccessMinutes'
-        QtMocHelpers::PropertyData<int>(47, QMetaType::Int, QMC::DefaultPropertyFlags | QMC::Writable | QMC::StdCppSet, 3),
+        QtMocHelpers::PropertyData<int>(54, QMetaType::Int, QMC::DefaultPropertyFlags | QMC::Writable | QMC::StdCppSet, 3),
         // property 'sessionPromptVisible'
-        QtMocHelpers::PropertyData<bool>(48, QMetaType::Bool, QMC::DefaultPropertyFlags, 4),
+        QtMocHelpers::PropertyData<bool>(55, QMetaType::Bool, QMC::DefaultPropertyFlags, 4),
         // property 'finishedSessionName'
-        QtMocHelpers::PropertyData<QString>(49, QMetaType::QString, QMC::DefaultPropertyFlags, 4),
+        QtMocHelpers::PropertyData<QString>(56, QMetaType::QString, QMC::DefaultPropertyFlags, 4),
         // property 'finishedSessionMinutes'
-        QtMocHelpers::PropertyData<int>(50, QMetaType::Int, QMC::DefaultPropertyFlags, 4),
+        QtMocHelpers::PropertyData<int>(57, QMetaType::Int, QMC::DefaultPropertyFlags, 4),
         // property 'finishedSessionResult'
-        QtMocHelpers::PropertyData<QString>(51, QMetaType::QString, QMC::DefaultPropertyFlags, 4),
+        QtMocHelpers::PropertyData<QString>(58, QMetaType::QString, QMC::DefaultPropertyFlags, 4),
         // property 'paused'
-        QtMocHelpers::PropertyData<bool>(52, QMetaType::Bool, QMC::DefaultPropertyFlags, 5),
+        QtMocHelpers::PropertyData<bool>(59, QMetaType::Bool, QMC::DefaultPropertyFlags, 5),
         // property 'editMode'
-        QtMocHelpers::PropertyData<bool>(53, QMetaType::Bool, QMC::DefaultPropertyFlags | QMC::Writable | QMC::StdCppSet, 6),
+        QtMocHelpers::PropertyData<bool>(60, QMetaType::Bool, QMC::DefaultPropertyFlags | QMC::Writable | QMC::StdCppSet, 6),
         // property 'desktopShellSupported'
-        QtMocHelpers::PropertyData<bool>(54, QMetaType::Bool, QMC::DefaultPropertyFlags | QMC::Constant),
+        QtMocHelpers::PropertyData<bool>(61, QMetaType::Bool, QMC::DefaultPropertyFlags | QMC::Constant),
         // property 'desktopShellRunning'
-        QtMocHelpers::PropertyData<bool>(55, QMetaType::Bool, QMC::DefaultPropertyFlags, 7),
+        QtMocHelpers::PropertyData<bool>(62, QMetaType::Bool, QMC::DefaultPropertyFlags, 7),
         // property 'routineCount'
-        QtMocHelpers::PropertyData<int>(56, QMetaType::Int, QMC::DefaultPropertyFlags, 8),
+        QtMocHelpers::PropertyData<int>(63, QMetaType::Int, QMC::DefaultPropertyFlags, 8),
+        // property 'activeRoutineHasLaunchTargets'
+        QtMocHelpers::PropertyData<bool>(64, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
+        // property 'statusMessage'
+        QtMocHelpers::PropertyData<QString>(65, QMetaType::QString, QMC::DefaultPropertyFlags, 9),
+        // property 'networkLockPromptVisible'
+        QtMocHelpers::PropertyData<bool>(66, QMetaType::Bool, QMC::DefaultPropertyFlags, 10),
+        // property 'networkLockError'
+        QtMocHelpers::PropertyData<QString>(67, QMetaType::QString, QMC::DefaultPropertyFlags, 10),
+        // property 'networkLockRoutineName'
+        QtMocHelpers::PropertyData<QString>(68, QMetaType::QString, QMC::DefaultPropertyFlags, 10),
     };
     QtMocHelpers::UintData qt_enums {
         // enum 'Role'
-        QtMocHelpers::EnumData<enum Role>(57, 57, QMC::EnumFlags{}).add({
-            {   58, Role::RoutineIdRole },
-            {   59, Role::NameRole },
-            {   60, Role::DescriptionRole },
-            {   61, Role::AppsRole },
-            {   62, Role::AppsDisplayRole },
-            {   63, Role::AllowedUrlsRole },
-            {   64, Role::TimeLimitMinutesRole },
-            {   65, Role::MinTimeMinutesRole },
-            {   66, Role::IsActiveRole },
-            {   67, Role::TimeLabelRole },
-            {   68, Role::ButtonLabelRole },
-            {   69, Role::ButtonEnabledRole },
+        QtMocHelpers::EnumData<enum Role>(69, 69, QMC::EnumFlags{}).add({
+            {   70, Role::RoutineIdRole },
+            {   71, Role::NameRole },
+            {   72, Role::DescriptionRole },
+            {   73, Role::AppsRole },
+            {   74, Role::AppsDisplayRole },
+            {   75, Role::AllowedUrlsRole },
+            {   76, Role::TimeLimitMinutesRole },
+            {   77, Role::MinTimeMinutesRole },
+            {   78, Role::NetworkLockRole },
+            {   79, Role::BreakFrequencyMinutesRole },
+            {   80, Role::BreakDurationMinutesRole },
+            {   81, Role::IsActiveRole },
+            {   82, Role::TimeLabelRole },
+            {   83, Role::ButtonLabelRole },
+            {   84, Role::ButtonEnabledRole },
         }),
     };
     return QtMocHelpers::metaObjectData<RoutineManager, qt_meta_tag_ZN14RoutineManagerE_t>(QMC::MetaObjectFlag{}, qt_stringData,
@@ -261,23 +303,30 @@ void RoutineManager::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _
         case 7: _t->desktopShellChanged(); break;
         case 8: _t->routineCountChanged(); break;
         case 9: _t->statusMessageChanged((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1]))); break;
-        case 10: _t->routineSessionFinished((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[2])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[3])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[4])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[5])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[6]))); break;
-        case 11: _t->routineSessionProgress((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[2])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[3])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[4])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[5]))); break;
-        case 12: _t->engage((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1]))); break;
-        case 13: _t->togglePause(); break;
-        case 14: _t->endActiveRoutine(); break;
-        case 15: _t->closeOtherAccess(); break;
-        case 16: _t->launchDesktopShell(); break;
-        case 17: _t->unlockOtherAccess(); break;
-        case 18: _t->continueFinishedSession(); break;
-        case 19: _t->quitFinishedSession(); break;
-        case 20: { QVariantList _r = _t->routinesForEditing();
+        case 10: _t->networkLockPromptChanged(); break;
+        case 11: _t->desktopAccessRequested(); break;
+        case 12: _t->routineSessionFinished((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[2])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[3])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[4])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[5])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[6]))); break;
+        case 13: _t->routineSessionProgress((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[2])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[3])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[4])),(*reinterpret_cast<std::add_pointer_t<QDateTime>>(_a[5]))); break;
+        case 14: _t->engage((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1]))); break;
+        case 15: _t->startPendingRoutineWithoutNetworkLock(); break;
+        case 16: _t->abortPendingRoutineStart(); break;
+        case 17: _t->togglePause(); break;
+        case 18: _t->endActiveRoutine(); break;
+        case 19: _t->closeOtherAccess(); break;
+        case 20: _t->launchDesktopShell(); break;
+        case 21: _t->relaunchActiveRoutine(); break;
+        case 22: _t->unlockOtherAccess(); break;
+        case 23: _t->continueFinishedSession(); break;
+        case 24: _t->quitFinishedSession(); break;
+        case 25: { QVariantList _r = _t->routinesForEditing();
             if (_a[0]) *reinterpret_cast<QVariantList*>(_a[0]) = std::move(_r); }  break;
-        case 21: { bool _r = _t->saveRoutines((*reinterpret_cast<std::add_pointer_t<QVariantList>>(_a[1])));
+        case 26: { bool _r = _t->saveRoutines((*reinterpret_cast<std::add_pointer_t<QVariantList>>(_a[1])));
             if (_a[0]) *reinterpret_cast<bool*>(_a[0]) = std::move(_r); }  break;
-        case 22: { bool _r = _t->updateRoutineDescription((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[2])));
+        case 27: { bool _r = _t->updateRoutineDescription((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<QString>>(_a[2])));
             if (_a[0]) *reinterpret_cast<bool*>(_a[0]) = std::move(_r); }  break;
-        case 23: { QString _r = _t->pickApplication();
+        case 28: { QString _r = _t->pickApplication();
+            if (_a[0]) *reinterpret_cast<QString*>(_a[0]) = std::move(_r); }  break;
+        case 29: { QString _r = _t->applicationDisplayName((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1])));
             if (_a[0]) *reinterpret_cast<QString*>(_a[0]) = std::move(_r); }  break;
         default: ;
         }
@@ -303,9 +352,13 @@ void RoutineManager::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _
             return;
         if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)(const QString & )>(_a, &RoutineManager::statusMessageChanged, 9))
             return;
-        if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)(const QString & , const QString & , int , const QString & , const QDateTime & , const QDateTime & )>(_a, &RoutineManager::routineSessionFinished, 10))
+        if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)()>(_a, &RoutineManager::networkLockPromptChanged, 10))
             return;
-        if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)(const QString & , const QString & , int , const QDateTime & , const QDateTime & )>(_a, &RoutineManager::routineSessionProgress, 11))
+        if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)()>(_a, &RoutineManager::desktopAccessRequested, 11))
+            return;
+        if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)(const QString & , const QString & , int , const QString & , const QDateTime & , const QDateTime & )>(_a, &RoutineManager::routineSessionFinished, 12))
+            return;
+        if (QtMocHelpers::indexOfMethod<void (RoutineManager::*)(const QString & , const QString & , int , const QDateTime & , const QDateTime & )>(_a, &RoutineManager::routineSessionProgress, 13))
             return;
     }
     if (_c == QMetaObject::ReadProperty) {
@@ -331,6 +384,11 @@ void RoutineManager::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _
         case 17: *reinterpret_cast<bool*>(_v) = _t->desktopShellSupported(); break;
         case 18: *reinterpret_cast<bool*>(_v) = _t->desktopShellRunning(); break;
         case 19: *reinterpret_cast<int*>(_v) = _t->routineCount(); break;
+        case 20: *reinterpret_cast<bool*>(_v) = _t->activeRoutineHasLaunchTargets(); break;
+        case 21: *reinterpret_cast<QString*>(_v) = _t->statusMessage(); break;
+        case 22: *reinterpret_cast<bool*>(_v) = _t->networkLockPromptVisible(); break;
+        case 23: *reinterpret_cast<QString*>(_v) = _t->networkLockError(); break;
+        case 24: *reinterpret_cast<QString*>(_v) = _t->networkLockRoutineName(); break;
         default: break;
         }
     }
@@ -363,20 +421,20 @@ int RoutineManager::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 24)
+        if (_id < 30)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 24;
+        _id -= 30;
     }
     if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 24)
+        if (_id < 30)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 24;
+        _id -= 30;
     }
     if (_c == QMetaObject::ReadProperty || _c == QMetaObject::WriteProperty
             || _c == QMetaObject::ResetProperty || _c == QMetaObject::BindableProperty
             || _c == QMetaObject::RegisterPropertyMetaType) {
         qt_static_metacall(this, _c, _id, _a);
-        _id -= 20;
+        _id -= 25;
     }
     return _id;
 }
@@ -442,14 +500,26 @@ void RoutineManager::statusMessageChanged(const QString & _t1)
 }
 
 // SIGNAL 10
-void RoutineManager::routineSessionFinished(const QString & _t1, const QString & _t2, int _t3, const QString & _t4, const QDateTime & _t5, const QDateTime & _t6)
+void RoutineManager::networkLockPromptChanged()
 {
-    QMetaObject::activate<void>(this, &staticMetaObject, 10, nullptr, _t1, _t2, _t3, _t4, _t5, _t6);
+    QMetaObject::activate(this, &staticMetaObject, 10, nullptr);
 }
 
 // SIGNAL 11
+void RoutineManager::desktopAccessRequested()
+{
+    QMetaObject::activate(this, &staticMetaObject, 11, nullptr);
+}
+
+// SIGNAL 12
+void RoutineManager::routineSessionFinished(const QString & _t1, const QString & _t2, int _t3, const QString & _t4, const QDateTime & _t5, const QDateTime & _t6)
+{
+    QMetaObject::activate<void>(this, &staticMetaObject, 12, nullptr, _t1, _t2, _t3, _t4, _t5, _t6);
+}
+
+// SIGNAL 13
 void RoutineManager::routineSessionProgress(const QString & _t1, const QString & _t2, int _t3, const QDateTime & _t4, const QDateTime & _t5)
 {
-    QMetaObject::activate<void>(this, &staticMetaObject, 11, nullptr, _t1, _t2, _t3, _t4, _t5);
+    QMetaObject::activate<void>(this, &staticMetaObject, 13, nullptr, _t1, _t2, _t3, _t4, _t5);
 }
 QT_WARNING_POP

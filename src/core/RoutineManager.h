@@ -18,6 +18,9 @@ struct Routine
     QStringList allowedUrls;
     int timeLimitMinutes = 0;
     int minTimeMinutes = 0;
+    bool networkLock = true;
+    int breakFrequencyMinutes = 0;
+    int breakDurationMinutes = 0;
 };
 
 class RoutineManager final : public QAbstractListModel
@@ -43,6 +46,11 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(bool desktopShellSupported READ desktopShellSupported CONSTANT)
     Q_PROPERTY(bool desktopShellRunning READ desktopShellRunning NOTIFY desktopShellChanged)
     Q_PROPERTY(int routineCount READ routineCount NOTIFY routineCountChanged)
+    Q_PROPERTY(bool activeRoutineHasLaunchTargets READ activeRoutineHasLaunchTargets NOTIFY activeChanged)
+    Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
+    Q_PROPERTY(bool networkLockPromptVisible READ networkLockPromptVisible NOTIFY networkLockPromptChanged)
+    Q_PROPERTY(QString networkLockError READ networkLockError NOTIFY networkLockPromptChanged)
+    Q_PROPERTY(QString networkLockRoutineName READ networkLockRoutineName NOTIFY networkLockPromptChanged)
 
 public:
     enum Role {
@@ -54,6 +62,9 @@ public:
         AllowedUrlsRole,
         TimeLimitMinutesRole,
         MinTimeMinutesRole,
+        NetworkLockRole,
+        BreakFrequencyMinutesRole,
+        BreakDurationMinutesRole,
         IsActiveRole,
         TimeLabelRole,
         ButtonLabelRole,
@@ -89,12 +100,20 @@ public:
     bool desktopShellSupported() const;
     bool desktopShellRunning() const;
     int routineCount() const;
+    bool activeRoutineHasLaunchTargets() const;
+    QString statusMessage() const;
+    bool networkLockPromptVisible() const;
+    QString networkLockError() const;
+    QString networkLockRoutineName() const;
 
     Q_INVOKABLE void engage(const QString &routineId);
+    Q_INVOKABLE void startPendingRoutineWithoutNetworkLock();
+    Q_INVOKABLE void abortPendingRoutineStart();
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void endActiveRoutine();
     Q_INVOKABLE void closeOtherAccess();
     Q_INVOKABLE void launchDesktopShell();
+    Q_INVOKABLE void relaunchActiveRoutine();
     Q_INVOKABLE void unlockOtherAccess();
     Q_INVOKABLE void continueFinishedSession();
     Q_INVOKABLE void quitFinishedSession();
@@ -102,6 +121,7 @@ public:
     Q_INVOKABLE bool saveRoutines(const QVariantList &routines);
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
     Q_INVOKABLE QString pickApplication() const;
+    Q_INVOKABLE QString applicationDisplayName(const QString &path) const;
 
     static QString dataDirectory();
 
@@ -116,6 +136,8 @@ signals:
     void desktopShellChanged();
     void routineCountChanged();
     void statusMessageChanged(const QString &message);
+    void networkLockPromptChanged();
+    void desktopAccessRequested();
     void routineSessionFinished(const QString &routineId,
                                 const QString &routineName,
                                 int minutes,
@@ -138,6 +160,11 @@ private:
     void finishOtherAccess();
     void emitActiveSessionProgress();
     void emitRowsChanged();
+    bool startRoutine(const Routine &routine, bool applyNetworkLock, QString *errorMessage = nullptr);
+    bool launchRoutineTargets(const Routine &routine, QString *errorMessage = nullptr);
+    void setStatusMessage(const QString &message);
+    void setNetworkLockPrompt(const Routine &routine, const QString &error);
+    void clearNetworkLockPrompt();
     void setFinishedSessionPrompt(const Routine &routine, int minutes, const QString &result);
     void clearFinishedSessionPrompt();
     QString formatDuration(int seconds) const;
@@ -156,6 +183,11 @@ private:
     int m_finishedSessionMinutes = 0;
     QString m_finishedSessionResult;
     QStringList m_finishedSessionApps;
+    QStringList m_finishedSessionUrls;
+    QString m_statusMessage;
+    QString m_pendingNetworkRoutineId;
+    QString m_networkLockError;
+    QString m_networkLockRoutineName;
     bool m_editMode = false;
     bool m_desktopShellRunning = false;
 };

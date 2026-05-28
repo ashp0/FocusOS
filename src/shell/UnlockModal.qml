@@ -52,7 +52,10 @@ Item {
             "apps": toArray(routine.apps),
             "allowed_urls": toArray(routine.allowed_urls),
             "time_limit_minutes": Math.max(1, Number(routine.time_limit_minutes || 60)),
-            "min_time_minutes": Math.max(0, Number(routine.min_time_minutes || 0))
+            "min_time_minutes": Math.max(0, Number(routine.min_time_minutes || 0)),
+            "network_lock": routine.network_lock === undefined ? true : Boolean(routine.network_lock),
+            "break_frequency_minutes": Math.max(0, Number(routine.break_frequency_minutes || 0)),
+            "break_duration_minutes": Math.max(0, Number(routine.break_duration_minutes || 0))
         }
     }
 
@@ -133,7 +136,10 @@ Item {
             "apps": [],
             "allowed_urls": [],
             "time_limit_minutes": 60,
-            "min_time_minutes": 0
+            "min_time_minutes": 0,
+            "network_lock": true,
+            "break_frequency_minutes": 0,
+            "break_duration_minutes": 0
         })
         routineDrafts = drafts
     }
@@ -257,6 +263,23 @@ Item {
         }
     }
 
+    component AdminTextArea: TextArea {
+        id: area
+        color: Theme.textPrimary
+        selectedTextColor: Theme.voidColor
+        selectionColor: Theme.gold
+        placeholderTextColor: Theme.textGhost
+        wrapMode: TextArea.Wrap
+        font.family: root.bodyFont
+        font.pixelSize: 12
+        font.letterSpacing: 0
+        background: Rectangle {
+            color: Theme.steel
+            border.width: 1
+            border.color: area.activeFocus ? Theme.gold : Theme.goldDim
+        }
+    }
+
     component AdminButton: Rectangle {
         id: button
         property string label: ""
@@ -358,7 +381,9 @@ Item {
     MouseArea {
         anchors.fill: parent
         enabled: root.modalOpen
-        onClicked: root.closeModal()
+        onClicked: function(mouse) {
+            mouse.accepted = true
+        }
     }
 
     Rectangle {
@@ -395,7 +420,6 @@ Item {
             }
 
             Rectangle {
-                visible: root.adminUnlocked
                 anchors.right: parent.right
                 anchors.rightMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
@@ -740,6 +764,28 @@ Item {
                                             }
                                         }
 
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            Text {
+                                                Layout.preferredWidth: 96
+                                                text: "OBJECTIVE"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            AdminTextArea {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 72
+                                                text: String(routineCard.modelData.description || "")
+                                                placeholderText: "WHAT SHOULD THIS ROUTINE PRODUCE?"
+                                                onTextChanged: root.updateRoutineField(routineCard.index, "description", text)
+                                            }
+                                        }
+
                                         Text {
                                             Layout.fillWidth: true
                                             text: "ALLOWED APPS"
@@ -762,7 +808,7 @@ Item {
                                                     Layout.fillWidth: true
                                                     Layout.preferredHeight: 34
                                                     text: root.toArray(routineCard.modelData.apps)[index]
-                                                    placeholderText: "/Applications/Example.app"
+                                                    placeholderText: "/usr/share/applications/firefox.desktop or /usr/bin/code"
                                                     onTextChanged: root.updateApp(routineCard.index, index, text)
                                                 }
 
@@ -776,9 +822,9 @@ Item {
                                         }
 
                                         AdminButton {
-                                            Layout.preferredWidth: 132
+                                            Layout.preferredWidth: 164
                                             Layout.preferredHeight: 34
-                                            label: "+ ADD APP"
+                                            label: "+ SELECT APP FILE"
                                             danger: false
                                             onClicked: {
                                                 const path = routineManager.pickApplication()

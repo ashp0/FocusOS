@@ -1,10 +1,10 @@
-Start testing: May 27 18:08 EDT
+Start testing: May 27 20:20 EDT
 ----------------------------------------------------------
 1/1 Testing: totp_tests
 1/1 Test: totp_tests
 Command: "/Users/ashwinpaudel/Desktop/FocusOS/build/totp_tests"
 Directory: /Users/ashwinpaudel/Desktop/FocusOS/build
-"totp_tests" start time: May 27 18:08 EDT
+"totp_tests" start time: May 27 20:20 EDT
 Output:
 ----------------------------------------------------------
 ********* Start testing of TOTPTests *********
@@ -17,14 +17,14 @@ PASS   : TOTPTests::rfc6238Sha1Vectors(1234567890)
 PASS   : TOTPTests::rfc6238Sha1Vectors(2000000000)
 PASS   : TOTPTests::rfc6238Sha1Vectors(20000000000)
 PASS   : TOTPTests::cleanupTestCase()
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 1ms
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 2ms
 ********* Finished testing of TOTPTests *********
 <end of output>
 Test time =   0.03 sec
 ----------------------------------------------------------
 Test Passed.
-"totp_tests" end time: May 27 18:08 EDT
+"totp_tests" end time: May 27 20:20 EDT
 "totp_tests" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: May 27 18:08 EDT
+End testing: May 27 20:20 EDT

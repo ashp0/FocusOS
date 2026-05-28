@@ -10,8 +10,8 @@ Item {
     property bool graphRevealed: false
     property int graphVisibleDays: 14
     property string selectedSessionId: ""
-    property bool sessionsExpanded: true
-    property bool todayNotesExpanded: true
+    property bool sessionsExpanded: false
+    property bool todayNotesExpanded: false
     property int todayNotesMinHeight: 260
     property int todayNotesMaxHeight: 540
     property int sessionListMinHeight: 280

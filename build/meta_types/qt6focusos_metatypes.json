@@ -509,7 +509,7 @@
                     {
                         "isClass": false,
                         "isFlag": false,
-                        "lineNumber": 48,
+                        "lineNumber": 56,
                         "name": "Role",
                         "values": [
                             "RoutineIdRole",
@@ -520,6 +520,9 @@
                             "AllowedUrlsRole",
                             "TimeLimitMinutesRole",
                             "MinTimeMinutesRole",
+                            "NetworkLockRole",
+                            "BreakFrequencyMinutesRole",
+                            "BreakDurationMinutesRole",
                             "IsActiveRole",
                             "TimeLabelRole",
                             "ButtonLabelRole",
@@ -528,7 +531,7 @@
                     }
                 ],
                 "final": true,
-                "lineNumber": 23,
+                "lineNumber": 26,
                 "methods": [
                     {
                         "access": "public",
@@ -538,65 +541,86 @@
                                 "type": "QString"
                             }
                         ],
-                        "index": 12,
-                        "lineNumber": 93,
+                        "index": 14,
+                        "lineNumber": 109,
                         "name": "engage",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
-                        "index": 13,
-                        "lineNumber": 94,
-                        "name": "togglePause",
-                        "returnType": "void"
-                    },
-                    {
-                        "access": "public",
-                        "index": 14,
-                        "lineNumber": 95,
-                        "name": "endActiveRoutine",
-                        "returnType": "void"
-                    },
-                    {
-                        "access": "public",
                         "index": 15,
-                        "lineNumber": 96,
-                        "name": "closeOtherAccess",
+                        "lineNumber": 110,
+                        "name": "startPendingRoutineWithoutNetworkLock",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 16,
-                        "lineNumber": 97,
-                        "name": "launchDesktopShell",
+                        "lineNumber": 111,
+                        "name": "abortPendingRoutineStart",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 17,
-                        "lineNumber": 98,
-                        "name": "unlockOtherAccess",
+                        "lineNumber": 112,
+                        "name": "togglePause",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 18,
-                        "lineNumber": 99,
-                        "name": "continueFinishedSession",
+                        "lineNumber": 113,
+                        "name": "endActiveRoutine",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 19,
-                        "lineNumber": 100,
-                        "name": "quitFinishedSession",
+                        "lineNumber": 114,
+                        "name": "closeOtherAccess",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 20,
+                        "lineNumber": 115,
+                        "name": "launchDesktopShell",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 21,
+                        "lineNumber": 116,
+                        "name": "relaunchActiveRoutine",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 22,
+                        "lineNumber": 117,
+                        "name": "unlockOtherAccess",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 23,
+                        "lineNumber": 118,
+                        "name": "continueFinishedSession",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 24,
+                        "lineNumber": 119,
+                        "name": "quitFinishedSession",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 25,
                         "isConst": true,
-                        "lineNumber": 101,
+                        "lineNumber": 120,
                         "name": "routinesForEditing",
                         "returnType": "QVariantList"
                     },
@@ -608,8 +632,8 @@
                                 "type": "QVariantList"
                             }
                         ],
-                        "index": 21,
-                        "lineNumber": 102,
+                        "index": 26,
+                        "lineNumber": 121,
                         "name": "saveRoutines",
                         "returnType": "bool"
                     },
@@ -625,17 +649,31 @@
                                 "type": "QString"
                             }
                         ],
-                        "index": 22,
-                        "lineNumber": 103,
+                        "index": 27,
+                        "lineNumber": 122,
                         "name": "updateRoutineDescription",
                         "returnType": "bool"
                     },
                     {
                         "access": "public",
-                        "index": 23,
+                        "index": 28,
                         "isConst": true,
-                        "lineNumber": 104,
+                        "lineNumber": 123,
                         "name": "pickApplication",
+                        "returnType": "QString"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "path",
+                                "type": "QString"
+                            }
+                        ],
+                        "index": 29,
+                        "isConst": true,
+                        "lineNumber": 124,
+                        "name": "applicationDisplayName",
                         "returnType": "QString"
                     }
                 ],
@@ -646,7 +684,7 @@
                         "designable": true,
                         "final": false,
                         "index": 0,
-                        "lineNumber": 26,
+                        "lineNumber": 29,
                         "name": "active",
                         "notify": "activeChanged",
                         "override": false,
@@ -663,7 +701,7 @@
                         "designable": true,
                         "final": false,
                         "index": 1,
-                        "lineNumber": 27,
+                        "lineNumber": 30,
                         "name": "activeRoutineId",
                         "notify": "activeChanged",
                         "override": false,
@@ -680,7 +718,7 @@
                         "designable": true,
                         "final": false,
                         "index": 2,
-                        "lineNumber": 28,
+                        "lineNumber": 31,
                         "name": "activeRoutineName",
                         "notify": "activeChanged",
                         "override": false,
@@ -697,7 +735,7 @@
                         "designable": true,
                         "final": false,
                         "index": 3,
-                        "lineNumber": 29,
+                        "lineNumber": 32,
                         "name": "activeRoutineTotalSeconds",
                         "notify": "activeChanged",
                         "override": false,
@@ -714,7 +752,7 @@
                         "designable": true,
                         "final": false,
                         "index": 4,
-                        "lineNumber": 30,
+                        "lineNumber": 33,
                         "name": "activeRoutineDescription",
                         "notify": "activeChanged",
                         "override": false,
@@ -731,7 +769,7 @@
                         "designable": true,
                         "final": false,
                         "index": 5,
-                        "lineNumber": 31,
+                        "lineNumber": 34,
                         "name": "remainingSeconds",
                         "notify": "remainingSecondsChanged",
                         "override": false,
@@ -748,7 +786,7 @@
                         "designable": true,
                         "final": false,
                         "index": 6,
-                        "lineNumber": 32,
+                        "lineNumber": 35,
                         "name": "elapsedSeconds",
                         "notify": "remainingSecondsChanged",
                         "override": false,
@@ -765,7 +803,7 @@
                         "designable": true,
                         "final": false,
                         "index": 7,
-                        "lineNumber": 33,
+                        "lineNumber": 36,
                         "name": "accessGranted",
                         "notify": "accessChanged",
                         "override": false,
@@ -782,7 +820,7 @@
                         "designable": true,
                         "final": false,
                         "index": 8,
-                        "lineNumber": 34,
+                        "lineNumber": 37,
                         "name": "accessRemainingSeconds",
                         "notify": "accessChanged",
                         "override": false,
@@ -799,7 +837,7 @@
                         "designable": true,
                         "final": false,
                         "index": 9,
-                        "lineNumber": 35,
+                        "lineNumber": 38,
                         "name": "accessStatus",
                         "notify": "accessChanged",
                         "override": false,
@@ -816,7 +854,7 @@
                         "designable": true,
                         "final": false,
                         "index": 10,
-                        "lineNumber": 36,
+                        "lineNumber": 39,
                         "name": "otherAccessMinutes",
                         "notify": "configChanged",
                         "override": false,
@@ -834,7 +872,7 @@
                         "designable": true,
                         "final": false,
                         "index": 11,
-                        "lineNumber": 37,
+                        "lineNumber": 40,
                         "name": "sessionPromptVisible",
                         "notify": "sessionPromptChanged",
                         "override": false,
@@ -851,7 +889,7 @@
                         "designable": true,
                         "final": false,
                         "index": 12,
-                        "lineNumber": 38,
+                        "lineNumber": 41,
                         "name": "finishedSessionName",
                         "notify": "sessionPromptChanged",
                         "override": false,
@@ -868,7 +906,7 @@
                         "designable": true,
                         "final": false,
                         "index": 13,
-                        "lineNumber": 39,
+                        "lineNumber": 42,
                         "name": "finishedSessionMinutes",
                         "notify": "sessionPromptChanged",
                         "override": false,
@@ -885,7 +923,7 @@
                         "designable": true,
                         "final": false,
                         "index": 14,
-                        "lineNumber": 40,
+                        "lineNumber": 43,
                         "name": "finishedSessionResult",
                         "notify": "sessionPromptChanged",
                         "override": false,
@@ -902,7 +940,7 @@
                         "designable": true,
                         "final": false,
                         "index": 15,
-                        "lineNumber": 41,
+                        "lineNumber": 44,
                         "name": "paused",
                         "notify": "pausedChanged",
                         "override": false,
@@ -919,7 +957,7 @@
                         "designable": true,
                         "final": false,
                         "index": 16,
-                        "lineNumber": 42,
+                        "lineNumber": 45,
                         "name": "editMode",
                         "notify": "editModeChanged",
                         "override": false,
@@ -937,7 +975,7 @@
                         "designable": true,
                         "final": false,
                         "index": 17,
-                        "lineNumber": 43,
+                        "lineNumber": 46,
                         "name": "desktopShellSupported",
                         "override": false,
                         "read": "desktopShellSupported",
@@ -953,7 +991,7 @@
                         "designable": true,
                         "final": false,
                         "index": 18,
-                        "lineNumber": 44,
+                        "lineNumber": 47,
                         "name": "desktopShellRunning",
                         "notify": "desktopShellChanged",
                         "override": false,
@@ -970,7 +1008,7 @@
                         "designable": true,
                         "final": false,
                         "index": 19,
-                        "lineNumber": 45,
+                        "lineNumber": 48,
                         "name": "routineCount",
                         "notify": "routineCountChanged",
                         "override": false,
@@ -981,6 +1019,91 @@
                         "type": "int",
                         "user": false,
                         "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 20,
+                        "lineNumber": 49,
+                        "name": "activeRoutineHasLaunchTargets",
+                        "notify": "activeChanged",
+                        "override": false,
+                        "read": "activeRoutineHasLaunchTargets",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 21,
+                        "lineNumber": 50,
+                        "name": "statusMessage",
+                        "notify": "statusMessageChanged",
+                        "override": false,
+                        "read": "statusMessage",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 22,
+                        "lineNumber": 51,
+                        "name": "networkLockPromptVisible",
+                        "notify": "networkLockPromptChanged",
+                        "override": false,
+                        "read": "networkLockPromptVisible",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 23,
+                        "lineNumber": 52,
+                        "name": "networkLockError",
+                        "notify": "networkLockPromptChanged",
+                        "override": false,
+                        "read": "networkLockError",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 24,
+                        "lineNumber": 53,
+                        "name": "networkLockRoutineName",
+                        "notify": "networkLockPromptChanged",
+                        "override": false,
+                        "read": "networkLockRoutineName",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "QString",
+                        "user": false,
+                        "virtual": false
                     }
                 ],
                 "qualifiedClassName": "RoutineManager",
@@ -988,63 +1111,63 @@
                     {
                         "access": "public",
                         "index": 0,
-                        "lineNumber": 109,
+                        "lineNumber": 129,
                         "name": "activeChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 1,
-                        "lineNumber": 110,
+                        "lineNumber": 130,
                         "name": "remainingSecondsChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 2,
-                        "lineNumber": 111,
+                        "lineNumber": 131,
                         "name": "accessChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 3,
-                        "lineNumber": 112,
+                        "lineNumber": 132,
                         "name": "configChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 4,
-                        "lineNumber": 113,
+                        "lineNumber": 133,
                         "name": "sessionPromptChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 5,
-                        "lineNumber": 114,
+                        "lineNumber": 134,
                         "name": "pausedChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 6,
-                        "lineNumber": 115,
+                        "lineNumber": 135,
                         "name": "editModeChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 7,
-                        "lineNumber": 116,
+                        "lineNumber": 136,
                         "name": "desktopShellChanged",
                         "returnType": "void"
                     },
                     {
                         "access": "public",
                         "index": 8,
-                        "lineNumber": 117,
+                        "lineNumber": 137,
                         "name": "routineCountChanged",
                         "returnType": "void"
                     },
@@ -1057,8 +1180,22 @@
                             }
                         ],
                         "index": 9,
-                        "lineNumber": 118,
+                        "lineNumber": 138,
                         "name": "statusMessageChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 10,
+                        "lineNumber": 139,
+                        "name": "networkLockPromptChanged",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 11,
+                        "lineNumber": 140,
+                        "name": "desktopAccessRequested",
                         "returnType": "void"
                     },
                     {
@@ -1089,8 +1226,8 @@
                                 "type": "QDateTime"
                             }
                         ],
-                        "index": 10,
-                        "lineNumber": 119,
+                        "index": 12,
+                        "lineNumber": 141,
                         "name": "routineSessionFinished",
                         "returnType": "void"
                     },
@@ -1118,8 +1255,8 @@
                                 "type": "QDateTime"
                             }
                         ],
-                        "index": 11,
-                        "lineNumber": 125,
+                        "index": 13,
+                        "lineNumber": 147,
                         "name": "routineSessionProgress",
                         "returnType": "void"
                     }
@@ -1462,6 +1599,67 @@
                 "className": "SystemStatus",
                 "final": true,
                 "lineNumber": 6,
+                "methods": [
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "deltaPercent",
+                                "type": "int"
+                            }
+                        ],
+                        "index": 1,
+                        "lineNumber": 28,
+                        "name": "adjustSystemVolume",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "percent",
+                                "type": "int"
+                            }
+                        ],
+                        "index": 2,
+                        "lineNumber": 29,
+                        "name": "setSystemVolume",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "deltaPercent",
+                                "type": "int"
+                            }
+                        ],
+                        "index": 3,
+                        "lineNumber": 30,
+                        "name": "adjustBrightness",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "arguments": [
+                            {
+                                "name": "percent",
+                                "type": "int"
+                            }
+                        ],
+                        "index": 4,
+                        "lineNumber": 31,
+                        "name": "setBrightness",
+                        "returnType": "void"
+                    },
+                    {
+                        "access": "public",
+                        "index": 5,
+                        "lineNumber": 32,
+                        "name": "refresh",
+                        "returnType": "void"
+                    }
+                ],
                 "object": true,
                 "properties": [
                     {
@@ -1514,6 +1712,74 @@
                         "type": "bool",
                         "user": false,
                         "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 3,
+                        "lineNumber": 12,
+                        "name": "volumePercent",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "volumePercent",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 4,
+                        "lineNumber": 13,
+                        "name": "volumeAvailable",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "volumeAvailable",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 5,
+                        "lineNumber": 14,
+                        "name": "brightnessPercent",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "brightnessPercent",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "int",
+                        "user": false,
+                        "virtual": false
+                    },
+                    {
+                        "constant": false,
+                        "designable": true,
+                        "final": false,
+                        "index": 6,
+                        "lineNumber": 15,
+                        "name": "brightnessAvailable",
+                        "notify": "statusChanged",
+                        "override": false,
+                        "read": "brightnessAvailable",
+                        "required": false,
+                        "scriptable": true,
+                        "stored": true,
+                        "type": "bool",
+                        "user": false,
+                        "virtual": false
                     }
                 ],
                 "qualifiedClassName": "SystemStatus",
@@ -1521,7 +1787,7 @@
                     {
                         "access": "public",
                         "index": 0,
-                        "lineNumber": 21,
+                        "lineNumber": 35,
                         "name": "statusChanged",
                         "returnType": "void"
                     }

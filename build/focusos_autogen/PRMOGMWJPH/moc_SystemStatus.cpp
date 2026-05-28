@@ -41,22 +41,59 @@ template <> constexpr inline auto SystemStatus::qt_create_metaobjectdata<qt_meta
         "SystemStatus",
         "statusChanged",
         "",
+        "adjustSystemVolume",
+        "deltaPercent",
+        "setSystemVolume",
+        "percent",
+        "adjustBrightness",
+        "setBrightness",
+        "refresh",
         "batteryLabel",
         "batteryPercent",
-        "batteryCharging"
+        "batteryCharging",
+        "volumePercent",
+        "volumeAvailable",
+        "brightnessPercent",
+        "brightnessAvailable"
     };
 
     QtMocHelpers::UintData qt_methods {
         // Signal 'statusChanged'
         QtMocHelpers::SignalData<void()>(1, 2, QMC::AccessPublic, QMetaType::Void),
+        // Method 'adjustSystemVolume'
+        QtMocHelpers::MethodData<void(int)>(3, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 4 },
+        }}),
+        // Method 'setSystemVolume'
+        QtMocHelpers::MethodData<void(int)>(5, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 6 },
+        }}),
+        // Method 'adjustBrightness'
+        QtMocHelpers::MethodData<void(int)>(7, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 4 },
+        }}),
+        // Method 'setBrightness'
+        QtMocHelpers::MethodData<void(int)>(8, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 6 },
+        }}),
+        // Method 'refresh'
+        QtMocHelpers::MethodData<void()>(9, 2, QMC::AccessPublic, QMetaType::Void),
     };
     QtMocHelpers::UintData qt_properties {
         // property 'batteryLabel'
-        QtMocHelpers::PropertyData<QString>(3, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<QString>(10, QMetaType::QString, QMC::DefaultPropertyFlags, 0),
         // property 'batteryPercent'
-        QtMocHelpers::PropertyData<int>(4, QMetaType::Int, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<int>(11, QMetaType::Int, QMC::DefaultPropertyFlags, 0),
         // property 'batteryCharging'
-        QtMocHelpers::PropertyData<bool>(5, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
+        QtMocHelpers::PropertyData<bool>(12, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
+        // property 'volumePercent'
+        QtMocHelpers::PropertyData<int>(13, QMetaType::Int, QMC::DefaultPropertyFlags, 0),
+        // property 'volumeAvailable'
+        QtMocHelpers::PropertyData<bool>(14, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
+        // property 'brightnessPercent'
+        QtMocHelpers::PropertyData<int>(15, QMetaType::Int, QMC::DefaultPropertyFlags, 0),
+        // property 'brightnessAvailable'
+        QtMocHelpers::PropertyData<bool>(16, QMetaType::Bool, QMC::DefaultPropertyFlags, 0),
     };
     QtMocHelpers::UintData qt_enums {
     };
@@ -79,6 +116,11 @@ void SystemStatus::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id
     if (_c == QMetaObject::InvokeMetaMethod) {
         switch (_id) {
         case 0: _t->statusChanged(); break;
+        case 1: _t->adjustSystemVolume((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 2: _t->setSystemVolume((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 3: _t->adjustBrightness((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 4: _t->setBrightness((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 5: _t->refresh(); break;
         default: ;
         }
     }
@@ -92,6 +134,10 @@ void SystemStatus::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id
         case 0: *reinterpret_cast<QString*>(_v) = _t->batteryLabel(); break;
         case 1: *reinterpret_cast<int*>(_v) = _t->batteryPercent(); break;
         case 2: *reinterpret_cast<bool*>(_v) = _t->batteryCharging(); break;
+        case 3: *reinterpret_cast<int*>(_v) = _t->volumePercent(); break;
+        case 4: *reinterpret_cast<bool*>(_v) = _t->volumeAvailable(); break;
+        case 5: *reinterpret_cast<int*>(_v) = _t->brightnessPercent(); break;
+        case 6: *reinterpret_cast<bool*>(_v) = _t->brightnessAvailable(); break;
         default: break;
         }
     }
@@ -116,20 +162,20 @@ int SystemStatus::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 1)
+        if (_id < 6)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 1;
+        _id -= 6;
     }
     if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 1)
+        if (_id < 6)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 1;
+        _id -= 6;
     }
     if (_c == QMetaObject::ReadProperty || _c == QMetaObject::WriteProperty
             || _c == QMetaObject::ResetProperty || _c == QMetaObject::BindableProperty
             || _c == QMetaObject::RegisterPropertyMetaType) {
         qt_static_metacall(this, _c, _id, _a);
-        _id -= 3;
+        _id -= 7;
     }
     return _id;
 }

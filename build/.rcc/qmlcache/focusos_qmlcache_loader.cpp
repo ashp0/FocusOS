@@ -47,6 +47,13 @@ namespace _qt_qml_FocusOS_src_shell_NotesDrawer_qml {
         reinterpret_cast<const QV4::CompiledData::Unit*>(&qmlData), &aotBuiltFunctions[0], nullptr
     };
 }
+namespace _qt_qml_FocusOS_src_shell_RoutineEditorDialog_qml { 
+    extern const unsigned char qmlData[];
+    extern const QQmlPrivate::AOTCompiledFunction aotBuiltFunctions[];
+    const QQmlPrivate::CachedQmlUnit unit = {
+        reinterpret_cast<const QV4::CompiledData::Unit*>(&qmlData), &aotBuiltFunctions[0], nullptr
+    };
+}
 namespace _qt_qml_FocusOS_src_shell_UnlockModal_qml { 
     extern const unsigned char qmlData[];
     extern const QQmlPrivate::AOTCompiledFunction aotBuiltFunctions[];
@@ -74,6 +81,7 @@ Registry::Registry() {
     resourcePathToCachedUnit.insert(QStringLiteral("/qt/qml/FocusOS/src/shell/AmbientLayer.qml"), &QmlCacheGeneratedCode::_qt_qml_FocusOS_src_shell_AmbientLayer_qml::unit);
     resourcePathToCachedUnit.insert(QStringLiteral("/qt/qml/FocusOS/src/shell/MissionView.qml"), &QmlCacheGeneratedCode::_qt_qml_FocusOS_src_shell_MissionView_qml::unit);
     resourcePathToCachedUnit.insert(QStringLiteral("/qt/qml/FocusOS/src/shell/NotesDrawer.qml"), &QmlCacheGeneratedCode::_qt_qml_FocusOS_src_shell_NotesDrawer_qml::unit);
+    resourcePathToCachedUnit.insert(QStringLiteral("/qt/qml/FocusOS/src/shell/RoutineEditorDialog.qml"), &QmlCacheGeneratedCode::_qt_qml_FocusOS_src_shell_RoutineEditorDialog_qml::unit);
     resourcePathToCachedUnit.insert(QStringLiteral("/qt/qml/FocusOS/src/shell/UnlockModal.qml"), &QmlCacheGeneratedCode::_qt_qml_FocusOS_src_shell_UnlockModal_qml::unit);
     QQmlPrivate::RegisterQmlUnitCacheHook registration;
     registration.structVersion = 0;

@@ -7,7 +7,9 @@ class LinuxBackend final : public PlatformBackend
 {
 public:
     QString name() const override;
+    void prepareRoutineSession(const QStringList &appPaths) override;
     bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) override;
+    bool openUrls(const QStringList &urls, QString *errorMessage = nullptr) override;
     void terminateApps(const QStringList &appPaths) override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void dropNetworkPolicy() override;
