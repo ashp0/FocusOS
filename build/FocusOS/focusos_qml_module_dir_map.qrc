@@ -1,6 +1,0 @@
-<RCC>
-  <qresource prefix="/">
-    <file alias="/qt/qml/FocusOS">/Users/ashwinpaudel/Desktop/FocusOS/build/FocusOS</file>
-
-  </qresource>
-</RCC>
