@@ -1,0 +1,29 @@
+Engaging in a session causes an error.
+
+ashwinpaudel@fedora:~/FocusOS$ cmake --build build-linux && ./build-linux/focusos
+ninja: no work to do.
+qt.multimedia.ffmpeg: Using Qt multimedia with FFmpeg version 8.1.1 GPL version 3 or later
+Failed to open VDPAU backend libvdpau_nvidia.so: cannot open shared object file: No such file or directory
+spaVisitChoice: parse error "Object: size 136, type Spa:Pod:Object:Param:Format (262147), id Spa:Enum:ParamId:EnumFormat (3)" "  Prop: key Spa:Pod:Object:Param:Format:mediaType (1), flags 00000000" "    Id 1        (Spa:Enum:MediaType:audio)" "  Prop: key Spa:Pod:Object:Param:Format:mediaSubtype (2), flags 00000000" "    Id 1        (Spa:Enum:MediaSubtype:raw)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:format (65537), flags 00000000" "    Id 518      (Spa:Enum:AudioFormat:F32P)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:channels (65540), flags 00000000" "    Int 1" "  Prop: key Spa:Pod:Object:Param:Format:Audio:position (65541), flags 00000000" "    Array: child.size 4, child.type Spa:Id" "      Id 4096     (Spa:Enum:AudioChannel:AUX0)"
+spaVisitChoice: parse error "Object: size 136, type Spa:Pod:Object:Param:Format (262147), id Spa:Enum:ParamId:EnumFormat (3)" "  Prop: key Spa:Pod:Object:Param:Format:mediaType (1), flags 00000000" "    Id 1        (Spa:Enum:MediaType:audio)" "  Prop: key Spa:Pod:Object:Param:Format:mediaSubtype (2), flags 00000000" "    Id 1        (Spa:Enum:MediaSubtype:raw)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:format (65537), flags 00000000" "    Id 518      (Spa:Enum:AudioFormat:F32P)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:channels (65540), flags 00000000" "    Int 2" "  Prop: key Spa:Pod:Object:Param:Format:Audio:position (65541), flags 00000000" "    Array: child.size 4, child.type Spa:Id" "      Id 3        (Spa:Enum:AudioChannel:FL)" "      Id 4        (Spa:Enum:AudioChannel:FR)"
+Input #0, mp3, from '/home/ashwinpaudel/.focusos/music/Фриссон - Континуум.mp3':
+  Metadata:
+    major_brand     : dash
+    minor_version   : 0
+    compatible_brands: iso6mp41
+    encoder         : Lavf62.3.100
+  Duration: 00:03:57.61, start: 0.025057, bitrate: 320 kb/s
+  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, stereo, fltp, 320 kb/s, start 0.025057
+    Metadata:
+      encoder         : Lavc62.11
+[mp3float @ 0x3f347df0] Could not update timestamps for skipped samples.
+pkill: pattern that searches for process name longer than 15 characters will result in zero matches
+Try `pkill -f' option to match against the complete command line.
+pkill: pattern that searches for process name longer than 15 characters will result in zero matches
+Try `pkill -f' option to match against the complete command line.
+pkill: pattern that searches for process name longer than 15 characters will result in zero matches
+Try `pkill -f' option to match against the complete command line.
+QDBusArgument: write from a read-only object
+dbus[5269]: type struct 114 not a basic type
+  D-Bus not built with -rdynamic so unable to print a backtrace
+Aborted                    (core dumped) ./build-linux/focusos
