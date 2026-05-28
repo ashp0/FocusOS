@@ -1,3 +1,66 @@
+// ─── FocusOS Linux backend ──────────────────────────────────────────────────
+//
+// This is the daily-driver target — KDE Plasma 6 on Wayland with KWin as the
+// compositor. The backend is structured around three responsibilities:
+//
+//   1. Launching routine apps and pinning them to the focus virtual desktop
+//   2. Applying / dropping the nftables network policy (NetGate)
+//   3. Running a lockdown watchdog that aggressively kills launcher /
+//      spotlight surfaces while a routine is engaged
+//
+// FUTURE CONCERNS — things to address before this can be a true single-purpose
+// productivity OS, in priority order:
+//
+//   * **Session-state persistence across reboots.** The user's goal is "if
+//     you chose 2 hours to learn rust, it will never stop until those 2
+//     hours are finished, even across reboot." Today an active routine is
+//     in-memory only — power loss / crash / reboot drops it. RoutineManager
+//     should checkpoint active session state (id, started_at, total
+//     seconds, remaining seconds at last tick) into ~/.focusos/active.json
+//     on every tick, and re-engage on launch if found and not expired.
+//     Min-time floor should re-apply.
+//
+//   * **System-tray / notification surfaces.** KDE's StatusNotifierWatcher
+//     keeps tray items alive after plasmashell dies. We don't kill it yet
+//     because some routine apps (Slack-equivalents, password managers)
+//     refuse to start without it. Audit each routine app individually.
+//
+//   * **Network monitor indicator.** No way to see if wifi is up while
+//     locked down. systemStatus already plumbs battery; add NetworkManager
+//     DBus state (org.freedesktop.NetworkManager.Connectivity) so the user
+//     can tell whether allowed sites are reachable.
+//
+//   * **Notification daemon.** dbus-daemon will queue notifications for
+//     org.freedesktop.Notifications. We don't currently surface them. A
+//     focused user probably wants them muted by default but reachable in
+//     the Settings tab.
+//
+//   * **Per-app sandboxing (Landlock / AppArmor / bubblewrap).** Even an
+//     allowed editor can spawn a browser. The DECISIONS.md notes a
+//     compositor-or-supervisor model as the right boundary; until then,
+//     wrap routine apps in bwrap with no /home/$user/.config/google-chrome
+//     etc. visible.
+//
+//   * **Display-server / compositor restart.** kwin_wayland crashes occur.
+//     If kwin dies during a routine, the screen goes black and the user
+//     can't reach FocusOS. Watchdog should detect missing kwin and respawn,
+//     or pin focusos to a known-good DRM output as fallback.
+//
+//   * **DRM brightness / VT switch lockdown.** Ctrl+Alt+F2 currently
+//     escapes to a TTY. The systemd-logind seat config should disable
+//     `KillUserProcesses=no` and the VT shortcuts, but that's a packaging
+//     concern, not a backend one.
+//
+//   * **Input device / keyboard layout snapshotting.** A user who hot-swaps
+//     to a different keymap mid-routine can hit unknown shortcuts. Future:
+//     snapshot active layout at routine start, restore at end.
+//
+//   * **Audio routing.** Currently relies on PipeWire being up. If it
+//     isn't, ambient music silently fails. Future: surface a status chip.
+//
+// The above are tracked in code rather than DECISIONS.md so they stay in
+// front of whoever is editing this file next.
+
 #include "platform/linux/LinuxBackend.h"
 
 #include <QDBusArgument>
@@ -15,6 +78,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QThread>
 #include <QUrl>
 
@@ -251,7 +315,19 @@ bool startDetachedWithKdeEnvironment(const QString &program, const QStringList &
 
 void pkillExact(const QString &processName)
 {
-    QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-x"), processName});
+    // pkill -x matches against the 15-char comm field by default, so long
+    // process names like "polkit-kde-authentication-agent-1" produce a
+    // warning and silently match nothing. Switch to -f for any name that
+    // doesn't fit. We anchor to the command start so /foo/bar doesn't match
+    // /foo/bar2.
+    if (processName.size() <= 15) {
+        QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-x"), processName});
+        return;
+    }
+    QProcess::execute(QStringLiteral("pkill"), {
+        QStringLiteral("-f"),
+        QStringLiteral("^%1($| )").arg(QRegularExpression::escape(processName))
+    });
 }
 
 bool processRunning(const QString &processName)
@@ -273,10 +349,48 @@ bool processRunning(const QString &processName)
 
 // ─── KWin DBus helpers ───────────────────────────────────────────────────────
 //
-// We talk to KWin's VirtualDesktopManager directly over the user session bus
-// instead of shelling out to `qdbus`. Subprocess qdbus made the switch racy:
-// the property set returned 0 even when KWin had not yet processed the new
-// "current" value, so apps launched before the desktop actually flipped.
+// We talk to KWin's VirtualDesktopManager over the session bus, but every
+// mutation goes through a tiny `qdbus6` subprocess shell-out rather than
+// QDBusInterface::call(). The previous Qt 6 / KWin 6 combination aborted the
+// process inside libdbus during `Properties.Set` with a wrapped QDBusVariant:
+//
+//   QDBusArgument: write from a read-only object
+//   dbus[…]: type struct 114 not a basic type
+//   Aborted (core dumped)
+//
+// Crashing the routine engage also left the nftables policy installed, which
+// stranded the user's wifi until reboot — so the trade is well worth the
+// extra ~30ms per Set/createDesktop. Reads still use QDBus directly because
+// Properties.Get is stable; readers are also wrapped in a try/parse-defensive
+// path so a malformed reply yields an empty result instead of UB.
+//
+// FUTURE: when we own the compositor, virtual-desktop bookkeeping moves
+// in-process and these DBus dances go away entirely.
+
+QString findQdbusBinary()
+{
+    return firstExecutable({
+        QStringLiteral("qdbus6"),
+        QStringLiteral("qdbus-qt6"),
+        QStringLiteral("qdbus")
+    });
+}
+
+bool runQdbusShell(const QStringList &args, int timeoutMs = 1500)
+{
+    const QString qdbus = findQdbusBinary();
+    if (qdbus.isEmpty()) {
+        return false;
+    }
+    QProcess process;
+    process.start(qdbus, args);
+    if (!process.waitForFinished(timeoutMs)) {
+        process.kill();
+        process.waitForFinished(50);
+        return false;
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
 
 QStringList kwinListDesktopIds()
 {
@@ -295,13 +409,28 @@ QStringList kwinListDesktopIds()
         return {};
     }
 
-    // The reply variant wraps an a(uss). We don't care about the position
-    // ordering KWin uses internally — KWin already returns them in the order
-    // the user sees, and we only need the ids.
-    QDBusArgument arg = reply.arguments().first().value<QDBusVariant>().variant().value<QDBusArgument>();
+    // The reply variant wraps an a(uss). We defensively check every step
+    // because earlier crashes traced back to handing libdbus a struct
+    // iterator when a basic was expected.
+    const QVariant outerVariant = reply.arguments().first();
+    if (!outerVariant.canConvert<QDBusVariant>()) {
+        return {};
+    }
+    const QVariant innerVariant = outerVariant.value<QDBusVariant>().variant();
+    if (!innerVariant.canConvert<QDBusArgument>()) {
+        return {};
+    }
+    QDBusArgument arg = innerVariant.value<QDBusArgument>();
+    if (arg.currentType() != QDBusArgument::ArrayType) {
+        return {};
+    }
+
     QStringList ids;
     arg.beginArray();
     while (!arg.atEnd()) {
+        if (arg.currentType() != QDBusArgument::StructureType) {
+            break;
+        }
         arg.beginStructure();
         uint position = 0;
         QString id;
@@ -334,7 +463,11 @@ QString kwinCurrentDesktopId()
     if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
         return {};
     }
-    return reply.arguments().first().value<QDBusVariant>().variant().toString();
+    const QVariant outerVariant = reply.arguments().first();
+    if (!outerVariant.canConvert<QDBusVariant>()) {
+        return {};
+    }
+    return outerVariant.value<QDBusVariant>().variant().toString();
 }
 
 int kwinCurrentDesktopIndex()
@@ -361,7 +494,11 @@ uint kwinDesktopCount()
     if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
         return 0;
     }
-    return reply.arguments().first().value<QDBusVariant>().variant().toUInt();
+    const QVariant outerVariant = reply.arguments().first();
+    if (!outerVariant.canConvert<QDBusVariant>()) {
+        return 0;
+    }
+    return outerVariant.value<QDBusVariant>().variant().toUInt();
 }
 
 bool kwinSetCurrentDesktop(const QString &desktopId)
@@ -369,28 +506,25 @@ bool kwinSetCurrentDesktop(const QString &desktopId)
     if (desktopId.isEmpty()) {
         return false;
     }
-
-    QDBusInterface iface(QString::fromLatin1(kKWinService),
-                         QString::fromLatin1(kVdmPath),
-                         QStringLiteral("org.freedesktop.DBus.Properties"),
-                         QDBusConnection::sessionBus());
-    if (!iface.isValid()) {
-        return false;
+    if (kwinCurrentDesktopId() == desktopId) {
+        return true;
     }
 
-    // Properties.Set expects a variant; QDBusVariant ensures KWin sees a
-    // string variant rather than us being silently coerced.
-    const QDBusMessage reply = iface.call(QStringLiteral("Set"),
-                                          QString::fromLatin1(kVdmIface),
-                                          QStringLiteral("current"),
-                                          QVariant::fromValue(QDBusVariant(desktopId)));
-    if (reply.type() == QDBusMessage::ErrorMessage) {
-        return false;
-    }
+    // Shell out to qdbus6 — see top-of-block comment for why this is not a
+    // QDBusInterface::call(). The string roundtrips cleanly because qdbus
+    // wraps the value as a string variant itself.
+    runQdbusShell({
+        QString::fromLatin1(kKWinService),
+        QString::fromLatin1(kVdmPath),
+        QStringLiteral("org.freedesktop.DBus.Properties.Set"),
+        QString::fromLatin1(kVdmIface),
+        QStringLiteral("current"),
+        desktopId
+    });
 
-    // Poll until KWin reports the new current desktop — the property change is
-    // applied asynchronously, and we don't want to launch routine apps before
-    // KWin has actually flipped to the focus desktop.
+    // Poll until KWin reports the new current desktop — qdbus returns before
+    // KWin processes the property change, and we don't want to launch routine
+    // apps before the desktop actually flips.
     QElapsedTimer waitTimer;
     waitTimer.start();
     while (waitTimer.elapsed() < 1500) {
@@ -409,23 +543,20 @@ QString kwinEnsureDesktop(int desiredCount, const QString &nameForNew)
         return existing.at(desiredCount - 1);
     }
 
-    QDBusInterface vdm(QString::fromLatin1(kKWinService),
-                       QString::fromLatin1(kVdmPath),
-                       QString::fromLatin1(kVdmIface),
-                       QDBusConnection::sessionBus());
-    if (!vdm.isValid()) {
-        return {};
-    }
-
     int current = existing.size();
     while (current < desiredCount) {
-        vdm.call(QStringLiteral("createDesktop"),
-                 static_cast<uint>(current),
-                 nameForNew);
+        // qdbus6 round-trip avoids the same QDBusInterface marshalling abort
+        // that hit Properties.Set. createDesktop(u, s) is plain-typed so
+        // either path *should* work, but consistency keeps the failure mode
+        // identical across calls.
+        runQdbusShell({
+            QString::fromLatin1(kKWinService),
+            QString::fromLatin1(kVdmPath),
+            QString::fromLatin1(kVdmIface) + QStringLiteral(".createDesktop"),
+            QString::number(current),
+            nameForNew
+        });
 
-        // KWin emits desktopCreated after the new id is allocated, but our
-        // synchronous call returns before the emission propagates. Poll until
-        // the desktops list grows.
         QElapsedTimer waitTimer;
         waitTimer.start();
         QStringList updated = kwinListDesktopIds();
@@ -444,6 +575,76 @@ QString kwinEnsureDesktop(int desiredCount, const QString &nameForNew)
         return {};
     }
     return finalIds.at(desiredCount - 1);
+}
+
+// ─── KWin scripting: window-to-desktop pinning ──────────────────────────────
+//
+// KWin assigns newly-created windows to the desktop that is current at the
+// moment the window appears, but a Chromium / Electron app with an existing
+// session opens its new window on whatever desktop the existing process owns.
+// That's why the user kept seeing routine apps spawn on the wrong desktop
+// and having to drag them by hand. We patch around this for the lifetime of
+// the routine by loading a small KWin script that captures every window
+// `windowAdded` and pins it to the focus desktop.
+//
+// The script is referenced by an integer handle; we keep it around so
+// `stop()` + `unloadScript()` can run when the routine ends.
+
+int kwinScriptingLoad(const QString &scriptBody, const QString &pluginName)
+{
+    QTemporaryFile scriptFile(QDir::tempPath() + QStringLiteral("/focusos-kwin-XXXXXX.js"));
+    scriptFile.setAutoRemove(false);
+    if (!scriptFile.open()) {
+        return -1;
+    }
+    scriptFile.write(scriptBody.toUtf8());
+    const QString scriptPath = scriptFile.fileName();
+    scriptFile.close();
+
+    QDBusInterface scripting(QStringLiteral("org.kde.KWin"),
+                             QStringLiteral("/Scripting"),
+                             QStringLiteral("org.kde.kwin.Scripting"),
+                             QDBusConnection::sessionBus());
+    if (!scripting.isValid()) {
+        QFile::remove(scriptPath);
+        return -1;
+    }
+    QDBusReply<int> reply = scripting.call(QStringLiteral("loadScript"), scriptPath, pluginName);
+    if (!reply.isValid()) {
+        QFile::remove(scriptPath);
+        return -1;
+    }
+    const int handle = reply.value();
+    // Each script lives at /Scripting/Script<handle> and has its own start().
+    QDBusInterface scriptIface(QStringLiteral("org.kde.KWin"),
+                               QStringLiteral("/Scripting/Script%1").arg(handle),
+                               QStringLiteral("org.kde.kwin.Script"),
+                               QDBusConnection::sessionBus());
+    if (scriptIface.isValid()) {
+        scriptIface.call(QStringLiteral("run"));
+    }
+    return handle;
+}
+
+void kwinScriptingUnload(int handle, const QString &pluginName)
+{
+    if (handle < 0) {
+        return;
+    }
+    QDBusInterface scriptIface(QStringLiteral("org.kde.KWin"),
+                               QStringLiteral("/Scripting/Script%1").arg(handle),
+                               QStringLiteral("org.kde.kwin.Script"),
+                               QDBusConnection::sessionBus());
+    if (scriptIface.isValid()) {
+        scriptIface.call(QStringLiteral("stop"));
+    }
+    QDBusInterface scripting(QStringLiteral("org.kde.KWin"),
+                             QStringLiteral("/Scripting"),
+                             QStringLiteral("org.kde.kwin.Scripting"),
+                             QDBusConnection::sessionBus());
+    if (scripting.isValid()) {
+        scripting.call(QStringLiteral("unloadScript"), pluginName);
+    }
 }
 
 void killTrackedPids(QList<qint64> &pids)
@@ -519,6 +720,7 @@ LinuxBackend::LinuxBackend()
 LinuxBackend::~LinuxBackend()
 {
     stopLockdownWatchdog();
+    unloadWindowPinScript();
 }
 
 QString LinuxBackend::name() const
@@ -554,6 +756,13 @@ void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
     // races the very first window creation. A small extra settle window beats
     // the alternative (apps appearing on the old desktop).
     QThread::msleep(200);
+
+    // Pin every newly-created window to the focus desktop for the duration
+    // of the routine. Without this, Chromium/Electron apps with an existing
+    // background process open their windows on whatever desktop the parent
+    // process is on — which is why the user kept seeing routine apps spawn
+    // on the home desktop and having to drag them by hand.
+    loadWindowPinScript();
 
     startLockdownWatchdog();
 }
@@ -660,10 +869,17 @@ bool LinuxBackend::openUrls(const QStringList &urls, QString *errorMessage)
 void LinuxBackend::terminateApps(const QStringList &appPaths)
 {
     stopLockdownWatchdog();
+    unloadWindowPinScript();
 
     // Kill anything we tracked from launchApps/openUrls first — this catches
     // browser windows that opened on free PIDs we wouldn't otherwise reach.
     killTrackedPids(m_sessionPids);
+
+    // Build the always-allowed allowlist so we don't accidentally pkill an
+    // app the user pinned. pkill -f matches against the full command line,
+    // so a partial match on a routine path could brush against an
+    // always-allowed editor running with a similar invocation.
+    const QStringList alwaysAllowed = alwaysAllowedProcessNames();
 
     for (const QString &rawEntry : appPaths) {
         const ParsedAppEntry parsed = parseAppEntry(rawEntry);
@@ -679,10 +895,21 @@ void LinuxBackend::terminateApps(const QStringList &appPaths)
         }
 
         const QFileInfo info(candidate);
+        const QString candidateName = info.fileName();
+        if (alwaysAllowed.contains(candidateName)) {
+            // The routine listed an always-allowed app explicitly. Leave it
+            // running so the user keeps their editor/calendar between
+            // routines.
+            continue;
+        }
+
         if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0) {
             const QStringList parts = desktopExecParts(candidate);
             if (!parts.isEmpty()) {
-                QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), QFileInfo(parts.first()).fileName()});
+                const QString basename = QFileInfo(parts.first()).fileName();
+                if (!alwaysAllowed.contains(basename)) {
+                    QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), basename});
+                }
             }
         }
         QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-f"), candidate});
@@ -722,6 +949,7 @@ bool LinuxBackend::openSystemTerminal(QString *errorMessage)
 void LinuxBackend::terminateUnrestrictedApps()
 {
     stopLockdownWatchdog();
+    unloadWindowPinScript();
 
     // The 30-min Other Access timer fires this. We want to take the user back
     // to a clean FocusOS state: kill terminals, the desktop shell, and any
@@ -858,18 +1086,144 @@ void LinuxBackend::tickLockdownWatchdog() const
     // While a routine is engaged we keep killing the spotlight / launcher
     // processes that let the user pull up arbitrary apps. plasmashell is in
     // here because kded6 happily respawns it; krunner is the KDE spotlight.
+    //
+    // This is the strict-lockdown surface — the only legitimate way out of
+    // the routine should be the FocusOS shell itself (TOTP unlock) or
+    // logging out via SDDM. Anything that pops a launcher or spawns a
+    // taskbar goes back here.
+    //
+    // FUTURE: extend this to an allowlist sweep — enumerate processes via
+    // /proc, and kill anything user-owned that isn't:
+    //   - focusos itself
+    //   - kwin_wayland / xdg-desktop-portal (compositor + portal)
+    //   - routine apps (tracked PIDs)
+    //   - always-allowed apps (m_alwaysAllowedCommandLines)
+    // We don't do that yet because misclassifying a session-critical helper
+    // would log the user out. The current deny-list is a safer first pass.
     static const QStringList outlawed {
+        // Launcher / spotlight surfaces
         QStringLiteral("krunner"),
         QStringLiteral("plasmashell"),
         QStringLiteral("kickoff"),
         QStringLiteral("rofi"),
         QStringLiteral("dmenu"),
         QStringLiteral("wofi"),
+        QStringLiteral("fuzzel"),
         QStringLiteral("synapse"),
         QStringLiteral("ulauncher"),
-        QStringLiteral("albert")
+        QStringLiteral("albert"),
+        QStringLiteral("kmenuedit"),
+        QStringLiteral("plasmawindowed"),
+        // System trays / panels that could surface app shortcuts
+        QStringLiteral("waybar"),
+        QStringLiteral("polybar"),
+        QStringLiteral("xfce4-panel"),
+        QStringLiteral("mate-panel"),
+        // Activity / overview surfaces
+        QStringLiteral("kactivitymanagerd"),
+        // File managers and system-control surfaces. These are powerful
+        // escape hatches during a routine because they can launch arbitrary
+        // .desktop files, open terminals, mount drives, or change policy.
+        QStringLiteral("dolphin"),
+        QStringLiteral("nautilus"),
+        QStringLiteral("nemo"),
+        QStringLiteral("thunar"),
+        QStringLiteral("pcmanfm"),
+        QStringLiteral("caja"),
+        QStringLiteral("systemsettings"),
+        QStringLiteral("plasma-discover"),
+        QStringLiteral("gnome-software"),
+        QStringLiteral("apper"),
+        QStringLiteral("muon"),
+        QStringLiteral("plasma-systemmonitor"),
+        QStringLiteral("gnome-system-monitor"),
+        QStringLiteral("ksysguard"),
+        QStringLiteral("missioncenter"),
+        // Common time-sinks (kept here even if the network lock blocks the
+        // backend — the app surface is still a temptation)
+        QStringLiteral("discord"),
+        QStringLiteral("slack"),
+        QStringLiteral("telegram-desktop"),
+        QStringLiteral("Signal"),
+        QStringLiteral("steam"),
+        QStringLiteral("spotify")
     };
+    const QStringList alwaysAllowed = alwaysAllowedProcessNames();
     for (const QString &name : outlawed) {
+        if (alwaysAllowed.contains(name)) {
+            continue;
+        }
         pkillExact(name);
     }
+}
+
+QStringList LinuxBackend::alwaysAllowedProcessNames() const
+{
+    QStringList names;
+    names.reserve(m_alwaysAllowedCommandLines.size());
+    for (const QString &entry : m_alwaysAllowedCommandLines) {
+        const QString trimmed = entry.trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+        const QStringList parts = QProcess::splitCommand(trimmed);
+        if (parts.isEmpty()) {
+            continue;
+        }
+        QString first = parts.first();
+        const QFileInfo info(first);
+        if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0) {
+            const QStringList execParts = desktopExecParts(first);
+            if (!execParts.isEmpty()) {
+                names.append(QFileInfo(execParts.first()).fileName());
+            }
+            continue;
+        }
+        names.append(QFileInfo(first).fileName());
+    }
+    return names;
+}
+
+void LinuxBackend::setAlwaysAllowedApps(const QStringList &commandLines)
+{
+    m_alwaysAllowedCommandLines = commandLines;
+}
+
+void LinuxBackend::loadWindowPinScript()
+{
+    if (m_windowPinScriptHandle >= 0) {
+        // Existing script from a previous routine that wasn't cleaned up —
+        // tear it down before installing the new one so we don't end up
+        // with two scripts double-handling windowAdded.
+        unloadWindowPinScript();
+    }
+
+    // KWin 6 scripting API: workspace.windowAdded fires for every new
+    // toplevel. We pin to the desktop the user is currently on, which is
+    // the focus desktop after prepareRoutineSession switched. We also skip
+    // the window's own dialogs (transients) so e.g. file-pickers don't get
+    // shuttled away from their parent.
+    const QString scriptBody = QStringLiteral(R"(
+        function focusosPinNewWindow(window) {
+            if (!window) return;
+            if (window.transient) return;
+            try {
+                window.desktops = [workspace.currentDesktop];
+            } catch (e) { /* KWin <6.0 didn't expose .desktops */ }
+        }
+        workspace.windowAdded.connect(focusosPinNewWindow);
+    )");
+    m_windowPinScriptPlugin = QStringLiteral("focusos-window-pin-%1")
+                                  .arg(QDateTime::currentMSecsSinceEpoch());
+    m_windowPinScriptHandle = kwinScriptingLoad(scriptBody, m_windowPinScriptPlugin);
+}
+
+void LinuxBackend::unloadWindowPinScript()
+{
+    if (m_windowPinScriptHandle < 0) {
+        return;
+    }
+    kwinScriptingUnload(m_windowPinScriptHandle, m_windowPinScriptPlugin);
+    m_windowPinScriptHandle = -1;
+    m_windowPinScriptPlugin.clear();
 }

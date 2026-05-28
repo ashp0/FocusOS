@@ -1003,7 +1003,7 @@ Item {
                     }
                 }
 
-                // Re-open admin menu during Other Access if it was dismissed.
+                // Re-open settings menu during access if it was dismissed.
                 Rectangle {
                     visible: routineManager.accessGranted
                     width: 126
@@ -1014,7 +1014,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "▣ OTHER MENU"
+                        text: "▣ SETTINGS"
                         color: adminMouse.containsMouse ? Theme.goldDim : Theme.textDim
                         elide: Text.ElideRight
                         font.family: root.headerFont
@@ -1097,7 +1097,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "▣ OTHER ACCESS"
+                        text: "▣ SETTINGS"
                         color: otherMouse.containsMouse ? Theme.goldDim : Theme.textDim
                         elide: Text.ElideRight
                         font.family: root.headerFont

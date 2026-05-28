@@ -17,6 +17,12 @@ Item {
     property string deviceInfoText: ""
     property bool showEnrollmentQr: false
     property var routineDrafts: []
+    property var settingsTabs: [
+        {"index": 0, "code": "01", "label": "MISSION PLAN", "subtitle": "ROUTINES"},
+        {"index": 1, "code": "02", "label": "ALLOWED APPS", "subtitle": "GLOBAL"},
+        {"index": 2, "code": "03", "label": "SECURITY", "subtitle": "ACCESS"},
+        {"index": 3, "code": "04", "label": "AUDIO", "subtitle": "MUSIC"}
+    ]
 
     visible: opacity > 0
     opacity: modalOpen ? 1 : 0
@@ -210,6 +216,24 @@ Item {
                          systemStatus.batteryLabel
     }
 
+    function tabLabel(index) {
+        for (let i = 0; i < settingsTabs.length; ++i) {
+            if (settingsTabs[i].index === index) {
+                return settingsTabs[i].label
+            }
+        }
+        return "SETTINGS"
+    }
+
+    function tabSubtitle(index) {
+        for (let i = 0; i < settingsTabs.length; ++i) {
+            if (settingsTabs[i].index === index) {
+                return settingsTabs[i].subtitle
+            }
+        }
+        return "CONTROL"
+    }
+
     Component.onCompleted: updateDeviceInfo()
 
     Timer {
@@ -373,6 +397,172 @@ Item {
         onValueChanged: spinField.text = String(spin.value)
     }
 
+    component SettingsTabButton: Rectangle {
+        id: tabButton
+        property int tabIndex: 0
+        property string code: ""
+        property string label: ""
+        property string subtitle: ""
+        property string badge: ""
+        signal clicked()
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 54
+        color: root.activeTab === tabIndex ? "#2a1818" : (tabMouse.containsMouse ? Theme.steel : "transparent")
+        border.width: 1
+        border.color: root.activeTab === tabIndex ? Theme.gold : (tabMouse.containsMouse ? Theme.goldDim : "#33250d")
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 3
+            color: root.activeTab === tabButton.tabIndex ? Theme.crimsonHot : "transparent"
+        }
+
+        Text {
+            anchors.left: parent.left
+            anchors.leftMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            text: tabButton.code
+            color: root.activeTab === tabButton.tabIndex ? Theme.gold : Theme.goldDim
+            font.family: root.headerFont
+            font.pixelSize: 14
+            font.letterSpacing: 0
+        }
+
+        Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 54
+            anchors.right: badgeBox.left
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 2
+
+            Text {
+                width: parent.width
+                text: tabButton.label
+                color: root.activeTab === tabButton.tabIndex ? Theme.textPrimary : Theme.textDim
+                elide: Text.ElideRight
+                font.family: root.headerFont
+                font.pixelSize: 12
+                font.letterSpacing: 0
+            }
+
+            Text {
+                width: parent.width
+                text: tabButton.subtitle
+                color: root.activeTab === tabButton.tabIndex ? Theme.goldDim : Theme.textGhost
+                elide: Text.ElideRight
+                font.family: root.bodyFont
+                font.pixelSize: 10
+                font.letterSpacing: 0
+            }
+        }
+
+        Rectangle {
+            id: badgeBox
+            visible: tabButton.badge.length > 0
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            width: visible ? Math.max(28, badgeText.implicitWidth + 14) : 0
+            height: 22
+            color: Theme.voidColor
+            border.width: 1
+            border.color: root.activeTab === tabButton.tabIndex ? Theme.gold : Theme.goldDim
+
+            Text {
+                id: badgeText
+                anchors.centerIn: parent
+                text: tabButton.badge
+                color: Theme.gold
+                font.family: root.headerFont
+                font.pixelSize: 10
+                font.letterSpacing: 0
+            }
+        }
+
+        MouseArea {
+            id: tabMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: tabButton.clicked()
+        }
+    }
+
+    component SettingsToggleRow: Rectangle {
+        id: toggleRow
+        property string label: ""
+        property string detail: ""
+        property bool checked: false
+        signal toggled()
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 58
+        color: checked ? "#1f1a12" : Theme.voidColor
+        border.width: 1
+        border.color: checked ? Theme.gold : Theme.goldDim
+
+        Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 14
+            anchors.right: switchBox.left
+            anchors.rightMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+
+            Text {
+                width: parent.width
+                text: toggleRow.label
+                color: toggleRow.checked ? Theme.textPrimary : Theme.textDim
+                elide: Text.ElideRight
+                font.family: root.headerFont
+                font.pixelSize: 12
+                font.letterSpacing: 0
+            }
+
+            Text {
+                width: parent.width
+                text: toggleRow.detail
+                color: Theme.textGhost
+                elide: Text.ElideRight
+                font.family: root.bodyFont
+                font.pixelSize: 10
+                font.letterSpacing: 0
+            }
+        }
+
+        Rectangle {
+            id: switchBox
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            width: 64
+            height: 26
+            color: toggleRow.checked ? Theme.crimsonHot : Theme.steel
+            border.width: 1
+            border.color: toggleRow.checked ? Theme.gold : Theme.goldDim
+
+            Text {
+                anchors.centerIn: parent
+                text: toggleRow.checked ? "ON" : "OFF"
+                color: Theme.gold
+                font.family: root.headerFont
+                font.pixelSize: 11
+                font.letterSpacing: 0
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: toggleRow.toggled()
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "#cc050508"
@@ -412,7 +602,7 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: root.adminUnlocked ? "◈ OTHER ADMINISTRATION" : "◈ OTHER ACCESS AUTHORIZATION"
+                text: root.adminUnlocked ? "◈ SETTINGS" : "◈ SETTINGS AUTHORIZATION"
                 color: Theme.gold
                 font.family: root.headerFont
                 font.pixelSize: 16
@@ -597,7 +787,7 @@ Item {
             }
         }
 
-        ColumnLayout {
+        RowLayout {
             id: adminPanel
             visible: root.adminUnlocked
             anchors.left: parent.left
@@ -607,101 +797,194 @@ Item {
             anchors.margins: 18
             spacing: 14
 
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                spacing: 8
-
-                Repeater {
-                    model: ["ROUTINES", "ACCESS SETTINGS", "MUSIC"]
-                    delegate: Rectangle {
-                        required property int index
-                        required property string modelData
-
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        color: root.activeTab === index ? Theme.steel : Theme.iron
-                        border.width: 1
-                        border.color: root.activeTab === index ? Theme.gold : Theme.goldDim
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData
-                            color: root.activeTab === index ? Theme.gold : Theme.textDim
-                            font.family: root.headerFont
-                            font.pixelSize: 13
-                            font.letterSpacing: 0
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.activeTab = index
-                        }
-                    }
-                }
-            }
-
-            // Quick toggle: show edit pencils on the main screen
             Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 44
-                color: routineManager.editMode ? "#cc1a1a0a" : Theme.iron
+                id: settingsRail
+                Layout.preferredWidth: 248
+                Layout.fillHeight: true
+                color: Theme.voidPanel
                 border.width: 1
-                border.color: routineManager.editMode ? Theme.gold : Theme.goldDim
+                border.color: Theme.goldDim
 
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 14
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "✎ SHOW EDIT BUTTONS ON ROUTINES"
-                    color: routineManager.editMode ? Theme.gold : Theme.textDim
-                    font.family: root.headerFont
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
 
-                Rectangle {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 64
-                    height: 26
-                    color: routineManager.editMode ? Theme.crimsonHot : Theme.steel
-                    border.width: 1
-                    border.color: routineManager.editMode ? Theme.gold : Theme.goldDim
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 68
+                        color: "#17100f"
+                        border.width: 1
+                        border.color: Theme.crimson
 
-                    Text {
-                        anchors.centerIn: parent
-                        text: routineManager.editMode ? "ON" : "OFF"
-                        color: Theme.gold
-                        font.family: root.headerFont
-                        font.pixelSize: 11
+                        Column {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 14
+                            anchors.right: parent.right
+                            anchors.rightMargin: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 4
+
+                            Text {
+                                width: parent.width
+                                text: "MISSION CONTROL"
+                                color: Theme.gold
+                                elide: Text.ElideRight
+                                font.family: root.headerFont
+                                font.pixelSize: 14
+                                font.letterSpacing: 0
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: "FOCUSOS SETTINGS"
+                                color: Theme.textDim
+                                elide: Text.ElideRight
+                                font.family: root.bodyFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+                        }
                     }
 
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: routineManager.editMode = !routineManager.editMode
-                    }
-                }
+                    Repeater {
+                        model: root.settingsTabs
+                        delegate: SettingsTabButton {
+                            required property int index
+                            required property var modelData
 
-                MouseArea {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.rightMargin: 92
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: routineManager.editMode = !routineManager.editMode
+                            tabIndex: modelData.index
+                            code: modelData.code
+                            label: modelData.label
+                            subtitle: modelData.subtitle
+                            badge: modelData.index === 0 ? String(root.routineDrafts.length)
+                                  : modelData.index === 1 ? String(routineManager.alwaysAllowedApps.length)
+                                  : modelData.index === 3 ? String(musicEngine.musicFiles.length)
+                                  : ""
+                            onClicked: root.activeTab = tabIndex
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
+
+                    SettingsToggleRow {
+                        label: "EDIT CONTROLS"
+                        detail: "SHOW ROUTINE PENCILS"
+                        checked: routineManager.editMode
+                        onToggled: routineManager.editMode = !routineManager.editMode
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 70
+                        color: Theme.iron
+                        border.width: 1
+                        border.color: Theme.goldDim
+
+                        Column {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 12
+                            anchors.right: parent.right
+                            anchors.rightMargin: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 5
+
+                            Text {
+                                width: parent.width
+                                text: "STRICT LOCK"
+                                color: Theme.gold
+                                elide: Text.ElideRight
+                                font.family: root.headerFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: root.deviceInfoText
+                                color: Theme.textDim
+                                elide: Text.ElideRight
+                                font.family: root.bodyFont
+                                font.pixelSize: 10
+                                font.letterSpacing: 0
+                            }
+                        }
+                    }
                 }
             }
 
-            Item {
+            Rectangle {
+                id: settingsBay
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                color: Theme.ironPanel
+                border.width: 1
+                border.color: Theme.goldDim
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 12
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 42
+                        Layout.maximumHeight: 42
+                        spacing: 12
+
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 3
+
+                            Text {
+                                width: parent.width
+                                text: root.tabLabel(root.activeTab)
+                                color: Theme.textPrimary
+                                elide: Text.ElideRight
+                                font.family: root.headerFont
+                                font.pixelSize: 17
+                                font.letterSpacing: 0
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: root.tabSubtitle(root.activeTab)
+                                color: Theme.goldDim
+                                elide: Text.ElideRight
+                                font.family: root.bodyFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 150
+                            Layout.preferredHeight: 28
+                            color: "#1f0f10"
+                            border.width: 1
+                            border.color: Theme.crimsonHot
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "MAXIMUM STRICT"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
 
                 ColumnLayout {
                     visible: root.activeTab === 0
@@ -915,11 +1198,12 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 38
+                        Layout.maximumHeight: 38
                         spacing: 10
 
                         AdminButton {
                             Layout.preferredWidth: 154
-                            Layout.fillHeight: true
+                            Layout.preferredHeight: 34
                             label: "+ NEW ROUTINE"
                             danger: false
                             onClicked: root.addRoutine()
@@ -937,15 +1221,142 @@ Item {
 
                         AdminButton {
                             Layout.preferredWidth: 132
-                            Layout.fillHeight: true
+                            Layout.preferredHeight: 34
                             label: "▣ SAVE ALL"
                             onClicked: root.saveRoutines()
                         }
                     }
                 }
 
+                // ─── ALWAYS ALLOWED tab ────────────────────────────────
+                // Apps the user wants reachable from every routine — word
+                // processor, calendar, contacts. These come up alongside
+                // each routine, are exempt from the lockdown watchdog,
+                // and survive routine end without being terminated.
                 ColumnLayout {
                     visible: root.activeTab === 1
+                    anchors.fill: parent
+                    spacing: 14
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "ALWAYS-ALLOWED APPLICATIONS"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 26
+                        Layout.maximumHeight: 26
+                        spacing: 10
+
+                        Text {
+                            text: "WATCHDOG EXEMPTIONS"
+                            color: Theme.textDim
+                            font.family: root.headerFont
+                            font.pixelSize: 11
+                            font.letterSpacing: 0
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            text: "LAUNCH ON FIRST ENGAGE"
+                            color: Theme.goldDim
+                            font.family: root.bodyFont
+                            font.pixelSize: 10
+                            font.letterSpacing: 0
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: Theme.goldDim
+
+                        Flickable {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            clip: true
+                            contentWidth: width
+                            contentHeight: alwaysAllowedColumn.implicitHeight
+
+                            Column {
+                                id: alwaysAllowedColumn
+                                width: parent.width
+                                spacing: 8
+
+                                Text {
+                                    visible: routineManager.alwaysAllowedApps.length === 0
+                                    width: parent.width
+                                    text: "NO ALWAYS-ALLOWED APPS YET"
+                                    color: Theme.textGhost
+                                    font.family: root.bodyFont
+                                    font.pixelSize: 12
+                                    font.letterSpacing: 0
+                                }
+
+                                Repeater {
+                                    model: routineManager.alwaysAllowedApps
+                                    delegate: RowLayout {
+                                        required property int index
+                                        required property string modelData
+                                        width: alwaysAllowedColumn.width
+                                        spacing: 8
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData
+                                            color: Theme.textPrimary
+                                            elide: Text.ElideRight
+                                            font.family: root.bodyFont
+                                            font.pixelSize: 12
+                                            font.letterSpacing: 0
+                                        }
+
+                                        AdminButton {
+                                            Layout.preferredWidth: 40
+                                            Layout.preferredHeight: 30
+                                            label: "✕"
+                                            onClicked: routineManager.removeAlwaysAllowedApp(index)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 38
+                        Layout.maximumHeight: 38
+                        spacing: 10
+
+                        AdminButton {
+                            Layout.preferredWidth: 200
+                            Layout.preferredHeight: 34
+                            label: "+ ADD ALWAYS-ALLOWED APP"
+                            danger: false
+                            onClicked: {
+                                const path = routineManager.pickApplication()
+                                if (path && path.length > 0) {
+                                    routineManager.addAlwaysAllowedApp(path)
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+
+                // ─── ACCESS tab (formerly "Other Access Settings") ──────
+                ColumnLayout {
+                    visible: root.activeTab === 2
                     anchors.fill: parent
                     spacing: 14
 
@@ -954,7 +1365,7 @@ Item {
                         spacing: 12
 
                         Text {
-                            text: "OTHER SESSION DURATION:"
+                            text: "ACCESS SESSION DURATION:"
                             color: Theme.textPrimary
                             font.family: root.headerFont
                             font.pixelSize: 14
@@ -1067,18 +1478,37 @@ Item {
                     Item { Layout.fillHeight: true }
                 }
 
+                // ─── MUSIC tab ─────────────────────────────────────────
                 ColumnLayout {
-                    visible: root.activeTab === 2
+                    visible: root.activeTab === 3
                     anchors.fill: parent
                     spacing: 14
 
-                    Text {
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: "DETECTED MUSIC FILES"
-                        color: Theme.goldDim
-                        font.family: root.headerFont
-                        font.pixelSize: 13
-                        font.letterSpacing: 0
+                        Layout.preferredHeight: 24
+                        Layout.maximumHeight: 24
+                        spacing: 10
+
+                        Text {
+                            text: "LOCAL AUDIO LIBRARY"
+                            color: Theme.goldDim
+                            font.family: root.headerFont
+                            font.pixelSize: 13
+                            font.letterSpacing: 0
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            visible: musicEngine.importStatus.length > 0
+                            text: musicEngine.importStatus
+                            color: musicEngine.importStatus.indexOf("FAILED") >= 0 ? Theme.crimsonHot : Theme.gold
+                            elide: Text.ElideRight
+                            font.family: root.bodyFont
+                            font.pixelSize: 11
+                            font.letterSpacing: 0
+                        }
                     }
 
                     Rectangle {
@@ -1130,22 +1560,24 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 38
+                        Layout.maximumHeight: 38
                         spacing: 12
 
-                        AdminButton {
-                            Layout.preferredWidth: 178
-                            Layout.fillHeight: true
-                            label: "◈ OPEN MUSIC FOLDER"
-                            danger: false
-                            onClicked: {
-                                musicEngine.openMusicFolder()
-                                musicEngine.refreshMusicFiles()
-                            }
-                        }
+	                        // In-process file picker — the old "Open Music
+	                        // Folder" button opened a file manager behind the
+	                        // always-on-top FocusOS shell, so the user never
+	                        // saw it. The picker renders modally and works.
+	                        AdminButton {
+	                            Layout.preferredWidth: 174
+	                            Layout.preferredHeight: 34
+	                            label: "+ ADD AUDIO FILE"
+	                            danger: false
+	                            onClicked: musicEngine.importMusicFile()
+	                        }
 
                         AdminButton {
                             Layout.preferredWidth: 104
-                            Layout.fillHeight: true
+                            Layout.preferredHeight: 34
                             label: "↻ REFRESH"
                             danger: false
                             onClicked: musicEngine.refreshMusicFiles()
@@ -1162,7 +1594,7 @@ Item {
                         ComboBox {
                             id: behaviorBox
                             Layout.preferredWidth: 230
-                            Layout.fillHeight: true
+                            Layout.preferredHeight: 34
                             model: ["Stop music", "Continue at low volume", "Continue at same volume"]
                             currentIndex: root.behaviorIndex(musicEngine.engageBehavior)
                             font.family: root.bodyFont
@@ -1236,9 +1668,11 @@ Item {
                             }
                         }
 
-                        Item { Layout.fillWidth: true }
-                    }
-                }
+	                        Item { Layout.fillWidth: true }
+	                    }
+	                }
+	            }
+	        }
             }
         }
 

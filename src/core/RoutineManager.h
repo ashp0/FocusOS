@@ -51,6 +51,7 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(bool networkLockPromptVisible READ networkLockPromptVisible NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QString networkLockError READ networkLockError NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QString networkLockRoutineName READ networkLockRoutineName NOTIFY networkLockPromptChanged)
+    Q_PROPERTY(QStringList alwaysAllowedApps READ alwaysAllowedApps NOTIFY alwaysAllowedAppsChanged)
 
 public:
     enum Role {
@@ -105,6 +106,7 @@ public:
     bool networkLockPromptVisible() const;
     QString networkLockError() const;
     QString networkLockRoutineName() const;
+    QStringList alwaysAllowedApps() const;
 
     Q_INVOKABLE void engage(const QString &routineId);
     Q_INVOKABLE void startPendingRoutineWithoutNetworkLock();
@@ -122,6 +124,8 @@ public:
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
     Q_INVOKABLE QString pickApplication() const;
     Q_INVOKABLE QString applicationDisplayName(const QString &path) const;
+    Q_INVOKABLE bool addAlwaysAllowedApp(const QString &commandLine);
+    Q_INVOKABLE void removeAlwaysAllowedApp(int index);
 
     static QString dataDirectory();
 
@@ -137,6 +141,7 @@ signals:
     void routineCountChanged();
     void statusMessageChanged(const QString &message);
     void networkLockPromptChanged();
+    void alwaysAllowedAppsChanged();
     void desktopAccessRequested();
     void routineSessionFinished(const QString &routineId,
                                 const QString &routineName,
@@ -188,6 +193,8 @@ private:
     QString m_pendingNetworkRoutineId;
     QString m_networkLockError;
     QString m_networkLockRoutineName;
+    QStringList m_alwaysAllowedApps;
+    bool m_alwaysAllowedLaunched = false;
     bool m_editMode = false;
     bool m_desktopShellRunning = false;
 };

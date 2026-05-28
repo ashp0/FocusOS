@@ -27,15 +27,22 @@ public:
     void terminateDesktopShell() override;
     bool desktopShellSupported() const override { return true; }
     void restoreShellPlacement() override;
+    void setAlwaysAllowedApps(const QStringList &commandLines) override;
 
 private:
     void startLockdownWatchdog();
     void stopLockdownWatchdog();
     void tickLockdownWatchdog() const;
+    QStringList alwaysAllowedProcessNames() const;
+    void loadWindowPinScript();
+    void unloadWindowPinScript();
 
     NetGate m_netGate;
     QList<qint64> m_sessionPids;
     int m_savedDesktopIndex = -1;
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
+    int m_windowPinScriptHandle = -1;
+    QString m_windowPinScriptPlugin;
+    QStringList m_alwaysAllowedCommandLines;
 };

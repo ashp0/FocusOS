@@ -5,6 +5,7 @@
 #include "core/StatsStore.h"
 #include "core/SystemStatus.h"
 #include "core/TOTPEngine.h"
+#include "platform/PlatformBackend.h"
 #include "shell/ShellWindow.h"
 
 #if defined(Q_OS_MACOS)
@@ -18,6 +19,43 @@
 #include <QLockFile>
 #include <QQuickStyle>
 #include <QStandardPaths>
+
+#if defined(Q_OS_LINUX)
+#include <csignal>
+#include <cstdlib>
+
+// Last-ditch cleanup so a crash doesn't strand the user behind an nftables
+// allowlist (which is what bricked the wifi after the engage-time KWin DBus
+// abort). We only know the backend at runtime, so the handler keeps a static
+// pointer set by main() once the backend is up.
+//
+// FUTURE: when we move to a focusos compositor / supervisor model, this
+// belongs in the supervisor process which can't crash with the policy on.
+static PlatformBackend *g_crashCleanupBackend = nullptr;
+
+static void focusosFatalSignalHandler(int signum)
+{
+    if (g_crashCleanupBackend) {
+        g_crashCleanupBackend->dropNetworkPolicy();
+        // Restore the desktop shell on the way down — otherwise the user is
+        // staring at a black screen with no launcher after the abort.
+        g_crashCleanupBackend->launchDesktopShell(nullptr);
+    }
+    std::signal(signum, SIG_DFL);
+    std::raise(signum);
+}
+
+static void installCrashCleanupHandlers(PlatformBackend *backend)
+{
+    g_crashCleanupBackend = backend;
+    std::signal(SIGSEGV, focusosFatalSignalHandler);
+    std::signal(SIGABRT, focusosFatalSignalHandler);
+    std::signal(SIGBUS, focusosFatalSignalHandler);
+    std::signal(SIGFPE, focusosFatalSignalHandler);
+    std::signal(SIGTERM, focusosFatalSignalHandler);
+    std::signal(SIGINT, focusosFatalSignalHandler);
+}
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -40,6 +78,7 @@ int main(int argc, char *argv[])
     MacBackend backend;
 #elif defined(Q_OS_LINUX)
     LinuxBackend backend;
+    installCrashCleanupHandlers(&backend);
 #else
 #error "FocusOS currently supports macOS and Linux backends only."
 #endif

@@ -23,4 +23,8 @@ public:
     // Return the FocusOS shell to its home workspace + clean up any routine
     // window-management state. Called when a routine ends.
     virtual void restoreShellPlacement() {}
+    // Apps the user has flagged as "always allowed" — calendar, word
+    // processor, etc. The backend exempts them from the lockdown watchdog
+    // and won't terminate them between routines.
+    virtual void setAlwaysAllowedApps(const QStringList &commandLines) { Q_UNUSED(commandLines); }
 };

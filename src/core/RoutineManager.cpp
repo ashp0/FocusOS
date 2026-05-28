@@ -361,6 +361,39 @@ QString RoutineManager::networkLockRoutineName() const
     return m_networkLockRoutineName;
 }
 
+QStringList RoutineManager::alwaysAllowedApps() const
+{
+    return m_alwaysAllowedApps;
+}
+
+bool RoutineManager::addAlwaysAllowedApp(const QString &commandLine)
+{
+    const QString trimmed = commandLine.trimmed();
+    if (trimmed.isEmpty() || m_alwaysAllowedApps.contains(trimmed)) {
+        return false;
+    }
+    m_alwaysAllowedApps.append(trimmed);
+    saveConfig();
+    if (m_backend) {
+        m_backend->setAlwaysAllowedApps(m_alwaysAllowedApps);
+    }
+    emit alwaysAllowedAppsChanged();
+    return true;
+}
+
+void RoutineManager::removeAlwaysAllowedApp(int index)
+{
+    if (index < 0 || index >= m_alwaysAllowedApps.size()) {
+        return;
+    }
+    m_alwaysAllowedApps.removeAt(index);
+    saveConfig();
+    if (m_backend) {
+        m_backend->setAlwaysAllowedApps(m_alwaysAllowedApps);
+    }
+    emit alwaysAllowedAppsChanged();
+}
+
 void RoutineManager::endActiveRoutine()
 {
     if (!active()) {
@@ -822,14 +855,33 @@ void RoutineManager::loadConfig()
     const QJsonObject root = readConfigObject();
     const int minutes = root.value(QStringLiteral("other_access_minutes")).toInt(30);
     m_otherAccessMinutes = qBound(1, minutes, 24 * 60);
+
+    m_alwaysAllowedApps.clear();
+    const QJsonArray alwaysAllowed = root.value(QStringLiteral("always_allowed_apps")).toArray();
+    for (const QJsonValue &value : alwaysAllowed) {
+        const QString entry = value.toString().trimmed();
+        if (!entry.isEmpty()) {
+            m_alwaysAllowedApps.append(entry);
+        }
+    }
+    if (m_backend) {
+        m_backend->setAlwaysAllowedApps(m_alwaysAllowedApps);
+    }
+
     saveConfig();
     emit configChanged();
+    emit alwaysAllowedAppsChanged();
 }
 
 bool RoutineManager::saveConfig() const
 {
     QJsonObject root = readConfigObject();
     root.insert(QStringLiteral("other_access_minutes"), m_otherAccessMinutes);
+    QJsonArray alwaysAllowed;
+    for (const QString &entry : m_alwaysAllowedApps) {
+        alwaysAllowed.append(entry);
+    }
+    root.insert(QStringLiteral("always_allowed_apps"), alwaysAllowed);
     QSaveFile saveFile(configPath());
     if (saveFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         saveFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
@@ -1081,6 +1133,18 @@ bool RoutineManager::launchRoutineTargets(const Routine &routine, QString *error
 {
     if (!m_backend) {
         return true;
+    }
+
+    // Always-allowed apps come up alongside the routine, but only on the
+    // FIRST engage of the FocusOS lifecycle. They're sticky — we don't
+    // terminate them at routine end — so re-launching every engage would
+    // pile up duplicate windows. The flag resets naturally on FocusOS quit.
+    if (!m_alwaysAllowedLaunched && !m_alwaysAllowedApps.isEmpty()) {
+        QString alwaysError;
+        m_backend->launchApps(m_alwaysAllowedApps, &alwaysError);
+        m_alwaysAllowedLaunched = true;
+        // Failures here are non-fatal — a missing/uninstalled allowlist
+        // entry shouldn't block the routine.
     }
 
     if (!routine.apps.isEmpty() && !m_backend->launchApps(routine.apps, errorMessage)) {

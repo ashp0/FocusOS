@@ -14,6 +14,7 @@ class MusicEngine final : public QObject
     Q_PROPERTY(int volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(QString engageBehavior READ engageBehavior WRITE setEngageBehavior NOTIFY engageBehaviorChanged)
     Q_PROPERTY(QStringList musicFiles READ musicFiles NOTIFY musicFilesChanged)
+    Q_PROPERTY(QString importStatus READ importStatus NOTIFY importStatusChanged)
 
 public:
     explicit MusicEngine(QObject *parent = nullptr);
@@ -23,12 +24,15 @@ public:
     int volume() const;
     QString engageBehavior() const;
     QStringList musicFiles() const;
+    QString importStatus() const;
 
     Q_INVOKABLE void setEnabled(bool enabled);
     Q_INVOKABLE void setVolume(int volume);
     Q_INVOKABLE void setEngageBehavior(const QString &behavior);
     Q_INVOKABLE void refreshMusicFiles();
     Q_INVOKABLE void openMusicFolder() const;
+    Q_INVOKABLE QString importMusicFile();
+    Q_INVOKABLE QString musicFolderPath() const;
     Q_INVOKABLE void setRoutineEngaged(bool engaged);
 
 signals:
@@ -36,6 +40,7 @@ signals:
     void volumeChanged();
     void engageBehaviorChanged();
     void musicFilesChanged();
+    void importStatusChanged();
 
 private:
     void loadConfig();
@@ -51,6 +56,7 @@ private:
     void seekToInterestingOffset();
     qreal configuredVolume() const;
     qreal lowVolume() const;
+    void setImportStatus(const QString &status);
 
     QMediaPlayer m_player;
     QAudioOutput m_audioOutput;
@@ -65,4 +71,5 @@ private:
     int m_volume = 35;
     bool m_seekedThisSource = false;
     QString m_engageBehavior = QStringLiteral("stop");
+    QString m_importStatus;
 };

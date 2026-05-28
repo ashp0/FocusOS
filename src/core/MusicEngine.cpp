@@ -4,8 +4,10 @@
 
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -148,6 +150,11 @@ QStringList MusicEngine::musicFiles() const
     return m_musicFileNames;
 }
 
+QString MusicEngine::importStatus() const
+{
+    return m_importStatus;
+}
+
 void MusicEngine::setEnabled(bool enabled)
 {
     if (m_enabled == enabled) {
@@ -245,6 +252,10 @@ void MusicEngine::refreshMusicFiles()
 
 void MusicEngine::openMusicFolder() const
 {
+    // Opens the user's ~/.focusos/music in a file manager. On the always-
+    // on-top FocusOS shell this is unreliable — the file manager spawns
+    // BEHIND the FocusOS fullscreen and the user can't see it, which is
+    // why we also expose importMusicFile() as the primary affordance.
     const QString dir = musicDirectory();
     QDir().mkpath(dir);
     ensureMusicFolderReadme();
@@ -274,6 +285,78 @@ void MusicEngine::openMusicFolder() const
             return;
         }
     }
+}
+
+QString MusicEngine::musicFolderPath() const
+{
+    return musicDirectory();
+}
+
+QString MusicEngine::importMusicFile()
+{
+    // The native KDE portal dialog can appear behind the always-on-top shell.
+    // A non-native, application-modal dialog with WindowStaysOnTopHint keeps
+    // the importer visible while FocusOS owns the screen.
+    QFileDialog dialog;
+    dialog.setWindowTitle(QStringLiteral("Add Music File"));
+    dialog.setDirectory(QDir::homePath());
+    dialog.setNameFilters({QStringLiteral("Audio Files (*.mp3 *.ogg)"), QStringLiteral("All Files (*)")});
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    dialog.setWindowModality(Qt::ApplicationModal);
+    dialog.setWindowFlag(Qt::WindowStaysOnTopHint, true);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return {};
+    }
+
+    const QString sourcePath = dialog.selectedFiles().value(0);
+    if (sourcePath.isEmpty()) {
+        return {};
+    }
+
+    const QFileInfo info(sourcePath);
+    const QString suffix = info.suffix().toLower();
+    if (suffix != QStringLiteral("mp3") && suffix != QStringLiteral("ogg")) {
+        setImportStatus(QStringLiteral("UNSUPPORTED AUDIO FORMAT"));
+        return {};
+    }
+
+    QDir().mkpath(musicDirectory());
+    QString destination = QDir(musicDirectory()).filePath(info.fileName());
+    // Avoid clobbering a same-named existing file.
+    if (QFileInfo::exists(destination)) {
+        int counter = 1;
+        QString stem = info.completeBaseName();
+        forever {
+            const QString candidate = QDir(musicDirectory()).filePath(
+                QStringLiteral("%1 (%2).%3").arg(stem).arg(counter).arg(suffix));
+            if (!QFileInfo::exists(candidate)) {
+                destination = candidate;
+                break;
+            }
+            ++counter;
+        }
+    }
+
+    if (!QFile::copy(sourcePath, destination)) {
+        setImportStatus(QStringLiteral("IMPORT FAILED"));
+        return {};
+    }
+
+    refreshMusicFiles();
+    setImportStatus(QStringLiteral("IMPORTED %1").arg(QFileInfo(destination).fileName()));
+    return destination;
+}
+
+void MusicEngine::setImportStatus(const QString &status)
+{
+    if (m_importStatus == status) {
+        return;
+    }
+    m_importStatus = status;
+    emit importStatusChanged();
 }
 
 void MusicEngine::setRoutineEngaged(bool engaged)
