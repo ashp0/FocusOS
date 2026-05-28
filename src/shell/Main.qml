@@ -17,12 +17,6 @@ Item {
             root.forceActiveFocus()
             return
         }
-        if (routineEditor.open) {
-            routineEditor.closeEditor()
-            event.accepted = true
-            root.forceActiveFocus()
-            return
-        }
         if (unlockModal.modalOpen) {
             unlockModal.closeModal()
             event.accepted = true
@@ -133,7 +127,13 @@ Item {
             bodyBoldFont: root.bodyBoldFont
             sidebarCollapsed: root.sidebarCollapsed
             onUnlockRequested: unlockModal.openModal()
-            onEditRoutinesRequested: routineEditor.openEditor()
+            // The routine editor used to be its own dialog. We collapsed it
+            // into the ROUTINES tab of the Other Access modal so there's only
+            // one admin surface.
+            onEditRoutinesRequested: {
+                unlockModal.openModal()
+                unlockModal.activeTab = 0
+            }
             onShowSidebar: root.sidebarCollapsed = false
 
             Behavior on width {
@@ -193,14 +193,6 @@ Item {
         headerFont: root.headerFont
         bodyFont: root.bodyFont
         z: 30
-    }
-
-    RoutineEditorDialog {
-        id: routineEditor
-        anchors.fill: parent
-        headerFont: root.headerFont
-        bodyFont: root.bodyFont
-        z: 32
     }
 
     Item {

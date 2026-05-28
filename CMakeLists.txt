@@ -86,7 +86,6 @@ qt_add_qml_module(focusos
         src/shell/AmbientLayer.qml
         src/shell/MissionView.qml
         src/shell/NotesDrawer.qml
-        src/shell/RoutineEditorDialog.qml
         src/shell/UnlockModal.qml
     RESOURCES
         assets/qml/theme.js

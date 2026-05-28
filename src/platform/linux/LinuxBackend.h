@@ -3,6 +3,9 @@
 #include "platform/PlatformBackend.h"
 #include "platform/linux/NetGate.h"
 
+#include <QList>
+#include <QString>
+
 class LinuxBackend final : public PlatformBackend
 {
 public:
@@ -21,4 +24,6 @@ public:
 
 private:
     NetGate m_netGate;
+    QList<qint64> m_sessionPids;
+    int m_savedDesktopIndex = -1;
 };

@@ -122,8 +122,24 @@ bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) cons
     nft.closeWriteChannel();
     nft.waitForFinished(5000);
     if (nft.exitStatus() != QProcess::NormalExit || nft.exitCode() != 0) {
+        QString stderrText = QString::fromUtf8(nft.readAllStandardError()).trimmed();
+        // nftables needs CAP_NET_ADMIN — without it, the kernel rejects the
+        // netlink cache load with EPERM. Translate that into something the
+        // user can actually act on.
+        const bool looksUnprivileged = stderrText.contains(QStringLiteral("Operation not permitted"), Qt::CaseInsensitive) ||
+                                       stderrText.contains(QStringLiteral("cache initialization failed"), Qt::CaseInsensitive) ||
+                                       stderrText.contains(QStringLiteral("Permission denied"), Qt::CaseInsensitive);
         if (errorMessage) {
-            *errorMessage = QString::fromUtf8(nft.readAllStandardError()).trimmed();
+            if (looksUnprivileged) {
+                *errorMessage = QStringLiteral(
+                    "FocusOS needs CAP_NET_ADMIN to install firewall rules. Either run\n"
+                    "  sudo setcap cap_net_admin,cap_net_raw+ep $(command -v focusos)\n"
+                    "or launch FocusOS via a small pkexec wrapper. The routine can still start without the lock.");
+            } else {
+                *errorMessage = stderrText.isEmpty()
+                    ? QStringLiteral("nftables refused the ruleset (unknown error)")
+                    : stderrText;
+            }
         }
         return false;
     }

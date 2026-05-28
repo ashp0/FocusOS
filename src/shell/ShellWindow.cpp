@@ -29,7 +29,10 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 
     m_wallpaperWindow.setColor(QColor(QStringLiteral("#0A0A0F")));
     m_wallpaperWindow.setResizeMode(QQuickView::SizeRootObjectToView);
-    m_wallpaperWindow.setFlags(Qt::Window |
+    // Tool + bottom + no-focus keeps the wallpaper proxy out of the WM's
+    // window list / Mission Control on KDE & GNOME — without Qt::Tool it
+    // shows up as a phantom black "second FocusOS" entry.
+    m_wallpaperWindow.setFlags(Qt::Tool |
                                Qt::FramelessWindowHint |
                                Qt::WindowStaysOnBottomHint |
                                Qt::WindowDoesNotAcceptFocus);
@@ -80,7 +83,14 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 
 void ShellWindow::showFocusShell()
 {
-    showWallpaper();
+#if defined(Q_OS_LINUX)
+    // When the FocusOS shell is fullscreen it already covers the screen, so
+    // the wallpaper proxy is just dead weight in the WM. Hide it; we only
+    // need it when FocusOS minimizes during a routine.
+    if (m_wallpaperWindow.isVisible()) {
+        m_wallpaperWindow.hide();
+    }
+#endif
     if (QScreen *screen = QGuiApplication::primaryScreen()) {
         setScreen(screen);
         setGeometry(screen->geometry());

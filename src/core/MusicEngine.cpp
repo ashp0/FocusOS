@@ -9,9 +9,11 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QRandomGenerator>
 #include <QResource>
 #include <QSaveFile>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 
@@ -243,9 +245,35 @@ void MusicEngine::refreshMusicFiles()
 
 void MusicEngine::openMusicFolder() const
 {
-    QDir().mkpath(musicDirectory());
+    const QString dir = musicDirectory();
+    QDir().mkpath(dir);
     ensureMusicFolderReadme();
-    QDesktopServices::openUrl(QUrl::fromLocalFile(musicDirectory()));
+
+    if (QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
+        return;
+    }
+
+    // QDesktopServices silently fails on some KDE setups where xdg-open isn't
+    // wired to a file manager. Try the common managers directly so the user
+    // still sees their folder open.
+    const QStringList fileManagers {
+        QStringLiteral("xdg-open"),
+        QStringLiteral("dolphin"),
+        QStringLiteral("nautilus"),
+        QStringLiteral("nemo"),
+        QStringLiteral("thunar"),
+        QStringLiteral("pcmanfm"),
+        QStringLiteral("caja")
+    };
+    for (const QString &manager : fileManagers) {
+        const QString path = QStandardPaths::findExecutable(manager);
+        if (path.isEmpty()) {
+            continue;
+        }
+        if (QProcess::startDetached(path, {dir})) {
+            return;
+        }
+    }
 }
 
 void MusicEngine::setRoutineEngaged(bool engaged)

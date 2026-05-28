@@ -424,12 +424,25 @@ void RoutineManager::relaunchActiveRoutine()
         return;
     }
 
-    QString error;
-    if (!launchRoutineTargets(m_routines.at(routineIndex), &error) && !error.isEmpty()) {
-        setStatusMessage(error);
-    } else {
-        setStatusMessage(QStringLiteral("ROUTINE WINDOWS RELAUNCHED"));
-    }
+    const Routine routine = m_routines.at(routineIndex);
+    // Terminate the routine's previous instances (browsers, IDEs, etc.) before
+    // relaunching them — otherwise the user ends up with duplicate windows.
+    m_backend->terminateApps(routine.apps);
+    setStatusMessage(QStringLiteral("RELAUNCHING ROUTINE WINDOWS…"));
+
+    // Give the WM a beat to actually reap the windows before we respawn them,
+    // otherwise the second launch may race the first's teardown.
+    QTimer::singleShot(700, this, [this, routine]() {
+        if (m_activeRoutineId != routine.id) {
+            return;
+        }
+        QString error;
+        if (!launchRoutineTargets(routine, &error) && !error.isEmpty()) {
+            setStatusMessage(error);
+        } else {
+            setStatusMessage(QStringLiteral("ROUTINE WINDOWS RELAUNCHED"));
+        }
+    });
 }
 
 void RoutineManager::setOtherAccessMinutes(int minutes)

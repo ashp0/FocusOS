@@ -70,24 +70,104 @@ Item {
         border.color: Theme.goldDim
     }
 
+    // Tick strip down the inside-left edge — a thin "measurement scale" that
+    // sells the instrument-panel feel.
+    Canvas {
+        id: tickStrip
+        anchors.left: parent.left
+        anchors.top: header.bottom
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: 2
+        width: 8
+        opacity: 0.55
+        z: 1
+
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.clearRect(0, 0, width, height)
+            ctx.strokeStyle = Theme.goldDim
+            ctx.lineWidth = 1
+            const spacing = 12
+            for (let y = 0; y < height; y += spacing) {
+                const long = (Math.floor(y / spacing) % 5 === 0)
+                const w = long ? width - 1 : Math.floor(width / 2)
+                ctx.beginPath()
+                ctx.moveTo(0.5, y + 0.5)
+                ctx.lineTo(w, y + 0.5)
+                ctx.stroke()
+            }
+        }
+        onHeightChanged: requestPaint()
+        Component.onCompleted: requestPaint()
+    }
+
     // Header bar with collapse arrow
     Rectangle {
         id: header
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 56
+        height: 70
         color: "#dd0a0a14"
 
-        Text {
+        // Pulsing telemetry LED — sells "live link" to the bridge.
+        Rectangle {
+            id: telemetryLed
             anchors.left: parent.left
-            anchors.leftMargin: 18
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 14
+            anchors.top: parent.top
+            anchors.topMargin: 16
+            width: 8
+            height: 8
+            radius: 4
+            color: Theme.crimsonHot
+            border.width: 1
+            border.color: Theme.gold
+
+            SequentialAnimation on opacity {
+                running: true
+                loops: Animation.Infinite
+                NumberAnimation { to: 0.35; duration: 1100; easing.type: Easing.InOutQuad }
+                NumberAnimation { to: 1.0; duration: 1100; easing.type: Easing.InOutQuad }
+            }
+        }
+
+        Text {
+            anchors.left: telemetryLed.right
+            anchors.leftMargin: 10
+            anchors.top: parent.top
+            anchors.topMargin: 11
             text: "ASTRONAUT LOG"
             color: Theme.gold
             font.family: root.headerFont
             font.pixelSize: 15
             font.letterSpacing: 0
+        }
+
+        Text {
+            id: stardateText
+            anchors.left: telemetryLed.right
+            anchors.leftMargin: 10
+            anchors.top: parent.top
+            anchors.topMargin: 34
+            color: Theme.textDim
+            font.family: root.headerFont
+            font.pixelSize: 9
+            font.letterSpacing: 0
+
+            function recompute() {
+                const now = new Date()
+                const start = new Date(now.getFullYear(), 0, 0)
+                const dayOfYear = Math.floor((now - start) / 86400000)
+                const stardate = (now.getFullYear() - 2000).toString().padStart(2, "0") +
+                                 dayOfYear.toString().padStart(3, "0") + "." +
+                                 Math.floor(((now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) / 86400) * 100)
+                                     .toString().padStart(2, "0")
+                text = "STARDATE " + stardate + "  ■  LINK NOMINAL"
+            }
+
+            Component.onCompleted: recompute()
+            Timer { interval: 1000; running: true; repeat: true; onTriggered: stardateText.recompute() }
         }
 
         Rectangle {
@@ -127,13 +207,80 @@ Item {
         }
     }
 
+    // Instrument-panel footer with corner accents and a slow scanning marker.
+    Rectangle {
+        id: footer
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 24
+        color: "#dd0a0a14"
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Theme.crimson
+        }
+
+        // Sweeping scan line — pure visual flavour.
+        Rectangle {
+            id: scanMarker
+            anchors.verticalCenter: parent.verticalCenter
+            width: 2
+            height: 12
+            color: Theme.gold
+            opacity: 0.7
+
+            SequentialAnimation on x {
+                running: true
+                loops: Animation.Infinite
+                NumberAnimation {
+                    from: 0
+                    to: Math.max(0, footer.width - scanMarker.width)
+                    duration: 6800
+                    easing.type: Easing.InOutQuad
+                }
+                NumberAnimation {
+                    from: Math.max(0, footer.width - scanMarker.width)
+                    to: 0
+                    duration: 6800
+                    easing.type: Easing.InOutQuad
+                }
+            }
+        }
+
+        Text {
+            anchors.left: parent.left
+            anchors.leftMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            text: "▲ TELEMETRY STREAM"
+            color: Theme.goldDim
+            font.family: root.headerFont
+            font.pixelSize: 9
+            font.letterSpacing: 0
+        }
+
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            text: "FRAME LOCK ◢"
+            color: Theme.goldDim
+            font.family: root.headerFont
+            font.pixelSize: 9
+            font.letterSpacing: 0
+        }
+    }
+
     // ──────────────── Scrollable single-column body ────────────────
     Flickable {
         id: bodyFlick
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: header.bottom
-        anchors.bottom: parent.bottom
+        anchors.bottom: footer.top
         anchors.margins: 14
         clip: true
         contentWidth: width
@@ -212,6 +359,27 @@ Item {
                             NumberAnimation { duration: 300; easing.type: Easing.OutQuad }
                         }
                     }
+
+                    // Hash marks across the rail at 25% intervals — gauge feel.
+                    Row {
+                        anchors.fill: parent
+                        Repeater {
+                            model: 4
+                            delegate: Item {
+                                required property int index
+                                width: targetRail.width / 4
+                                height: targetRail.height
+                                Rectangle {
+                                    visible: index > 0
+                                    x: 0
+                                    width: 1
+                                    height: parent.height
+                                    color: Theme.voidColor
+                                    opacity: 0.7
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Text {
@@ -253,6 +421,46 @@ Item {
                         color: "#dd0d0d18"
                         border.width: 1
                         border.color: Theme.goldDim
+
+                        // Corner reticle cuts — small accent ticks at each corner.
+                        Repeater {
+                            model: [
+                                {"hx": "left", "vy": "top"},
+                                {"hx": "right", "vy": "top"},
+                                {"hx": "left", "vy": "bottom"},
+                                {"hx": "right", "vy": "bottom"}
+                            ]
+                            delegate: Item {
+                                required property var modelData
+                                anchors.left: modelData.hx === "left" ? parent.left : undefined
+                                anchors.right: modelData.hx === "right" ? parent.right : undefined
+                                anchors.top: modelData.vy === "top" ? parent.top : undefined
+                                anchors.bottom: modelData.vy === "bottom" ? parent.bottom : undefined
+                                width: 6
+                                height: 6
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: "transparent"
+                                    border.width: 0
+                                }
+                                Rectangle {
+                                    width: 6; height: 1
+                                    color: Theme.gold
+                                    anchors.left: modelData.hx === "left" ? parent.left : undefined
+                                    anchors.right: modelData.hx === "right" ? parent.right : undefined
+                                    anchors.top: modelData.vy === "top" ? parent.top : undefined
+                                    anchors.bottom: modelData.vy === "bottom" ? parent.bottom : undefined
+                                }
+                                Rectangle {
+                                    width: 1; height: 6
+                                    color: Theme.gold
+                                    anchors.left: modelData.hx === "left" ? parent.left : undefined
+                                    anchors.right: modelData.hx === "right" ? parent.right : undefined
+                                    anchors.top: modelData.vy === "top" ? parent.top : undefined
+                                    anchors.bottom: modelData.vy === "bottom" ? parent.bottom : undefined
+                                }
+                            }
+                        }
 
                         Text {
                             anchors.left: parent.left
