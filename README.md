@@ -13,7 +13,7 @@ FocusOS can strongly restrict a normal non-admin user. It cannot make a computer
 - SDDM starts the FocusOS Wayland session automatically instead of KDE Plasma.
 - No Plasma shell, dock, launcher, or desktop menu is started.
 - Routine mode applies an nftables outbound network allowlist.
-- Other Access requires the six-digit TOTP code and opens a temporary unrestricted window.
+- Settings access requires the six-digit TOTP code and can open a temporary unrestricted window.
 - For production-grade "only allowed routine apps can exist", FocusOS should become the Wayland compositor or launch apps through a narrow supervisor that owns the app allowlist.
 
 ## Modes
@@ -252,7 +252,7 @@ You do not need a different app if Apple Passwords works for you.
 
 First launch:
 
-1. Open Other Access.
+1. Open Settings.
 2. Scan the QR code with the iPhone Camera app or Passwords app.
 3. If scan fails, open Passwords, go to Codes, tap `+`, choose Setup Key, and enter the grouped setup key shown under the QR code.
 4. Enter the current six-digit code into FocusOS.
@@ -275,7 +275,7 @@ FocusOS now uses a shorter TOTP label in the QR payload and shows the setup key 
 - Put one image and one short video in `~/.focusos/inspiration/`, relaunch, and confirm the background loops and fades over time.
 - Open a blocked site from an allowed app and confirm it fails.
 - Open an allowed routine URL and confirm it works after DNS resolution.
-- Use Other Access with the six-digit code and confirm the unrestricted window expires.
+- Use Settings access with the six-digit code and confirm the unrestricted window expires.
 - Pull power or force a reboot during a test routine, then relaunch FocusOS and confirm the partial work appears as an interrupted session in stats.
 
 ## Recovery

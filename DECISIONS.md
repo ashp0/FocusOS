@@ -7,9 +7,9 @@
 - The built-in Wikipedia/WebEngine information terminal has been removed. A browser-shaped surface is too close to the attention economy, even when visually skinned and domain-gated.
 - Research routines can still allow specific external apps and domains through routine configuration, but the desktop itself no longer advertises a general information terminal.
 - The first-launch authenticator QR code is generated in-process as a fixed QR Code version 5-L matrix. The otpauth URL is intentionally compact so it fits that offline generator.
-- Routine editing is available only after TOTP unlock inside the Other admin panel. The left routine list is read-only and no longer exposes app or URL details, so day-to-day users see sealed routine profiles rather than configuration surfaces.
+- Routine editing is available only after TOTP unlock inside the Settings panel. The left routine list is read-only and no longer exposes app or URL details, so day-to-day users see sealed routine profiles rather than configuration surfaces.
 - Idle routine engage buttons pulse subtly and grow on hover. The motion is an invitation to start work, not a novelty loop, and it stops once a routine is sealed.
-- First-launch enrollment remains visible in the locked modal because a trusted person needs the initial QR code before any valid TOTP can exist. After first launch, the QR code is only shown from the unlocked Access Settings tab, including after TOTP secret reset.
+- First-launch enrollment remains visible in the locked modal because a trusted person needs the initial QR code before any valid TOTP can exist. After first launch, the QR code is only shown from the unlocked Settings security tab, including after TOTP secret reset.
 - `RoutineManager` owns routine admin persistence and writes `~/.focusos/routines.json` atomically from the Save All button. New routine ids are derived from their names and made unique during save.
 - A malformed or structurally invalid `routines.json` is treated like a missing first-launch file and regenerated from shipped defaults. An intentionally empty `"routines": []` array is preserved, because deleting all routines is an explicit admin action.
 - `~/.focusos/config.json` is shared by Other access and music settings. Writers preserve unknown keys so changing session duration does not erase music settings, and changing music settings does not erase session duration.
@@ -21,7 +21,7 @@
 - The main production board is now the only right-panel surface. It avoids the earlier dashboard/browser toggle and keeps the desktop biased toward current state, progress, and notes.
 - The desktop background uses a narrow, randomized deep-tone color cycle plus low-opacity circles that bounce independently like old DVD marks. The earlier current/jellyfish layer was removed because it read too organic and performative.
 - FocusOS watches `~/.focusos/inspiration/` for images and videos and folds them into the ambient layer as a muted, slow slideshow at low opacity. The folder is created with a README on launch.
-- The always-visible shell does not show date or battery state. Device information now lives inside the locked Other Access authorization panel so it is available deliberately without becoming a constant productivity pressure.
+- The always-visible shell does not show date or battery state. Device information now lives inside the locked Settings authorization panel so it is available deliberately without becoming a constant productivity pressure.
 - The ambient field is drawn in two passes: a background pass plus a very low-opacity foreground pass, ensuring inspiration media, drifting circles, and stars are visible across the shell without hiding controls.
 - Completed routine expiry records the session, drops policy, returns the shell to sealed mode, and opens a Continue/Quit prompt. Continue dismisses the prompt; Quit also asks the platform backend to close the applications launched for that routine.
 - Routine expiry no longer plays an alarm tone. Completion feedback is visual and reflective, not a notification spike.
@@ -32,10 +32,11 @@
 - Active routine progress is persisted into `~/.focusos/stats.json` while the routine is running, not only at completion. If power dies mid-session, the next launch imports the saved active session as interrupted work instead of losing it.
 - The first-launch TOTP screen now states that the six-digit code comes from the trusted authenticator app after scanning the QR code. FocusOS stores the secret, but it never computes or displays the live six-digit token in the UI. First-launch enrollment is tracked with `~/.focusos/totp.enrolled` and is only marked complete after the first valid code, preventing lockout if the app quits before pairing is finished.
 - The TOTP enrollment label was shortened to `FocusOS` and the setup key is shown in grouped four-character chunks. This keeps the QR payload simpler and gives iPhone Passwords users a clean manual setup path when camera scanning fails.
-- Escape dismisses transient UI surfaces back to the main production board, including notes and the Other modal. Clicking the dimmed space outside Other Access also closes it, while clicks inside the panel are contained.
+- Escape dismisses transient UI surfaces back to the main production board, including notes and the Settings modal. Clicking the dimmed space outside Settings also closes it, while clicks inside the panel are contained.
 - On macOS, unrestricted access opens Terminal with `/usr/bin/open -a Terminal`; expiry asks Terminal to quit via AppleScript. On Linux, unrestricted access opens `x-terminal-emulator`, while the full lock-down posture is handled by the Linux login session, nftables policy, and the planned supervisor/compositor layer.
 - FocusOS uses `~/.focusos/focusos.lock` as a single-instance guard. A second launch exits immediately rather than stacking another fullscreen shell.
 - The Linux backend now resolves routine URL allowlists into nftables IPv4 set elements before applying the output policy. The rules still intentionally allow loopback and DNS so allowed hosts can resolve, then block everything outside the resolved allowlist.
+- Linux KWin desktop control intentionally uses external `qdbus6` calls and KWin scripts only. No Qt DBus calls are linked into FocusOS on Linux because the Fedora/KWin stack aborted inside libdbus during engage.
 - The Linux replacement plan uses a dedicated non-admin `focusos` user, an SDDM Wayland session entry, and a session wrapper that starts FocusOS without Plasma. `kwin` mode supports routine-launched external apps; `cage` mode is stricter single-app kiosk mode.
 - A truly complete Linux lock should make FocusOS the compositor or put a small FocusOS supervisor between the shell and all child apps. That is the clean boundary where the system can decide which app surfaces may exist.
 
@@ -43,9 +44,9 @@
 
 - Add a "commitment contract" before every routine: the user writes one sentence naming the concrete output. This converts starting work from a vague mood into a declared target.
 - Add routine-specific artifact capture: notes, completed files, URLs used, and elapsed focus blocks should attach to the session record. Users need evidence of output, not just minutes.
-- Add delayed Other Access: after TOTP succeeds, require a short countdown unless the routine minimum time has elapsed. This preserves emergency exit while making impulsive escape less rewarding.
+- Add delayed Settings access: after TOTP succeeds, require a short countdown unless the routine minimum time has elapsed. This preserves emergency exit while making impulsive escape less rewarding.
 - Add a daily planning classroom board: three fixed lesson slots, one maintenance slot, and one reflection slot. This fits the classroom metaphor and removes the "what should I do next" decision loop.
 - Add app supervision on Linux: launch allowed routine apps in a cgroup and terminate anything outside that cgroup when the routine ends. This is a practical bridge before FocusOS becomes its own compositor.
 - Add per-routine AppArmor or Landlock profiles. An allowed editor should not automatically imply permission to spawn a browser, terminal, package manager, or chat client.
-- Add "proof of return" after Other Access: ask what the user left to do and what they are returning to. This interrupts the drift from intentional maintenance into entertainment.
+- Add "proof of return" after Settings access: ask what the user left to do and what they are returning to. This interrupts the drift from intentional maintenance into entertainment.
 - Add a weekly review screen that shows completed, unlocked, and interrupted time separately. The product should make attention leaks visible without turning them into shame.

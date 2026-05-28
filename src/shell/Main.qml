@@ -128,7 +128,7 @@ Item {
             sidebarCollapsed: root.sidebarCollapsed
             onUnlockRequested: unlockModal.openModal()
             // The routine editor used to be its own dialog. We collapsed it
-            // into the ROUTINES tab of the Other Access modal so there's only
+            // into the ROUTINES tab of the Settings modal so there's only
             // one admin surface.
             onEditRoutinesRequested: {
                 unlockModal.openModal()
@@ -630,7 +630,7 @@ Item {
                 anchors.topMargin: 118
                 anchors.leftMargin: 34
                 anchors.rightMargin: 34
-                text: "Network restrictions could not be applied. The routine can start only if you explicitly continue without the network lock."
+                text: "Network restrictions could not be applied. Strict mode will not start a routine until nftables is configured correctly."
                 color: Theme.goldDim
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
@@ -661,45 +661,30 @@ Item {
                 anchors.bottomMargin: 26
                 spacing: 14
 
-                Repeater {
-                    model: [
-                        {"label": "ABORT", "continue": false},
-                        {"label": "START WITHOUT LOCK", "continue": true}
-                    ]
+                Rectangle {
+                    width: 156
+                    height: 38
+                    color: promptButtonMouse.containsMouse ? Theme.steel : Theme.iron
+                    border.width: 1
+                    border.color: promptButtonMouse.containsMouse ? Theme.gold : Theme.goldDim
 
-                    delegate: Rectangle {
-                        required property var modelData
+                    Text {
+                        anchors.centerIn: parent
+                        text: "ABORT"
+                        color: Theme.gold
+                        font.family: root.headerFont
+                        font.pixelSize: 12
+                        font.letterSpacing: 0
+                    }
 
-                        width: modelData.continue ? 192 : 136
-                        height: 38
-                        color: promptButtonMouse.containsMouse
-                               ? (modelData.continue ? Theme.crimsonHot : Theme.steel)
-                               : (modelData.continue ? Theme.crimson : Theme.iron)
-                        border.width: 1
-                        border.color: promptButtonMouse.containsMouse ? Theme.gold : Theme.goldDim
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            color: Theme.gold
-                            font.family: root.headerFont
-                            font.pixelSize: 12
-                            font.letterSpacing: 0
-                        }
-
-                        MouseArea {
-                            id: promptButtonMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (modelData.continue) {
-                                    routineManager.startPendingRoutineWithoutNetworkLock()
-                                } else {
-                                    routineManager.abortPendingRoutineStart()
-                                }
-                                root.forceActiveFocus()
-                            }
+                    MouseArea {
+                        id: promptButtonMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            routineManager.abortPendingRoutineStart()
+                            root.forceActiveFocus()
                         }
                     }
                 }

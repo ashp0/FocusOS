@@ -63,15 +63,9 @@
 
 #include "platform/linux/LinuxBackend.h"
 
-#include <QDBusArgument>
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDBusMessage>
-#include <QDBusReply>
-#include <QDBusVariant>
 #include <QDateTime>
 #include <QDir>
-#include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -85,9 +79,6 @@
 namespace {
 
 constexpr const char *kKWinService = "org.kde.KWin";
-constexpr const char *kVdmPath = "/VirtualDesktopManager";
-constexpr const char *kVdmIface = "org.kde.KWin.VirtualDesktopManager";
-
 QString expandedPath(const QString &path)
 {
     const QString trimmed = path.trimmed();
@@ -349,20 +340,17 @@ bool processRunning(const QString &processName)
 
 // ─── KWin DBus helpers ───────────────────────────────────────────────────────
 //
-// We talk to KWin's VirtualDesktopManager over the session bus, but every
-// mutation goes through a tiny `qdbus6` subprocess shell-out rather than
-// QDBusInterface::call(). The previous Qt 6 / KWin 6 combination aborted the
-// process inside libdbus during `Properties.Set` with a wrapped QDBusVariant:
+// We talk to KWin through tiny `qdbus6` subprocesses only. The previous Qt 6 /
+// KWin 6 combination aborted the process inside libdbus during a few KWin calls:
 //
 //   QDBusArgument: write from a read-only object
 //   dbus[…]: type struct 114 not a basic type
 //   Aborted (core dumped)
 //
 // Crashing the routine engage also left the nftables policy installed, which
-// stranded the user's wifi until reboot — so the trade is well worth the
-// extra ~30ms per Set/createDesktop. Reads still use QDBus directly because
-// Properties.Get is stable; readers are also wrapped in a try/parse-defensive
-// path so a malformed reply yields an empty result instead of UB.
+// stranded the user's wifi until reboot. The extra process spawn is well worth
+// it for a strict daily-driver shell. Do not add QDBusInterface calls back to
+// this file unless the crash is proven fixed on the deployed Fedora/KWin stack.
 //
 // FUTURE: when we own the compositor, virtual-desktop bookkeeping moves
 // in-process and these DBus dances go away entirely.
@@ -376,205 +364,35 @@ QString findQdbusBinary()
     });
 }
 
-bool runQdbusShell(const QStringList &args, int timeoutMs = 1500)
+QString runQdbusShellOutput(const QStringList &args, int timeoutMs = 1500, bool *ok = nullptr)
 {
+    if (ok) {
+        *ok = false;
+    }
     const QString qdbus = findQdbusBinary();
     if (qdbus.isEmpty()) {
-        return false;
+        return {};
     }
     QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
     process.start(qdbus, args);
     if (!process.waitForFinished(timeoutMs)) {
         process.kill();
         process.waitForFinished(50);
-        return false;
+        return {};
     }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    const bool success = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    if (ok) {
+        *ok = success;
+    }
+    return QString::fromUtf8(process.readAll()).trimmed();
 }
 
-QStringList kwinListDesktopIds()
+bool runQdbusShell(const QStringList &args, int timeoutMs = 1500)
 {
-    QDBusInterface iface(QString::fromLatin1(kKWinService),
-                         QString::fromLatin1(kVdmPath),
-                         QStringLiteral("org.freedesktop.DBus.Properties"),
-                         QDBusConnection::sessionBus());
-    if (!iface.isValid()) {
-        return {};
-    }
-
-    const QDBusMessage reply = iface.call(QStringLiteral("Get"),
-                                          QString::fromLatin1(kVdmIface),
-                                          QStringLiteral("desktops"));
-    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
-        return {};
-    }
-
-    // The reply variant wraps an a(uss). We defensively check every step
-    // because earlier crashes traced back to handing libdbus a struct
-    // iterator when a basic was expected.
-    const QVariant outerVariant = reply.arguments().first();
-    if (!outerVariant.canConvert<QDBusVariant>()) {
-        return {};
-    }
-    const QVariant innerVariant = outerVariant.value<QDBusVariant>().variant();
-    if (!innerVariant.canConvert<QDBusArgument>()) {
-        return {};
-    }
-    QDBusArgument arg = innerVariant.value<QDBusArgument>();
-    if (arg.currentType() != QDBusArgument::ArrayType) {
-        return {};
-    }
-
-    QStringList ids;
-    arg.beginArray();
-    while (!arg.atEnd()) {
-        if (arg.currentType() != QDBusArgument::StructureType) {
-            break;
-        }
-        arg.beginStructure();
-        uint position = 0;
-        QString id;
-        QString name;
-        arg >> position >> id >> name;
-        arg.endStructure();
-        Q_UNUSED(position)
-        Q_UNUSED(name)
-        if (!id.isEmpty()) {
-            ids.append(id);
-        }
-    }
-    arg.endArray();
-    return ids;
-}
-
-QString kwinCurrentDesktopId()
-{
-    QDBusInterface iface(QString::fromLatin1(kKWinService),
-                         QString::fromLatin1(kVdmPath),
-                         QStringLiteral("org.freedesktop.DBus.Properties"),
-                         QDBusConnection::sessionBus());
-    if (!iface.isValid()) {
-        return {};
-    }
-
-    const QDBusMessage reply = iface.call(QStringLiteral("Get"),
-                                          QString::fromLatin1(kVdmIface),
-                                          QStringLiteral("current"));
-    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
-        return {};
-    }
-    const QVariant outerVariant = reply.arguments().first();
-    if (!outerVariant.canConvert<QDBusVariant>()) {
-        return {};
-    }
-    return outerVariant.value<QDBusVariant>().variant().toString();
-}
-
-int kwinCurrentDesktopIndex()
-{
-    const QString currentId = kwinCurrentDesktopId();
-    if (currentId.isEmpty()) {
-        return -1;
-    }
-    return kwinListDesktopIds().indexOf(currentId);
-}
-
-uint kwinDesktopCount()
-{
-    QDBusInterface iface(QString::fromLatin1(kKWinService),
-                         QString::fromLatin1(kVdmPath),
-                         QStringLiteral("org.freedesktop.DBus.Properties"),
-                         QDBusConnection::sessionBus());
-    if (!iface.isValid()) {
-        return 0;
-    }
-    const QDBusMessage reply = iface.call(QStringLiteral("Get"),
-                                          QString::fromLatin1(kVdmIface),
-                                          QStringLiteral("count"));
-    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
-        return 0;
-    }
-    const QVariant outerVariant = reply.arguments().first();
-    if (!outerVariant.canConvert<QDBusVariant>()) {
-        return 0;
-    }
-    return outerVariant.value<QDBusVariant>().variant().toUInt();
-}
-
-bool kwinSetCurrentDesktop(const QString &desktopId)
-{
-    if (desktopId.isEmpty()) {
-        return false;
-    }
-    if (kwinCurrentDesktopId() == desktopId) {
-        return true;
-    }
-
-    // Shell out to qdbus6 — see top-of-block comment for why this is not a
-    // QDBusInterface::call(). The string roundtrips cleanly because qdbus
-    // wraps the value as a string variant itself.
-    runQdbusShell({
-        QString::fromLatin1(kKWinService),
-        QString::fromLatin1(kVdmPath),
-        QStringLiteral("org.freedesktop.DBus.Properties.Set"),
-        QString::fromLatin1(kVdmIface),
-        QStringLiteral("current"),
-        desktopId
-    });
-
-    // Poll until KWin reports the new current desktop — qdbus returns before
-    // KWin processes the property change, and we don't want to launch routine
-    // apps before the desktop actually flips.
-    QElapsedTimer waitTimer;
-    waitTimer.start();
-    while (waitTimer.elapsed() < 1500) {
-        if (kwinCurrentDesktopId() == desktopId) {
-            return true;
-        }
-        QThread::msleep(40);
-    }
-    return kwinCurrentDesktopId() == desktopId;
-}
-
-QString kwinEnsureDesktop(int desiredCount, const QString &nameForNew)
-{
-    const QStringList existing = kwinListDesktopIds();
-    if (existing.size() >= desiredCount) {
-        return existing.at(desiredCount - 1);
-    }
-
-    int current = existing.size();
-    while (current < desiredCount) {
-        // qdbus6 round-trip avoids the same QDBusInterface marshalling abort
-        // that hit Properties.Set. createDesktop(u, s) is plain-typed so
-        // either path *should* work, but consistency keeps the failure mode
-        // identical across calls.
-        runQdbusShell({
-            QString::fromLatin1(kKWinService),
-            QString::fromLatin1(kVdmPath),
-            QString::fromLatin1(kVdmIface) + QStringLiteral(".createDesktop"),
-            QString::number(current),
-            nameForNew
-        });
-
-        QElapsedTimer waitTimer;
-        waitTimer.start();
-        QStringList updated = kwinListDesktopIds();
-        while (updated.size() <= current && waitTimer.elapsed() < 1500) {
-            QThread::msleep(50);
-            updated = kwinListDesktopIds();
-        }
-        if (updated.size() <= current) {
-            return {};
-        }
-        current = updated.size();
-    }
-
-    const QStringList finalIds = kwinListDesktopIds();
-    if (finalIds.size() < desiredCount) {
-        return {};
-    }
-    return finalIds.at(desiredCount - 1);
+    bool ok = false;
+    runQdbusShellOutput(args, timeoutMs, &ok);
+    return ok;
 }
 
 // ─── KWin scripting: window-to-desktop pinning ──────────────────────────────
@@ -601,28 +419,30 @@ int kwinScriptingLoad(const QString &scriptBody, const QString &pluginName)
     const QString scriptPath = scriptFile.fileName();
     scriptFile.close();
 
-    QDBusInterface scripting(QStringLiteral("org.kde.KWin"),
-                             QStringLiteral("/Scripting"),
-                             QStringLiteral("org.kde.kwin.Scripting"),
-                             QDBusConnection::sessionBus());
-    if (!scripting.isValid()) {
-        QFile::remove(scriptPath);
+    bool loaded = false;
+    const QString output = runQdbusShellOutput({
+        QString::fromLatin1(kKWinService),
+        QStringLiteral("/Scripting"),
+        QStringLiteral("org.kde.kwin.Scripting.loadScript"),
+        scriptPath,
+        pluginName
+    }, 2500, &loaded);
+    QFile::remove(scriptPath);
+    if (!loaded) {
         return -1;
     }
-    QDBusReply<int> reply = scripting.call(QStringLiteral("loadScript"), scriptPath, pluginName);
-    if (!reply.isValid()) {
-        QFile::remove(scriptPath);
+    const QRegularExpression numberPattern(QStringLiteral("(-?\\d+)"));
+    const QRegularExpressionMatch match = numberPattern.match(output);
+    const int handle = match.hasMatch() ? match.captured(1).toInt() : -1;
+    if (handle < 0) {
         return -1;
     }
-    const int handle = reply.value();
     // Each script lives at /Scripting/Script<handle> and has its own start().
-    QDBusInterface scriptIface(QStringLiteral("org.kde.KWin"),
-                               QStringLiteral("/Scripting/Script%1").arg(handle),
-                               QStringLiteral("org.kde.kwin.Script"),
-                               QDBusConnection::sessionBus());
-    if (scriptIface.isValid()) {
-        scriptIface.call(QStringLiteral("run"));
-    }
+    runQdbusShell({
+        QString::fromLatin1(kKWinService),
+        QStringLiteral("/Scripting/Script%1").arg(handle),
+        QStringLiteral("org.kde.kwin.Script.run")
+    }, 1500);
     return handle;
 }
 
@@ -631,20 +451,28 @@ void kwinScriptingUnload(int handle, const QString &pluginName)
     if (handle < 0) {
         return;
     }
-    QDBusInterface scriptIface(QStringLiteral("org.kde.KWin"),
-                               QStringLiteral("/Scripting/Script%1").arg(handle),
-                               QStringLiteral("org.kde.kwin.Script"),
-                               QDBusConnection::sessionBus());
-    if (scriptIface.isValid()) {
-        scriptIface.call(QStringLiteral("stop"));
+    runQdbusShell({
+        QString::fromLatin1(kKWinService),
+        QStringLiteral("/Scripting/Script%1").arg(handle),
+        QStringLiteral("org.kde.kwin.Script.stop")
+    }, 1000);
+    runQdbusShell({
+        QString::fromLatin1(kKWinService),
+        QStringLiteral("/Scripting"),
+        QStringLiteral("org.kde.kwin.Scripting.unloadScript"),
+        pluginName
+    }, 1000);
+}
+
+void kwinRunOneShotScript(const QString &scriptBody, const QString &pluginPrefix)
+{
+    const QString pluginName = QStringLiteral("%1-%2").arg(pluginPrefix).arg(QDateTime::currentMSecsSinceEpoch());
+    const int handle = kwinScriptingLoad(scriptBody, pluginName);
+    if (handle < 0) {
+        return;
     }
-    QDBusInterface scripting(QStringLiteral("org.kde.KWin"),
-                             QStringLiteral("/Scripting"),
-                             QStringLiteral("org.kde.kwin.Scripting"),
-                             QDBusConnection::sessionBus());
-    if (scripting.isValid()) {
-        scripting.call(QStringLiteral("unloadScript"), pluginName);
-    }
+    QThread::msleep(120);
+    kwinScriptingUnload(handle, pluginName);
 }
 
 void killTrackedPids(QList<qint64> &pids)
@@ -742,27 +570,16 @@ void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
 
     terminateDesktopShell();
 
-    if (m_savedDesktopIndex < 0) {
-        m_savedDesktopIndex = kwinCurrentDesktopIndex();
-    }
-
-    const QString focusDesktopId = kwinEnsureDesktop(2, QStringLiteral("Focus 2"));
-
-    if (!focusDesktopId.isEmpty()) {
-        kwinSetCurrentDesktop(focusDesktopId);
-    }
-
-    // Even after the property echo confirms the switch, KWin sometimes still
-    // races the very first window creation. A small extra settle window beats
-    // the alternative (apps appearing on the old desktop).
-    QThread::msleep(200);
-
     // Pin every newly-created window to the focus desktop for the duration
     // of the routine. Without this, Chromium/Electron apps with an existing
     // background process open their windows on whatever desktop the parent
-    // process is on — which is why the user kept seeing routine apps spawn
-    // on the home desktop and having to drag them by hand.
+    // process is on. The script also creates/switches to the Focus desktop,
+    // avoiding fragile VirtualDesktopManager DBus marshalling entirely.
     loadWindowPinScript();
+
+    // KWin script execution is async relative to qdbus returning. Give the
+    // compositor a small settle window before launching routine apps.
+    QThread::msleep(280);
 
     startLockdownWatchdog();
 }
@@ -951,7 +768,7 @@ void LinuxBackend::terminateUnrestrictedApps()
     stopLockdownWatchdog();
     unloadWindowPinScript();
 
-    // The 30-min Other Access timer fires this. We want to take the user back
+    // The temporary access timer fires this. We want to take the user back
     // to a clean FocusOS state: kill terminals, the desktop shell, and any
     // routine-spawned apps we still track.
     const QStringList terminalProcesses {
@@ -978,15 +795,20 @@ bool LinuxBackend::launchDesktopShell(QString *errorMessage)
         return true;
     }
 
-    // The desktop shell goes on its own virtual desktop too so the user can
-    // swipe between FocusOS and the real desktop instead of layering them.
-    if (m_savedDesktopIndex < 0) {
-        m_savedDesktopIndex = kwinCurrentDesktopIndex();
-    }
-    const QString focusDesktopId = kwinEnsureDesktop(2, QStringLiteral("Focus 2"));
-    if (!focusDesktopId.isEmpty()) {
-        kwinSetCurrentDesktop(focusDesktopId);
-    }
+    // The desktop shell goes on the same Focus desktop so the user can inspect
+    // the real desktop only inside the authorized access window.
+    kwinRunOneShotScript(QStringLiteral(R"(
+        try {
+            var desktops = workspace.desktops || [];
+            while (desktops.length < 2 && workspace.createDesktop) {
+                workspace.createDesktop(desktops.length, "Focus 2");
+                desktops = workspace.desktops || desktops;
+            }
+            if (desktops.length >= 2) {
+                workspace.currentDesktop = desktops[1];
+            }
+        } catch (e) {}
+    )"), QStringLiteral("focusos-access-desktop"));
 
     const QStringList sidecars {
         QStringLiteral("kded6"),
@@ -1048,15 +870,14 @@ void LinuxBackend::terminateDesktopShell()
 
 void LinuxBackend::restoreShellPlacement()
 {
-    if (m_savedDesktopIndex < 0) {
-        return;
-    }
-
-    const QStringList desktops = kwinListDesktopIds();
-    if (m_savedDesktopIndex < desktops.size()) {
-        kwinSetCurrentDesktop(desktops.at(m_savedDesktopIndex));
-    }
-    m_savedDesktopIndex = -1;
+    kwinRunOneShotScript(QStringLiteral(R"(
+        try {
+            var desktops = workspace.desktops || [];
+            if (desktops.length > 0) {
+                workspace.currentDesktop = desktops[0];
+            }
+        } catch (e) {}
+    )"), QStringLiteral("focusos-restore-desktop"));
 }
 
 void LinuxBackend::startLockdownWatchdog()
@@ -1199,18 +1020,38 @@ void LinuxBackend::loadWindowPinScript()
     }
 
     // KWin 6 scripting API: workspace.windowAdded fires for every new
-    // toplevel. We pin to the desktop the user is currently on, which is
-    // the focus desktop after prepareRoutineSession switched. We also skip
-    // the window's own dialogs (transients) so e.g. file-pickers don't get
-    // shuttled away from their parent.
+    // toplevel. The script creates/switches to desktop 2, stores that desktop
+    // object, then pins each new non-transient window there. This deliberately
+    // avoids Qt DBus property reads/writes, which are what crashed Fedora.
     const QString scriptBody = QStringLiteral(R"(
+        var focusosDesktop = null;
+
+        function focusosEnsureDesktop() {
+            try {
+                var desktops = workspace.desktops || [];
+                while (desktops.length < 2 && workspace.createDesktop) {
+                    workspace.createDesktop(desktops.length, "Focus 2");
+                    desktops = workspace.desktops || desktops;
+                }
+                focusosDesktop = desktops.length >= 2 ? desktops[1] : workspace.currentDesktop;
+                if (focusosDesktop) {
+                    workspace.currentDesktop = focusosDesktop;
+                }
+            } catch (e) {
+                focusosDesktop = workspace.currentDesktop;
+            }
+        }
+
         function focusosPinNewWindow(window) {
             if (!window) return;
             if (window.transient) return;
             try {
-                window.desktops = [workspace.currentDesktop];
+                if (!focusosDesktop) focusosEnsureDesktop();
+                window.desktops = [focusosDesktop || workspace.currentDesktop];
             } catch (e) { /* KWin <6.0 didn't expose .desktops */ }
         }
+
+        focusosEnsureDesktop();
         workspace.windowAdded.connect(focusosPinNewWindow);
     )");
     m_windowPinScriptPlugin = QStringLiteral("focusos-window-pin-%1")

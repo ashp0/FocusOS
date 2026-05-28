@@ -26,10 +26,6 @@ find_package(Qt6 6.7 REQUIRED COMPONENTS
     Widgets
 )
 
-if(UNIX AND NOT APPLE)
-    find_package(Qt6 6.7 REQUIRED COMPONENTS DBus)
-endif()
-
 qt_standard_project_setup(REQUIRES 6.7)
 
 if(COMMAND qt_policy)
@@ -110,10 +106,6 @@ target_link_libraries(focusos PRIVATE
     Qt6::QuickControls2
     Qt6::Widgets
 )
-
-if(UNIX AND NOT APPLE)
-    target_link_libraries(focusos PRIVATE Qt6::DBus)
-endif()
 
 enable_testing()
 

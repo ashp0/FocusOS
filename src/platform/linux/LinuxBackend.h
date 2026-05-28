@@ -39,7 +39,6 @@ private:
 
     NetGate m_netGate;
     QList<qint64> m_sessionPids;
-    int m_savedDesktopIndex = -1;
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
     int m_windowPinScriptHandle = -1;

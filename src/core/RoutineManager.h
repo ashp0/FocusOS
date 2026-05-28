@@ -109,7 +109,6 @@ public:
     QStringList alwaysAllowedApps() const;
 
     Q_INVOKABLE void engage(const QString &routineId);
-    Q_INVOKABLE void startPendingRoutineWithoutNetworkLock();
     Q_INVOKABLE void abortPendingRoutineStart();
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void endActiveRoutine();

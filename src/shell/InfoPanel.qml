@@ -9,6 +9,12 @@ Item {
     property string bodyFont
     property bool graphRevealed: false
     property int graphVisibleDays: 14
+    property int graphOffsetDays: 0
+    property int graphHoverIndex: -1
+    property int graphSelectedIndex: -1
+    property int graphDragStartX: 0
+    property int graphDragStartOffset: 0
+    readonly property var graphRanges: [7, 14, 30, 60, 90]
     property string selectedSessionId: ""
     property bool sessionsExpanded: false
     property bool todayNotesExpanded: false
@@ -38,7 +44,73 @@ Item {
             return []
         }
         const visibleCount = Math.min(graphVisibleDays, days.length)
-        return days.slice(days.length - visibleCount)
+        const maxOffset = Math.max(0, days.length - visibleCount)
+        const offset = Math.max(0, Math.min(maxOffset, graphOffsetDays))
+        const end = days.length - offset
+        return days.slice(Math.max(0, end - visibleCount), end)
+    }
+
+    function maxGraphOffset() {
+        const days = focusHistory()
+        if (!days || days.length <= 0) {
+            return 0
+        }
+        return Math.max(0, days.length - Math.min(graphVisibleDays, days.length))
+    }
+
+    function setGraphRange(days) {
+        graphVisibleDays = days
+        graphOffsetDays = 0
+        graphHoverIndex = -1
+        graphSelectedIndex = -1
+        productivityGraph.requestPaint()
+    }
+
+    function zoomGraph(direction) {
+        let index = graphRanges.indexOf(graphVisibleDays)
+        if (index < 0) {
+            index = 1
+        }
+        const next = Math.max(0, Math.min(graphRanges.length - 1, index + direction))
+        setGraphRange(graphRanges[next])
+    }
+
+    function graphIndexAt(x, graphWidth) {
+        const days = graphDays()
+        if (!days || days.length <= 0) {
+            return -1
+        }
+        const left = 36
+        const right = 8
+        const plotWidth = Math.max(1, graphWidth - left - right)
+        if (x < left || x > left + plotWidth) {
+            return -1
+        }
+        const slot = plotWidth / Math.max(1, days.length)
+        return Math.max(0, Math.min(days.length - 1, Math.floor((x - left) / slot)))
+    }
+
+    function graphActiveDay() {
+        const days = graphDays()
+        const index = graphSelectedIndex >= 0 ? graphSelectedIndex : graphHoverIndex
+        if (!days || index < 0 || index >= days.length) {
+            return null
+        }
+        return days[index]
+    }
+
+    function graphActiveText() {
+        const day = graphActiveDay()
+        if (!day) {
+            const days = graphDays()
+            if (!days || days.length <= 0) {
+                return "NO TELEMETRY"
+            }
+            return "HOVER OR DRAG GRAPH"
+        }
+        return String(day.label || day.date || "DAY") + "  ■  " +
+               formatMinutes(Number(day.focusMinutes || 0)) + "  ■  " +
+               Number(day.sessions || 0) + " SESSIONS"
     }
 
     function weekFocusMinutes() {
@@ -490,7 +562,7 @@ Item {
             Rectangle {
                 id: graphCard
                 width: parent.width
-                height: root.graphRevealed ? 232 : 50
+                height: root.graphRevealed ? 272 : 50
                 color: "#dd0d0d18"
                 border.width: 1
                 border.color: root.graphRevealed ? Theme.gold : Theme.goldDim
@@ -500,6 +572,7 @@ Item {
                 }
 
                 Text {
+                    id: graphTitle
                     anchors.left: parent.left
                     anchors.leftMargin: 14
                     anchors.top: parent.top
@@ -508,6 +581,16 @@ Item {
                     color: root.graphRevealed ? Theme.gold : Theme.goldDim
                     font.family: root.headerFont
                     font.pixelSize: 12
+                }
+
+                MouseArea {
+                    anchors.fill: graphTitle
+                    anchors.margins: -8
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.graphRevealed = !root.graphRevealed
+                        productivityGraph.requestPaint()
+                    }
                 }
 
                 Text {
@@ -522,6 +605,60 @@ Item {
                     font.pixelSize: 10
                 }
 
+                Row {
+                    visible: root.graphRevealed
+                    anchors.left: parent.left
+                    anchors.leftMargin: 14
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.top: parent.top
+                    anchors.topMargin: 40
+                    height: 24
+                    spacing: 6
+
+                    Repeater {
+                        model: root.graphRanges
+                        delegate: Rectangle {
+                            required property int modelData
+                            width: 36
+                            height: 22
+                            color: root.graphVisibleDays === modelData ? Theme.crimsonHot : Theme.voidColor
+                            border.width: 1
+                            border.color: root.graphVisibleDays === modelData ? Theme.gold : Theme.goldDim
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData + "D"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 9
+                                font.letterSpacing: 0
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.setGraphRange(modelData)
+                            }
+                        }
+                    }
+
+                    Item { width: 8; height: 1 }
+
+                    Text {
+                        width: Math.max(80, parent.width - 220)
+                        height: 22
+                        text: root.graphActiveText()
+                        color: root.graphActiveDay() ? Theme.textPrimary : Theme.textGhost
+                        elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+                }
+
                 Canvas {
                     id: productivityGraph
                     visible: root.graphRevealed
@@ -529,7 +666,7 @@ Item {
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.top: parent.top
-                    anchors.topMargin: 40
+                    anchors.topMargin: 72
                     anchors.margins: 14
 
                     onPaint: {
@@ -569,6 +706,7 @@ Item {
 
                         const slot = plotWidth / Math.max(1, days.length)
                         const barWidth = Math.max(4, Math.min(20, slot * 0.55))
+                        const activeIndex = root.graphSelectedIndex >= 0 ? root.graphSelectedIndex : root.graphHoverIndex
                         for (let i = 0; i < days.length; ++i) {
                             const day = days[i]
                             const focus = Number(day.focusMinutes || 0)
@@ -580,12 +718,27 @@ Item {
                             const compH = plotHeight * completed / maxMinutes
                             const unlH = plotHeight * unlocked / maxMinutes
 
+                            if (i === activeIndex) {
+                                ctx.fillStyle = "#2a1818"
+                                ctx.fillRect(left + slot * i, top, slot, plotHeight)
+                            }
+
                             ctx.fillStyle = focus > 0 ? Theme.steel : Theme.voidColor
                             ctx.fillRect(x, baseY - totalH, barWidth, totalH)
                             ctx.fillStyle = Theme.gold
                             ctx.fillRect(x, baseY - compH, barWidth, compH)
                             ctx.fillStyle = Theme.crimsonHot
                             ctx.fillRect(x, baseY - compH - unlH, barWidth, unlH)
+
+                            if (i === activeIndex) {
+                                ctx.strokeStyle = Theme.gold
+                                ctx.lineWidth = 1
+                                ctx.strokeRect(x - 2, baseY - Math.max(totalH, 4) - 2, barWidth + 4, Math.max(totalH, 4) + 4)
+                                ctx.beginPath()
+                                ctx.moveTo(x + barWidth / 2, top)
+                                ctx.lineTo(x + barWidth / 2, baseY)
+                                ctx.stroke()
+                            }
 
                             ctx.fillStyle = Theme.textDim
                             ctx.textAlign = "center"
@@ -602,7 +755,62 @@ Item {
                 }
 
                 MouseArea {
+                    id: graphMouse
+                    visible: root.graphRevealed
+                    anchors.fill: productivityGraph
+                    hoverEnabled: true
+                    preventStealing: true
+                    cursorShape: Qt.PointingHandCursor
+                    acceptedButtons: Qt.LeftButton
+                    property bool draggingGraph: false
+
+                    onPressed: function(mouse) {
+                        draggingGraph = true
+                        root.graphDragStartX = mouse.x
+                        root.graphDragStartOffset = root.graphOffsetDays
+                        root.graphSelectedIndex = root.graphIndexAt(mouse.x, productivityGraph.width)
+                        root.graphHoverIndex = root.graphSelectedIndex
+                        productivityGraph.requestPaint()
+                    }
+
+                    onPositionChanged: function(mouse) {
+                        const nextHover = root.graphIndexAt(mouse.x, productivityGraph.width)
+                        if (nextHover !== root.graphHoverIndex) {
+                            root.graphHoverIndex = nextHover
+                            productivityGraph.requestPaint()
+                        }
+                        if (draggingGraph && Math.abs(mouse.x - root.graphDragStartX) > 4) {
+                            const days = root.graphDays()
+                            const slot = days.length > 0 ? Math.max(1, (productivityGraph.width - 44) / days.length) : 20
+                            const deltaDays = Math.round((root.graphDragStartX - mouse.x) / slot)
+                            root.graphOffsetDays = Math.max(0, Math.min(root.maxGraphOffset(), root.graphDragStartOffset + deltaDays))
+                            root.graphSelectedIndex = -1
+                            productivityGraph.requestPaint()
+                        }
+                    }
+
+                    onReleased: function(mouse) {
+                        draggingGraph = false
+                        root.graphSelectedIndex = root.graphIndexAt(mouse.x, productivityGraph.width)
+                        productivityGraph.requestPaint()
+                    }
+
+                    onExited: {
+                        if (!draggingGraph) {
+                            root.graphHoverIndex = -1
+                            productivityGraph.requestPaint()
+                        }
+                    }
+
+                    onWheel: function(wheel) {
+                        root.zoomGraph(wheel.angleDelta.y > 0 ? -1 : 1)
+                        wheel.accepted = true
+                    }
+                }
+
+                MouseArea {
                     anchors.fill: parent
+                    enabled: !root.graphRevealed
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         root.graphRevealed = !root.graphRevealed

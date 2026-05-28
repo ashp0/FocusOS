@@ -408,7 +408,7 @@ void RoutineManager::endActiveRoutine()
     const int elapsedMinutes = elapsedSecondsValue <= 0 ? 0 : (elapsedSecondsValue + 59) / 60;
 
     // Strict mode: the END button cannot release the routine before
-    // min_time_minutes has elapsed. The escape hatch is Other Access (TOTP),
+    // min_time_minutes has elapsed. The escape hatch is Settings access (TOTP),
     // which honors the same floor.
     const int minSeconds = routine.minTimeMinutes * 60;
     if (minSeconds > 0 && elapsedSecondsValue < minSeconds) {
@@ -524,30 +524,6 @@ void RoutineManager::engage(const QString &routineId)
             setNetworkLockPrompt(routine, error.mid(QStringLiteral("network:").size()).trimmed());
             return;
         }
-        setStatusMessage(error.isEmpty()
-                             ? QStringLiteral("ROUTINE START FAILED")
-                             : error);
-    }
-}
-
-void RoutineManager::startPendingRoutineWithoutNetworkLock()
-{
-    if (m_pendingNetworkRoutineId.isEmpty() || active() || accessGranted()) {
-        clearNetworkLockPrompt();
-        return;
-    }
-
-    const int routineIndex = indexOfRoutine(m_pendingNetworkRoutineId);
-    if (routineIndex < 0) {
-        clearNetworkLockPrompt();
-        return;
-    }
-
-    const Routine routine = m_routines.at(routineIndex);
-    clearNetworkLockPrompt();
-
-    QString error;
-    if (!startRoutine(routine, false, &error)) {
         setStatusMessage(error.isEmpty()
                              ? QStringLiteral("ROUTINE START FAILED")
                              : error);

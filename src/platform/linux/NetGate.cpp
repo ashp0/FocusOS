@@ -10,6 +10,33 @@
 #include <QUrl>
 #endif
 
+#ifdef Q_OS_LINUX
+namespace {
+
+bool runNftQuietly(const QString &nftPath, const QStringList &arguments, int timeoutMs = 3000)
+{
+    QProcess nft;
+    nft.setProcessChannelMode(QProcess::MergedChannels);
+    nft.start(nftPath, arguments);
+    if (!nft.waitForFinished(timeoutMs)) {
+        nft.kill();
+        nft.waitForFinished(100);
+        return false;
+    }
+    return nft.exitStatus() == QProcess::NormalExit && nft.exitCode() == 0;
+}
+
+void deleteFocusTableIfPresent(const QString &nftPath)
+{
+    if (!runNftQuietly(nftPath, {QStringLiteral("list"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")})) {
+        return;
+    }
+    runNftQuietly(nftPath, {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
+}
+
+} // namespace
+#endif
+
 QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 {
 #ifdef Q_OS_LINUX
@@ -108,7 +135,7 @@ bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) cons
         return false;
     }
 
-    QProcess::execute(nftPath, {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
+    deleteFocusTableIfPresent(nftPath);
 
     QProcess nft;
     nft.start(nftPath, {QStringLiteral("-f"), QStringLiteral("-")});
@@ -120,7 +147,14 @@ bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) cons
     }
     nft.write(buildRuleset(allowedHosts).toUtf8());
     nft.closeWriteChannel();
-    nft.waitForFinished(5000);
+    if (!nft.waitForFinished(5000)) {
+        nft.kill();
+        nft.waitForFinished(100);
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("nftables did not finish applying the FocusOS network lock within 5 seconds");
+        }
+        return false;
+    }
     if (nft.exitStatus() != QProcess::NormalExit || nft.exitCode() != 0) {
         QString stderrText = QString::fromUtf8(nft.readAllStandardError()).trimmed();
         // nftables needs CAP_NET_ADMIN — without it, the kernel rejects the
@@ -133,8 +167,8 @@ bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) cons
             if (looksUnprivileged) {
                 *errorMessage = QStringLiteral(
                     "FocusOS needs CAP_NET_ADMIN to install firewall rules. Either run\n"
-                    "  sudo setcap cap_net_admin,cap_net_raw+ep $(command -v focusos)\n"
-                    "or launch FocusOS via a small pkexec wrapper. The routine can still start without the lock.");
+                    "  sudo setcap cap_net_admin,cap_net_raw+ep $(command -v nft)\n"
+                    "or launch FocusOS via a small pkexec wrapper. Strict mode will not start until this is fixed.");
             } else {
                 *errorMessage = stderrText.isEmpty()
                     ? QStringLiteral("nftables refused the ruleset (unknown error)")
@@ -158,7 +192,7 @@ void NetGate::drop() const
 #ifdef Q_OS_LINUX
     const QString nftPath = QStandardPaths::findExecutable(QStringLiteral("nft"));
     if (!nftPath.isEmpty()) {
-        QProcess::execute(nftPath, {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
+        deleteFocusTableIfPresent(nftPath);
     }
 #endif
 }

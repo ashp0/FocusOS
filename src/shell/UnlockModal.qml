@@ -1354,7 +1354,7 @@ Item {
                     }
                 }
 
-                // ─── ACCESS tab (formerly "Other Access Settings") ──────
+                // ─── ACCESS tab ─────────────────────────────────────────
                 ColumnLayout {
                     visible: root.activeTab === 2
                     anchors.fill: parent
