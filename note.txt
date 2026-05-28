@@ -1,29 +1,11 @@
-Engaging in a session causes an error.
+* When allowing only YouTube but nothing else, the YouTube web page loads but the video does not play. The network blocking is really great though! Just that the YouTube video does not load which is a problem.
 
-ashwinpaudel@fedora:~/FocusOS$ cmake --build build-linux && ./build-linux/focusos
-[32/32] Linking CXX executable focusos
-qt.multimedia.ffmpeg: Using Qt multimedia with FFmpeg version 8.1.1 GPL version 3 or later
-Failed to open VDPAU backend libvdpau_nvidia.so: cannot open shared object file: No such file or directory
-spaVisitChoice: parse error "Object: size 136, type Spa:Pod:Object:Param:Format (262147), id Spa:Enum:ParamId:EnumFormat (3)" "  Prop: key Spa:Pod:Object:Param:Format:mediaType (1), flags 00000000" "    Id 1        (Spa:Enum:MediaType:audio)" "  Prop: key Spa:Pod:Object:Param:Format:mediaSubtype (2), flags 00000000" "    Id 1        (Spa:Enum:MediaSubtype:raw)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:format (65537), flags 00000000" "    Id 518      (Spa:Enum:AudioFormat:F32P)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:channels (65540), flags 00000000" "    Int 1" "  Prop: key Spa:Pod:Object:Param:Format:Audio:position (65541), flags 00000000" "    Array: child.size 4, child.type Spa:Id" "      Id 4096     (Spa:Enum:AudioChannel:AUX0)"
-spaVisitChoice: parse error "Object: size 136, type Spa:Pod:Object:Param:Format (262147), id Spa:Enum:ParamId:EnumFormat (3)" "  Prop: key Spa:Pod:Object:Param:Format:mediaType (1), flags 00000000" "    Id 1        (Spa:Enum:MediaType:audio)" "  Prop: key Spa:Pod:Object:Param:Format:mediaSubtype (2), flags 00000000" "    Id 1        (Spa:Enum:MediaSubtype:raw)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:format (65537), flags 00000000" "    Id 518      (Spa:Enum:AudioFormat:F32P)" "  Prop: key Spa:Pod:Object:Param:Format:Audio:channels (65540), flags 00000000" "    Int 2" "  Prop: key Spa:Pod:Object:Param:Format:Audio:position (65541), flags 00000000" "    Array: child.size 4, child.type Spa:Id" "      Id 3        (Spa:Enum:AudioChannel:FL)" "      Id 4        (Spa:Enum:AudioChannel:FR)"
-Input #0, mp3, from '/home/ashwinpaudel/.focusos/music/Фриссон - Континуум.mp3':
-  Metadata:
-    major_brand     : dash
-    minor_version   : 0
-    compatible_brands: iso6mp41
-    encoder         : Lavf62.3.100
-  Duration: 00:03:57.61, start: 0.025057, bitrate: 320 kb/s
-  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, stereo, fltp, 320 kb/s, start 0.025057
-    Metadata:
-      encoder         : Lavc62.11
-[mp3float @ 0x1e9211c0] Could not update timestamps for skipped samples.
-Error: Could not process rule: No such file or directory
-delete table inet focusos
-                  ^^^^^^^
-QDBusArgument: write from a read-only object
-dbus[3697]: type struct 114 not a basic type
-  D-Bus not built with -rdynamic so unable to print a backtrace
-QDBusArgument: write from a read-only object
-dbus[3697]: type struct 114 not a basic type
-  D-Bus not built with -rdynamic so unable to print a backtrace
-Aborted                    (core dumped) ./build-linux/focusos
+* The volume keys do not work at all which is quite annoying. I would like the ability to press the volume keys on the keyboard and something happen.
+
+* Remove the code to open a new space/desktop. It is fine to have them all on the same desktop/space. It seems rather unncesessary because I would be full screening or split screening my apps anyways so it is not a distraction.
+
+* When launching the browser (brave-origin in my case) or any browser, make it so that it opens as a fresh new window. I do not want to see my tabs from a long time ago, plus the tabs don't even load. That's just adding more visual clutter.
+
+* The progress bar overlay only shows up when the app is open. The progress bar overlay should be shown globally, no matter the space or window open. It is always on top. Add a new 'Apperance' menu in the settings that can toggle that off, by default keep it on.
+
+* The application is quite slow and I do not know why. When I try to open/close the sidebar especially with many other instances running it just doesn't work as fast as when I first launched the app. It slowly slows down over time. Do you know why? Could you try to fix it to make it feel lightweight and snappy. Because this Mission Control window should ideally be designed to not consume too much memory or ram, just stay lightweight and beautiful. Find ways to optimize without sacrificing the Soviet Sci-Fi aesthetics. Like even the hover in the bottom bar takes such a long delay. I do not know why it gets bogged down after launching the app. Maybe it could be that it said "WARN use application as a parent disposable"?? I launched Rust rover.

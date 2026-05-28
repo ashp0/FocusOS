@@ -1,0 +1,44 @@
+# FocusOS locked-down KWin config.
+#
+# Read via XDG_CONFIG_HOME (set by the session script). Disables the
+# screen-edge / hot-corner actions and the overview/desktop-grid effects that
+# would otherwise let the user summon a launcher or app picker by shoving the
+# pointer into a corner. Window switching (Alt+Tab) is governed by
+# kglobalshortcutsrc and stays enabled.
+
+[TabBox]
+# Alt+Tab walks through all open windows. Since only allowed apps are ever
+# launched (others are killed by the lockdown watchdog), this is window
+# switching restricted to the routine surface by construction.
+ShowDesktopMode=0
+SwitchingMode=0
+LayoutName=org.kde.breeze.desktop
+
+[Effect-overview]
+BorderActivate=9
+BorderActivateAll=9
+
+# Disable every screen edge (1-8 = corners + edges). 0 = no action.
+[ElectricBorders]
+Bottom=None
+BottomLeft=None
+BottomRight=None
+Left=None
+Right=None
+Top=None
+TopLeft=None
+TopRight=None
+
+[ScreenEdges]
+RemainActiveOnFullscreen=false
+
+[Plugins]
+overviewEnabled=false
+desktopgridEnabled=false
+windowviewEnabled=false
+slideEnabled=true
+
+[Windows]
+# Don't let focus-stealing prevention be bypassed; routine apps come up
+# normally but nothing can grab focus to pop a system surface.
+FocusStealingPreventionLevel=2

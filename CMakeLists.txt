@@ -50,6 +50,8 @@ set(FOCUSOS_SOURCES
     src/core/TOTPEngine.h
     src/core/Timer.cpp
     src/core/Timer.h
+    src/core/Updater.cpp
+    src/core/Updater.h
     src/platform/PlatformBackend.h
     src/shell/ShellWindow.cpp
     src/shell/ShellWindow.h
@@ -87,6 +89,7 @@ qt_add_qml_module(focusos
         src/shell/MissionView.qml
         src/shell/NotesDrawer.qml
         src/shell/UnlockModal.qml
+        src/shell/ProgressOverlay.qml
     RESOURCES
         assets/qml/theme.js
         assets/music/README.txt

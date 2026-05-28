@@ -61,6 +61,22 @@ Item {
             event.accepted = true
             return
         }
+        // Media volume keys
+        if (event.key === Qt.Key_VolumeUp) {
+            systemStatus.adjustSystemVolume(5)
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_VolumeDown) {
+            systemStatus.adjustSystemVolume(-5)
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_VolumeMute) {
+            systemStatus.toggleMute()
+            event.accepted = true
+            return
+        }
     }
 
     FontLoader {
@@ -172,6 +188,7 @@ Item {
         showBackground: false
         showMedia: false
         showStars: true
+        showDust: false
         starOpacityScale: 0.35
     }
 
@@ -792,92 +809,9 @@ Item {
         }
     }
 
-    Item {
-        id: countdownBorder
-        anchors.fill: parent
-        z: 999
-        visible: routineManager.active
-
-        property int sampledElapsedSeconds: 0
-        property int sampledTotalSeconds: 0
-        property real pulsePhase: 0
-        property real progressValue: sampledTotalSeconds > 0
-                                     ? Math.max(0, Math.min(1, sampledElapsedSeconds / sampledTotalSeconds))
-                                     : 0
-        property real lateProgress: progressValue <= 0.8 ? 0 : Math.min(1, (progressValue - 0.8) / 0.2)
-        property real barOpacity: progressValue <= 0.8
-                                  ? 0.18 + (0.55 - 0.18) * (progressValue / 0.8)
-                                  : 0.55 + Math.sin(pulsePhase) * 0.15
-        property real barWidth: 3 + lateProgress * 2
-
-        function sampleProgress() {
-            sampledElapsedSeconds = routineManager.elapsedSeconds
-            sampledTotalSeconds = routineManager.activeRoutineTotalSeconds
-        }
-
-        onVisibleChanged: {
-            if (visible) {
-                pulsePhase = 0
-                sampleProgress()
-                progressTimer.restart()
-            } else {
-                progressTimer.stop()
-                pulseTimer.stop()
-            }
-        }
-
-        Timer {
-            id: progressTimer
-            interval: 1000
-            running: countdownBorder.visible
-            repeat: true
-            onTriggered: countdownBorder.sampleProgress()
-        }
-
-        Timer {
-            id: pulseTimer
-            interval: 100
-            running: countdownBorder.visible && countdownBorder.progressValue >= 0.8
-            repeat: true
-            onTriggered: countdownBorder.pulsePhase += Math.PI / 10
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.top: parent.top
-            width: countdownBorder.barWidth
-            height: parent.height * countdownBorder.progressValue
-            color: "#E8A020"
-            opacity: countdownBorder.barOpacity
-        }
-
-        Rectangle {
-            anchors.right: parent.right
-            anchors.top: parent.top
-            width: parent.width * countdownBorder.progressValue
-            height: countdownBorder.barWidth
-            color: "#E8A020"
-            opacity: countdownBorder.barOpacity
-        }
-
-        Rectangle {
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            width: countdownBorder.barWidth
-            height: parent.height * countdownBorder.progressValue
-            color: "#E8A020"
-            opacity: countdownBorder.barOpacity
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            width: parent.width * countdownBorder.progressValue
-            height: countdownBorder.barWidth
-            color: "#E8A020"
-            opacity: countdownBorder.barOpacity
-        }
-    }
+    // The routine countdown border now lives in a global, always-on-top
+    // overlay window (ProgressOverlay.qml, wired in ShellWindow) so it stays
+    // visible across every space and on top of full-screen apps.
 
     Canvas {
         id: scanlines

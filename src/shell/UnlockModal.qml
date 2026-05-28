@@ -21,7 +21,9 @@ Item {
         {"index": 0, "code": "01", "label": "MISSION PLAN", "subtitle": "ROUTINES"},
         {"index": 1, "code": "02", "label": "ALLOWED APPS", "subtitle": "GLOBAL"},
         {"index": 2, "code": "03", "label": "SECURITY", "subtitle": "ACCESS"},
-        {"index": 3, "code": "04", "label": "AUDIO", "subtitle": "MUSIC"}
+        {"index": 3, "code": "04", "label": "AUDIO", "subtitle": "MUSIC"},
+        {"index": 4, "code": "05", "label": "APPEARANCE", "subtitle": "DISPLAY"},
+        {"index": 5, "code": "06", "label": "SYSTEM", "subtitle": "UPDATE + RECOVERY"}
     ]
 
     visible: opacity > 0
@@ -1671,6 +1673,237 @@ Item {
 	                        Item { Layout.fillWidth: true }
 	                    }
 	                }
+
+                // ─── APPEARANCE tab ────────────────────────────────────
+                ColumnLayout {
+                    visible: root.activeTab === 4
+                    anchors.fill: parent
+                    spacing: 14
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "DISPLAY OVERLAYS"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    SettingsToggleRow {
+                        label: "GLOBAL PROGRESS OVERLAY"
+                        detail: "Always-on-top countdown border, visible across every space during a routine"
+                        checked: routineManager.overlayProgressEnabled
+                        onToggled: routineManager.overlayProgressEnabled = !routineManager.overlayProgressEnabled
+                    }
+
+                    Item { Layout.fillHeight: true }
+                }
+
+                // ─── SYSTEM tab ────────────────────────────────────────
+                ColumnLayout {
+                    id: systemTab
+                    visible: root.activeTab === 5
+                    anchors.fill: parent
+                    spacing: 12
+
+                    function formatProbation(seconds) {
+                        const s = Math.max(0, Math.round(seconds))
+                        const m = Math.floor(s / 60)
+                        const r = s % 60
+                        return (m < 10 ? "0" + m : m) + ":" + (r < 10 ? "0" + r : r)
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "SOFTWARE UPDATE"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: !updater.supported
+                        text: "Auto-update is only available on the permanent Linux install."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 11
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: updater.supported && updater.status.length > 0
+                        text: updater.status
+                        color: Theme.textDim
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 11
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: updater.supported
+                        spacing: 10
+
+                        AdminButton {
+                            Layout.preferredWidth: 168
+                            Layout.preferredHeight: 34
+                            label: updater.busy ? "WORKING…" : "↻ PULL + REBUILD"
+                            danger: false
+                            actionEnabled: !updater.busy && !updater.updatePending
+                            onClicked: updater.runUpdate()
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    // Probation controls (30-minute revert window)
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: probationCol.implicitHeight + 24
+                        visible: updater.supported && updater.updatePending
+                        color: "#1f1a12"
+                        border.width: 1
+                        border.color: Theme.gold
+
+                        ColumnLayout {
+                            id: probationCol
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 12
+                            spacing: 10
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "PROBATION — " + systemTab.formatProbation(updater.probationRemainingSeconds) + " LEFT"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 12
+                                font.letterSpacing: 0
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "This build auto-commits if it stays healthy. A crash loop reverts automatically."
+                                color: Theme.textGhost
+                                wrapMode: Text.WordWrap
+                                font.family: root.bodyFont
+                                font.pixelSize: 10
+                                font.letterSpacing: 0
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                AdminButton {
+                                    Layout.preferredWidth: 150
+                                    Layout.preferredHeight: 34
+                                    label: "✓ KEEP THIS BUILD"
+                                    danger: false
+                                    actionEnabled: !updater.busy
+                                    onClicked: updater.confirmHealthy()
+                                }
+
+                                AdminButton {
+                                    Layout.preferredWidth: 130
+                                    Layout.preferredHeight: 34
+                                    label: "↩ REVERT"
+                                    danger: true
+                                    actionEnabled: !updater.busy && updater.revertAvailable
+                                    onClicked: updater.runRevert()
+                                }
+
+                                Item { Layout.fillWidth: true }
+                            }
+                        }
+                    }
+
+                    // Build log
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: updater.supported && updater.log.length > 0
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: Theme.goldDim
+
+                        Flickable {
+                            id: logFlick
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            clip: true
+                            contentWidth: width
+                            contentHeight: logText.implicitHeight
+                            boundsBehavior: Flickable.StopAtBounds
+
+                            onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
+
+                            Text {
+                                id: logText
+                                width: logFlick.width
+                                text: updater.log
+                                color: Theme.textDim
+                                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                font.family: root.bodyFont
+                                font.pixelSize: 10
+                                font.letterSpacing: 0
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                        visible: routineManager.sessionRecoverySupported()
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.sessionRecoverySupported()
+                        text: "SESSION RECOVERY"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.sessionRecoverySupported()
+                        text: "Restores the other login sessions (Plasma, etc.) so they appear at the SDDM screen again. Log out afterwards to switch."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: routineManager.sessionRecoverySupported()
+                        spacing: 10
+
+                        AdminButton {
+                            Layout.preferredWidth: 210
+                            Layout.preferredHeight: 34
+                            label: "⏏ RESTORE OTHER SESSIONS"
+                            danger: true
+                            onClicked: routineManager.restoreLoginSessions()
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Item { Layout.fillHeight: true }
+                }
 	            }
 	        }
             }

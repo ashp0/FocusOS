@@ -1,0 +1,56 @@
+# FocusOS locked-down global shortcuts.
+#
+# The session script points XDG_CONFIG_HOME at packaging/linux/config so KWin
+# and KGlobalAccel read THIS file instead of the user's. The intent:
+#
+#   * KEEP window switching — Alt+Tab / Alt+Shift+Tab (Walk Through Windows) —
+#     because FocusOS has no dock and it's the only legitimate way to move
+#     between the allowed routine windows.
+#   * STRIP everything that surfaces a launcher, spotlight, overview, activity
+#     switcher, or "run command" prompt, so the user can't pull up an arbitrary
+#     app. The lockdown watchdog kills these processes too; disabling the
+#     shortcut means they never even spawn.
+#
+# A value of "none,<default>,<friendly name>" unbinds the shortcut.
+
+[krunner.desktop]
+_launch=none,none,KRunner
+
+[org.kde.krunner.desktop]
+_launch=none,none,KRunner
+RunClipboard=none,none,Run command on clipboard contents
+
+[plasmashell]
+activate application launcher=none,none,Activate Application Launcher
+activate task manager entry 1=none,none,Activate Task Manager Entry 1
+manage activities=none,none,Show Activity Switcher
+next activity=none,none,Walk through activities
+previous activity=none,none,Walk through activities (Reverse)
+show dashboard=none,none,Show Desktop
+stop current activity=none,none,Stop Current Activity
+
+[kwin]
+# --- KEPT: window switching among open (allowed) windows ---
+Walk Through Windows=Alt+Tab,Alt+Tab,Walk Through Windows
+Walk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Tab,Walk Through Windows (Reverse)
+Walk Through Windows of Current Application=Alt+`,Alt+`,Walk Through Windows of Current Application
+Walk Through Windows of Current Application (Reverse)=Alt+~,Alt+~,Walk Through Windows of Current Application (Reverse)
+# --- STRIPPED: overview / grid / expose escape surfaces ---
+Overview=none,none,Toggle Overview
+Cycle Overview=none,none,Cycle through Overview and Grid View
+Cycle Overview Opposite=none,none,Cycle through Overview and Grid View (Reverse)
+Grid View=none,none,Toggle Grid View
+ShowDesktopGrid=none,none,Show Desktop Grid
+Expose=none,none,Toggle Present Windows (Current desktop)
+ExposeAll=none,none,Toggle Present Windows (All desktops)
+ExposeClass=none,none,Toggle Present Windows (Window class)
+ExposeClassCurrentDesktop=none,none,Toggle Present Windows (Window class on current desktop)
+ShowDesktop=none,none,Show Desktop
+KrohnkiteRun=none,none,Krohnkite Run
+view_actual_size=none,none,Actual Size
+
+[ksmserver]
+Log Out=none,none,Log Out
+Log Out Without Confirmation=none,none,Log Out Without Confirmation
+Halt Without Confirmation=none,none,Halt Without Confirmation
+Reboot Without Confirmation=none,none,Reboot Without Confirmation

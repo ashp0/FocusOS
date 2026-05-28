@@ -108,6 +108,14 @@ void writeSystemVolume(int percent)
     });
 }
 
+void writeMuteToggle()
+{
+    QProcess::execute(QStringLiteral("/usr/bin/osascript"), {
+        QStringLiteral("-e"),
+        QStringLiteral("set volume output muted (not (output muted of (get volume settings)))")
+    });
+}
+
 void writeBrightness(int percent)
 {
     Q_UNUSED(percent)
@@ -240,6 +248,14 @@ void writeSystemVolume(int percent)
     }
 }
 
+void writeMuteToggle()
+{
+    const QString pactl = QStandardPaths::findExecutable(QStringLiteral("pactl"));
+    if (!pactl.isEmpty()) {
+        QProcess::execute(pactl, {QStringLiteral("set-sink-mute"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("toggle")});
+    }
+}
+
 void writeBrightness(int percent)
 {
     const int clamped = clampedPercent(percent);
@@ -273,6 +289,10 @@ PercentReading readBrightness()
 void writeSystemVolume(int percent)
 {
     Q_UNUSED(percent)
+}
+
+void writeMuteToggle()
+{
 }
 
 void writeBrightness(int percent)
@@ -344,6 +364,12 @@ void SystemStatus::adjustSystemVolume(int deltaPercent)
 void SystemStatus::setSystemVolume(int percent)
 {
     writeSystemVolume(percent);
+    refreshStatus();
+}
+
+void SystemStatus::toggleMute()
+{
+    writeMuteToggle();
     refreshStatus();
 }
 

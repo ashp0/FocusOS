@@ -27,6 +27,7 @@ public:
 
     Q_INVOKABLE void adjustSystemVolume(int deltaPercent);
     Q_INVOKABLE void setSystemVolume(int percent);
+    Q_INVOKABLE void toggleMute();
     Q_INVOKABLE void adjustBrightness(int deltaPercent);
     Q_INVOKABLE void setBrightness(int percent);
     Q_INVOKABLE void refresh();

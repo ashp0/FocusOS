@@ -52,6 +52,7 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(QString networkLockError READ networkLockError NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QString networkLockRoutineName READ networkLockRoutineName NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QStringList alwaysAllowedApps READ alwaysAllowedApps NOTIFY alwaysAllowedAppsChanged)
+    Q_PROPERTY(bool overlayProgressEnabled READ overlayProgressEnabled WRITE setOverlayProgressEnabled NOTIFY overlayProgressEnabledChanged)
 
 public:
     enum Role {
@@ -107,6 +108,8 @@ public:
     QString networkLockError() const;
     QString networkLockRoutineName() const;
     QStringList alwaysAllowedApps() const;
+    bool overlayProgressEnabled() const;
+    void setOverlayProgressEnabled(bool enabled);
 
     Q_INVOKABLE void engage(const QString &routineId);
     Q_INVOKABLE void abortPendingRoutineStart();
@@ -125,6 +128,8 @@ public:
     Q_INVOKABLE QString applicationDisplayName(const QString &path) const;
     Q_INVOKABLE bool addAlwaysAllowedApp(const QString &commandLine);
     Q_INVOKABLE void removeAlwaysAllowedApp(int index);
+    Q_INVOKABLE bool sessionRecoverySupported() const;
+    Q_INVOKABLE bool restoreLoginSessions();
 
     static QString dataDirectory();
 
@@ -141,6 +146,7 @@ signals:
     void statusMessageChanged(const QString &message);
     void networkLockPromptChanged();
     void alwaysAllowedAppsChanged();
+    void overlayProgressEnabledChanged();
     void desktopAccessRequested();
     void routineSessionFinished(const QString &routineId,
                                 const QString &routineName,
@@ -159,6 +165,9 @@ private:
     bool saveConfig() const;
     void loadRoutines();
     void writeDefaultRoutines(const QString &path) const;
+    void writeActiveSession() const;
+    void clearActiveSession() const;
+    void resumeActiveSessionIfPresent();
     void onRoutineExpired();
     void tickOtherAccess();
     void finishOtherAccess();
@@ -194,6 +203,7 @@ private:
     QString m_networkLockRoutineName;
     QStringList m_alwaysAllowedApps;
     bool m_alwaysAllowedLaunched = false;
+    bool m_overlayProgressEnabled = true;
     bool m_editMode = false;
     bool m_desktopShellRunning = false;
 };

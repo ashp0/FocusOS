@@ -13,6 +13,87 @@
 #ifdef Q_OS_LINUX
 namespace {
 
+// Some sites can't be allowed by a single DNS lookup of their primary domain.
+// YouTube is the canonical example: the page lives on youtube.com, but the
+// video bytes stream from per-session hostnames like
+// rr3---sn-xxxx.googlevideo.com that we can't resolve ahead of time, plus
+// thumbnails/static assets on ytimg.com, ggpht.com, gstatic.com, etc. Pinning
+// only youtube.com's IPs loads the page but the player just spins.
+//
+// So when the user allows a YouTube/Google host we expand the allowlist with:
+//   1. the companion domains the player actually fetches, and
+//   2. Google's long-held IPv4/IPv6 netblocks (googlevideo serves from
+//      173.194/74.125/142.250/172.217 — these are stable allocations).
+// CIDR strings are passed straight through to the nftables interval sets.
+bool hostMatchesAny(const QString &host, const QStringList &needles)
+{
+    for (const QString &needle : needles) {
+        if (host == needle || host.endsWith(QLatin1Char('.') + needle)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Returns extra allowlist entries (companion domains + CIDR ranges) implied by
+// a primary allowed host. Empty for hosts with no known companions.
+QStringList serviceCompanions(const QString &host)
+{
+    static const QStringList googleHostRoots {
+        QStringLiteral("youtube.com"),
+        QStringLiteral("youtu.be"),
+        QStringLiteral("youtube-nocookie.com"),
+        QStringLiteral("ytimg.com"),
+        QStringLiteral("googlevideo.com"),
+        QStringLiteral("google.com"),
+        QStringLiteral("gstatic.com")
+    };
+    if (!hostMatchesAny(host, googleHostRoots)) {
+        return {};
+    }
+
+    return QStringList {
+        // Domains the YouTube web player fetches beyond the page itself.
+        QStringLiteral("www.youtube.com"),
+        QStringLiteral("m.youtube.com"),
+        QStringLiteral("youtubei.googleapis.com"),
+        QStringLiteral("yt3.ggpht.com"),
+        QStringLiteral("ggpht.com"),
+        QStringLiteral("i.ytimg.com"),
+        QStringLiteral("s.ytimg.com"),
+        QStringLiteral("ytimg.com"),
+        QStringLiteral("googlevideo.com"),
+        QStringLiteral("googleapis.com"),
+        QStringLiteral("gstatic.com"),
+        QStringLiteral("www.gstatic.com"),
+        QStringLiteral("fonts.gstatic.com"),
+        QStringLiteral("play.google.com"),
+        QStringLiteral("accounts.google.com"),
+        QStringLiteral("accounts.youtube.com"),
+        // Google's stable IPv4 netblocks — googlevideo edge servers live here.
+        QStringLiteral("64.233.160.0/19"),
+        QStringLiteral("66.102.0.0/20"),
+        QStringLiteral("66.249.64.0/19"),
+        QStringLiteral("72.14.192.0/18"),
+        QStringLiteral("74.125.0.0/16"),
+        QStringLiteral("108.177.0.0/17"),
+        QStringLiteral("142.250.0.0/15"),
+        QStringLiteral("172.217.0.0/16"),
+        QStringLiteral("172.253.0.0/16"),
+        QStringLiteral("173.194.0.0/16"),
+        QStringLiteral("209.85.128.0/17"),
+        QStringLiteral("216.58.192.0/19"),
+        QStringLiteral("216.239.32.0/19"),
+        // Google's IPv6 netblocks.
+        QStringLiteral("2001:4860::/32"),
+        QStringLiteral("2404:6800::/32"),
+        QStringLiteral("2607:f8b0::/32"),
+        QStringLiteral("2800:3f0::/32"),
+        QStringLiteral("2a00:1450::/32"),
+        QStringLiteral("2c0f:fb50::/32")
+    };
+}
+
 bool runNftQuietly(const QString &nftPath, const QStringList &arguments, int timeoutMs = 3000)
 {
     QProcess nft;
@@ -42,9 +123,46 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 #ifdef Q_OS_LINUX
     QSet<QString> resolvedIpv4Addresses;
     QSet<QString> resolvedIpv6Addresses;
+
+    // Expand the user's allowlist with companion domains / CIDR ranges for
+    // known services (see serviceCompanions). Dedupe while preserving order.
+    QStringList expandedEntries;
+    QSet<QString> seenEntries;
+    const auto addEntry = [&expandedEntries, &seenEntries](const QString &raw) {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty() || seenEntries.contains(trimmed)) {
+            return;
+        }
+        seenEntries.insert(trimmed);
+        expandedEntries.append(trimmed);
+    };
     for (const QString &entry : allowedHosts) {
+        addEntry(entry);
+        QString host = entry.trimmed().toLower();
+        const QUrl url = QUrl::fromUserInput(host);
+        if (!url.host().isEmpty()) {
+            host = url.host().toLower();
+        }
+        for (const QString &companion : serviceCompanions(host)) {
+            addEntry(companion);
+        }
+    }
+
+    for (const QString &entry : expandedEntries) {
         QString host = entry.trimmed().toLower();
         if (host.isEmpty()) {
+            continue;
+        }
+
+        // CIDR ranges (e.g. 173.194.0.0/16 or 2607:f8b0::/32) pass straight
+        // into the nftables interval sets — no DNS resolution needed.
+        if (host.contains(QLatin1Char('/'))) {
+            const QString addressPart = host.section(QLatin1Char('/'), 0, 0);
+            if (addressPart.contains(QLatin1Char(':'))) {
+                resolvedIpv6Addresses.insert(host);
+            } else {
+                resolvedIpv4Addresses.insert(host);
+            }
             continue;
         }
 
@@ -81,6 +199,9 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
     rules += QStringLiteral("  set allowed_ipv4 {\n");
     rules += QStringLiteral("    type ipv4_addr;\n");
     rules += QStringLiteral("    flags interval;\n");
+    // auto-merge so a DNS-resolved /32 that falls inside one of the Google
+    // CIDR blocks doesn't trip nftables' "interval overlaps" rejection.
+    rules += QStringLiteral("    auto-merge;\n");
 #ifdef Q_OS_LINUX
     if (!resolvedIpv4Addresses.isEmpty()) {
         QStringList sortedAddresses;
@@ -96,6 +217,7 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
     rules += QStringLiteral("  set allowed_ipv6 {\n");
     rules += QStringLiteral("    type ipv6_addr;\n");
     rules += QStringLiteral("    flags interval;\n");
+    rules += QStringLiteral("    auto-merge;\n");
 #ifdef Q_OS_LINUX
     if (!resolvedIpv6Addresses.isEmpty()) {
         QStringList sortedAddresses;

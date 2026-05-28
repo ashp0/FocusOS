@@ -7,12 +7,14 @@
 #include "core/StatsStore.h"
 #include "core/SystemStatus.h"
 #include "core/TOTPEngine.h"
+#include "core/Updater.h"
 
 #include <QGuiApplication>
 #include <QProcess>
 #include <QQmlContext>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QSurfaceFormat>
 #include <QTimer>
 
 ShellWindow::ShellWindow(RoutineManager *routineManager,
@@ -21,7 +23,8 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
                          MusicEngine *musicEngine,
                          StatsStore *statsStore,
                          SystemStatus *systemStatus,
-                         InspirationStore *inspirationStore)
+                         InspirationStore *inspirationStore,
+                         Updater *updater)
 {
     setColor(QColor(QStringLiteral("#050508")));
     setResizeMode(QQuickView::SizeRootObjectToView);
@@ -37,6 +40,8 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
                                Qt::WindowStaysOnBottomHint |
                                Qt::WindowDoesNotAcceptFocus);
 
+    m_routineManager = routineManager;
+
     rootContext()->setContextProperty(QStringLiteral("routineManager"), routineManager);
     rootContext()->setContextProperty(QStringLiteral("notesStore"), notesStore);
     rootContext()->setContextProperty(QStringLiteral("totpEngine"), totpEngine);
@@ -44,8 +49,32 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
     rootContext()->setContextProperty(QStringLiteral("statsStore"), statsStore);
     rootContext()->setContextProperty(QStringLiteral("systemStatus"), systemStatus);
     rootContext()->setContextProperty(QStringLiteral("inspirationStore"), inspirationStore);
+    rootContext()->setContextProperty(QStringLiteral("updater"), updater);
 
     loadFromModule(QStringLiteral("FocusOS"), QStringLiteral("Main"));
+
+    // Global progress overlay: a transparent, click-through, always-on-top
+    // Tool window that paints the routine countdown border on top of every
+    // other window, even after the FocusOS shell minimizes during a routine.
+    // Tool + no-focus keeps it out of the WM list / Mission Control.
+    {
+        QSurfaceFormat overlayFormat = m_progressOverlayWindow.format();
+        overlayFormat.setAlphaBufferSize(8);
+        m_progressOverlayWindow.setFormat(overlayFormat);
+    }
+    m_progressOverlayWindow.setColor(QColor(Qt::transparent));
+    m_progressOverlayWindow.setResizeMode(QQuickView::SizeRootObjectToView);
+    m_progressOverlayWindow.setFlags(Qt::Tool |
+                                     Qt::FramelessWindowHint |
+                                     Qt::WindowStaysOnTopHint |
+                                     Qt::WindowTransparentForInput |
+                                     Qt::WindowDoesNotAcceptFocus);
+    m_progressOverlayWindow.rootContext()->setContextProperty(QStringLiteral("routineManager"), routineManager);
+    m_progressOverlayWindow.loadFromModule(QStringLiteral("FocusOS"), QStringLiteral("ProgressOverlay"));
+
+    connect(routineManager, &RoutineManager::activeChanged, this, &ShellWindow::updateProgressOverlay);
+    connect(routineManager, &RoutineManager::overlayProgressEnabledChanged, this, &ShellWindow::updateProgressOverlay);
+    updateProgressOverlay();
 
 #if defined(Q_OS_LINUX)
     connect(routineManager, &RoutineManager::activeChanged, this, [this, routineManager] {
@@ -100,6 +129,7 @@ void ShellWindow::showFocusShell()
     showFullScreen();
     raise();
     requestActivate();
+    updateProgressOverlay();
 }
 
 void ShellWindow::showWallpaper()
@@ -134,6 +164,26 @@ void ShellWindow::setRootWindowBackground()
 #endif
 }
 
+void ShellWindow::updateProgressOverlay()
+{
+    const bool shouldShow = m_routineManager &&
+                            m_routineManager->active() &&
+                            m_routineManager->overlayProgressEnabled();
+
+    if (shouldShow) {
+        if (QScreen *screen = QGuiApplication::primaryScreen()) {
+            m_progressOverlayWindow.setScreen(screen);
+            m_progressOverlayWindow.setGeometry(screen->geometry());
+        }
+        if (!m_progressOverlayWindow.isVisible()) {
+            m_progressOverlayWindow.showFullScreen();
+        }
+        m_progressOverlayWindow.raise();
+    } else if (m_progressOverlayWindow.isVisible()) {
+        m_progressOverlayWindow.hide();
+    }
+}
+
 void ShellWindow::minimizeFocusShell()
 {
 #if defined(Q_OS_LINUX)
@@ -142,5 +192,6 @@ void ShellWindow::minimizeFocusShell()
     setFlags(Qt::Window | Qt::FramelessWindowHint);
     showMinimized();
     m_wallpaperWindow.lower();
+    QTimer::singleShot(120, this, &ShellWindow::updateProgressOverlay);
 #endif
 }

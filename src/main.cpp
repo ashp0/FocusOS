@@ -5,6 +5,7 @@
 #include "core/StatsStore.h"
 #include "core/SystemStatus.h"
 #include "core/TOTPEngine.h"
+#include "core/Updater.h"
 #include "platform/PlatformBackend.h"
 #include "shell/ShellWindow.h"
 
@@ -90,6 +91,7 @@ int main(int argc, char *argv[])
     StatsStore statsStore;
     SystemStatus systemStatus;
     InspirationStore inspirationStore;
+    Updater updater;
 
     QObject::connect(&routineManager, &RoutineManager::activeChanged, &musicEngine, [&routineManager, &musicEngine] {
         musicEngine.setRoutineEngaged(routineManager.active());
@@ -118,7 +120,8 @@ int main(int argc, char *argv[])
                        &musicEngine,
                        &statsStore,
                        &systemStatus,
-                       &inspirationStore);
+                       &inspirationStore,
+                       &updater);
     window.showFocusShell();
 
     return app.exec();

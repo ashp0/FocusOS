@@ -27,4 +27,19 @@ public:
     // processor, etc. The backend exempts them from the lockdown watchdog
     // and won't terminate them between routines.
     virtual void setAlwaysAllowedApps(const QStringList &commandLines) { Q_UNUSED(commandLines); }
+    // Ensure the respawn watchdog is running for the current process. The
+    // watchdog respawns FocusOS while a routine checkpoint is armed
+    // (~/.focusos/active.json), making a kill / crash recoverable. No-op on
+    // platforms without a strict lockdown story.
+    virtual void startWatchdog(const QString &binaryPath) { Q_UNUSED(binaryPath); }
+    // TOTP-gated recovery: restore the other login sessions that the
+    // permanent install stashed, so the user can leave the FocusOS-only
+    // session. Returns false (with errorMessage) when unsupported or it fails.
+    virtual bool restoreLoginSessions(QString *errorMessage = nullptr)
+    {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Session recovery is not supported on this platform");
+        }
+        return false;
+    }
 };

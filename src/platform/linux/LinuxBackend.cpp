@@ -63,6 +63,7 @@
 
 #include "platform/linux/LinuxBackend.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -72,13 +73,10 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QTemporaryFile>
-#include <QThread>
 #include <QUrl>
 
 namespace {
 
-constexpr const char *kKWinService = "org.kde.KWin";
 QString expandedPath(const QString &path)
 {
     const QString trimmed = path.trimmed();
@@ -171,6 +169,30 @@ QStringList chromiumWalletGuard(const QString &program, const QStringList &argum
     return augmented;
 }
 
+// A routine should open a *fresh* browser window — not a restored pile of
+// months-old tabs that won't even load behind the network lock. For a
+// chromium-family browser launched as a routine app we force a brand-new
+// window and suppress the "restore previous session" / crash-restore prompts.
+// We deliberately keep the user's real profile (logged-in accounts, etc.); we
+// just don't want the old tab clutter. Kiosk launches (--app) are left alone.
+QStringList chromiumFreshWindowGuard(const QString &program, const QStringList &arguments)
+{
+    if (!isChromiumFamily(program)) {
+        return arguments;
+    }
+    for (const QString &arg : arguments) {
+        if (arg.startsWith(QStringLiteral("--app")) ||
+            arg == QStringLiteral("--new-window")) {
+            return arguments;
+        }
+    }
+    QStringList augmented = arguments;
+    augmented.prepend(QStringLiteral("--no-first-run"));
+    augmented.prepend(QStringLiteral("--hide-crash-restore-bubble"));
+    augmented.prepend(QStringLiteral("--new-window"));
+    return augmented;
+}
+
 bool launchCommand(const QStringList &parts, qint64 *pidOut = nullptr)
 {
     if (parts.isEmpty()) {
@@ -186,6 +208,7 @@ bool launchCommand(const QStringList &parts, qint64 *pidOut = nullptr)
         }
     }
     arguments = chromiumWalletGuard(program, arguments);
+    arguments = chromiumFreshWindowGuard(program, arguments);
 
     QProcess process;
     process.setProgram(program);
@@ -338,143 +361,6 @@ bool processRunning(const QString &processName)
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
-// ─── KWin DBus helpers ───────────────────────────────────────────────────────
-//
-// We talk to KWin through tiny `qdbus6` subprocesses only. The previous Qt 6 /
-// KWin 6 combination aborted the process inside libdbus during a few KWin calls:
-//
-//   QDBusArgument: write from a read-only object
-//   dbus[…]: type struct 114 not a basic type
-//   Aborted (core dumped)
-//
-// Crashing the routine engage also left the nftables policy installed, which
-// stranded the user's wifi until reboot. The extra process spawn is well worth
-// it for a strict daily-driver shell. Do not add QDBusInterface calls back to
-// this file unless the crash is proven fixed on the deployed Fedora/KWin stack.
-//
-// FUTURE: when we own the compositor, virtual-desktop bookkeeping moves
-// in-process and these DBus dances go away entirely.
-
-QString findQdbusBinary()
-{
-    return firstExecutable({
-        QStringLiteral("qdbus6"),
-        QStringLiteral("qdbus-qt6"),
-        QStringLiteral("qdbus")
-    });
-}
-
-QString runQdbusShellOutput(const QStringList &args, int timeoutMs = 1500, bool *ok = nullptr)
-{
-    if (ok) {
-        *ok = false;
-    }
-    const QString qdbus = findQdbusBinary();
-    if (qdbus.isEmpty()) {
-        return {};
-    }
-    QProcess process;
-    process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(qdbus, args);
-    if (!process.waitForFinished(timeoutMs)) {
-        process.kill();
-        process.waitForFinished(50);
-        return {};
-    }
-    const bool success = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-    if (ok) {
-        *ok = success;
-    }
-    return QString::fromUtf8(process.readAll()).trimmed();
-}
-
-bool runQdbusShell(const QStringList &args, int timeoutMs = 1500)
-{
-    bool ok = false;
-    runQdbusShellOutput(args, timeoutMs, &ok);
-    return ok;
-}
-
-// ─── KWin scripting: window-to-desktop pinning ──────────────────────────────
-//
-// KWin assigns newly-created windows to the desktop that is current at the
-// moment the window appears, but a Chromium / Electron app with an existing
-// session opens its new window on whatever desktop the existing process owns.
-// That's why the user kept seeing routine apps spawn on the wrong desktop
-// and having to drag them by hand. We patch around this for the lifetime of
-// the routine by loading a small KWin script that captures every window
-// `windowAdded` and pins it to the focus desktop.
-//
-// The script is referenced by an integer handle; we keep it around so
-// `stop()` + `unloadScript()` can run when the routine ends.
-
-int kwinScriptingLoad(const QString &scriptBody, const QString &pluginName)
-{
-    QTemporaryFile scriptFile(QDir::tempPath() + QStringLiteral("/focusos-kwin-XXXXXX.js"));
-    scriptFile.setAutoRemove(false);
-    if (!scriptFile.open()) {
-        return -1;
-    }
-    scriptFile.write(scriptBody.toUtf8());
-    const QString scriptPath = scriptFile.fileName();
-    scriptFile.close();
-
-    bool loaded = false;
-    const QString output = runQdbusShellOutput({
-        QString::fromLatin1(kKWinService),
-        QStringLiteral("/Scripting"),
-        QStringLiteral("org.kde.kwin.Scripting.loadScript"),
-        scriptPath,
-        pluginName
-    }, 2500, &loaded);
-    QFile::remove(scriptPath);
-    if (!loaded) {
-        return -1;
-    }
-    const QRegularExpression numberPattern(QStringLiteral("(-?\\d+)"));
-    const QRegularExpressionMatch match = numberPattern.match(output);
-    const int handle = match.hasMatch() ? match.captured(1).toInt() : -1;
-    if (handle < 0) {
-        return -1;
-    }
-    // Each script lives at /Scripting/Script<handle> and has its own start().
-    runQdbusShell({
-        QString::fromLatin1(kKWinService),
-        QStringLiteral("/Scripting/Script%1").arg(handle),
-        QStringLiteral("org.kde.kwin.Script.run")
-    }, 1500);
-    return handle;
-}
-
-void kwinScriptingUnload(int handle, const QString &pluginName)
-{
-    if (handle < 0) {
-        return;
-    }
-    runQdbusShell({
-        QString::fromLatin1(kKWinService),
-        QStringLiteral("/Scripting/Script%1").arg(handle),
-        QStringLiteral("org.kde.kwin.Script.stop")
-    }, 1000);
-    runQdbusShell({
-        QString::fromLatin1(kKWinService),
-        QStringLiteral("/Scripting"),
-        QStringLiteral("org.kde.kwin.Scripting.unloadScript"),
-        pluginName
-    }, 1000);
-}
-
-void kwinRunOneShotScript(const QString &scriptBody, const QString &pluginPrefix)
-{
-    const QString pluginName = QStringLiteral("%1-%2").arg(pluginPrefix).arg(QDateTime::currentMSecsSinceEpoch());
-    const int handle = kwinScriptingLoad(scriptBody, pluginName);
-    if (handle < 0) {
-        return;
-    }
-    QThread::msleep(120);
-    kwinScriptingUnload(handle, pluginName);
-}
-
 void killTrackedPids(QList<qint64> &pids)
 {
     for (qint64 pid : pids) {
@@ -548,7 +434,6 @@ LinuxBackend::LinuxBackend()
 LinuxBackend::~LinuxBackend()
 {
     stopLockdownWatchdog();
-    unloadWindowPinScript();
 }
 
 QString LinuxBackend::name() const
@@ -570,16 +455,10 @@ void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
 
     terminateDesktopShell();
 
-    // Pin every newly-created window to the focus desktop for the duration
-    // of the routine. Without this, Chromium/Electron apps with an existing
-    // background process open their windows on whatever desktop the parent
-    // process is on. The script also creates/switches to the Focus desktop,
-    // avoiding fragile VirtualDesktopManager DBus marshalling entirely.
-    loadWindowPinScript();
-
-    // KWin script execution is async relative to qdbus returning. Give the
-    // compositor a small settle window before launching routine apps.
-    QThread::msleep(280);
+    // Everything runs on the user's current desktop now — FocusOS no longer
+    // spins up a separate "Focus" virtual desktop or pins routine windows to
+    // it. The user full-screens / tiles routine apps themselves, so a second
+    // desktop was just churn (and an extra qdbus/KWin-scripting surface).
 
     startLockdownWatchdog();
 }
@@ -643,6 +522,47 @@ bool LinuxBackend::launchApps(const QStringList &appPaths, QString *errorMessage
 
 bool LinuxBackend::openUrls(const QStringList &urls, QString *errorMessage)
 {
+    QStringList normalizedUrls;
+    for (const QString &url : urls) {
+        const QString trimmed = url.trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+        normalizedUrls.append(QUrl::fromUserInput(trimmed).toString());
+    }
+    if (normalizedUrls.isEmpty()) {
+        return true;
+    }
+
+    // Prefer launching a chromium-family browser directly so the allowed URLs
+    // land in ONE fresh window (no restored old tabs). xdg-open would reuse an
+    // existing browser window and bury the routine sites among stale tabs.
+    const QString browser = firstExecutable({
+        QStringLiteral("brave-browser"),
+        QStringLiteral("brave"),
+        QStringLiteral("google-chrome-stable"),
+        QStringLiteral("google-chrome"),
+        QStringLiteral("chromium"),
+        QStringLiteral("chromium-browser"),
+        QStringLiteral("microsoft-edge-stable"),
+        QStringLiteral("microsoft-edge"),
+        QStringLiteral("vivaldi-stable"),
+        QStringLiteral("vivaldi")
+    });
+    if (!browser.isEmpty()) {
+        QStringList parts;
+        parts << browser << QStringLiteral("--new-window");
+        parts.append(normalizedUrls);
+        qint64 pid = 0;
+        if (launchCommand(parts, &pid)) {
+            if (pid > 0) {
+                m_sessionPids.append(pid);
+            }
+            return true;
+        }
+        // Fall through to xdg-open if the direct launch failed.
+    }
+
     const QString opener = firstExecutable({
         QStringLiteral("xdg-open"),
         QStringLiteral("gio")
@@ -654,13 +574,7 @@ bool LinuxBackend::openUrls(const QStringList &urls, QString *errorMessage)
         return false;
     }
 
-    for (const QString &url : urls) {
-        const QString trimmed = url.trimmed();
-        if (trimmed.isEmpty()) {
-            continue;
-        }
-
-        const QString normalized = QUrl::fromUserInput(trimmed).toString();
+    for (const QString &normalized : normalizedUrls) {
         const QStringList args = QFileInfo(opener).fileName() == QStringLiteral("gio")
             ? QStringList{QStringLiteral("open"), normalized}
             : QStringList{normalized};
@@ -686,7 +600,6 @@ bool LinuxBackend::openUrls(const QStringList &urls, QString *errorMessage)
 void LinuxBackend::terminateApps(const QStringList &appPaths)
 {
     stopLockdownWatchdog();
-    unloadWindowPinScript();
 
     // Kill anything we tracked from launchApps/openUrls first — this catches
     // browser windows that opened on free PIDs we wouldn't otherwise reach.
@@ -766,7 +679,6 @@ bool LinuxBackend::openSystemTerminal(QString *errorMessage)
 void LinuxBackend::terminateUnrestrictedApps()
 {
     stopLockdownWatchdog();
-    unloadWindowPinScript();
 
     // The temporary access timer fires this. We want to take the user back
     // to a clean FocusOS state: kill terminals, the desktop shell, and any
@@ -795,21 +707,8 @@ bool LinuxBackend::launchDesktopShell(QString *errorMessage)
         return true;
     }
 
-    // The desktop shell goes on the same Focus desktop so the user can inspect
-    // the real desktop only inside the authorized access window.
-    kwinRunOneShotScript(QStringLiteral(R"(
-        try {
-            var desktops = workspace.desktops || [];
-            while (desktops.length < 2 && workspace.createDesktop) {
-                workspace.createDesktop(desktops.length, "Focus 2");
-                desktops = workspace.desktops || desktops;
-            }
-            if (desktops.length >= 2) {
-                workspace.currentDesktop = desktops[1];
-            }
-        } catch (e) {}
-    )"), QStringLiteral("focusos-access-desktop"));
-
+    // The desktop shell comes up on the user's current desktop — there's no
+    // separate Focus desktop to switch to any more.
     const QStringList sidecars {
         QStringLiteral("kded6"),
         QStringLiteral("kded5"),
@@ -870,14 +769,9 @@ void LinuxBackend::terminateDesktopShell()
 
 void LinuxBackend::restoreShellPlacement()
 {
-    kwinRunOneShotScript(QStringLiteral(R"(
-        try {
-            var desktops = workspace.desktops || [];
-            if (desktops.length > 0) {
-                workspace.currentDesktop = desktops[0];
-            }
-        } catch (e) {}
-    )"), QStringLiteral("focusos-restore-desktop"));
+    // No-op now that FocusOS lives on the user's single desktop. There's no
+    // "home" workspace to switch back to; ShellWindow handles raising the
+    // shell back to the foreground when a routine ends.
 }
 
 void LinuxBackend::startLockdownWatchdog()
@@ -933,13 +827,23 @@ void LinuxBackend::tickLockdownWatchdog() const
         QStringLiteral("synapse"),
         QStringLiteral("ulauncher"),
         QStringLiteral("albert"),
+        QStringLiteral("kupfer"),
+        QStringLiteral("cerebro"),
         QStringLiteral("kmenuedit"),
         QStringLiteral("plasmawindowed"),
-        // System trays / panels that could surface app shortcuts
+        // Drop-down terminals — a single keypress drops a shell on top of any
+        // routine, so they're a direct escape hatch.
+        QStringLiteral("yakuake"),
+        QStringLiteral("guake"),
+        QStringLiteral("tilda"),
+        // System trays / panels / docks that could surface app shortcuts
         QStringLiteral("waybar"),
         QStringLiteral("polybar"),
         QStringLiteral("xfce4-panel"),
         QStringLiteral("mate-panel"),
+        QStringLiteral("plank"),
+        QStringLiteral("latte-dock"),
+        QStringLiteral("cairo-dock"),
         // Activity / overview surfaces
         QStringLiteral("kactivitymanagerd"),
         // File managers and system-control surfaces. These are powerful
@@ -1010,61 +914,132 @@ void LinuxBackend::setAlwaysAllowedApps(const QStringList &commandLines)
     m_alwaysAllowedCommandLines = commandLines;
 }
 
-void LinuxBackend::loadWindowPinScript()
+bool LinuxBackend::restoreLoginSessions(QString *errorMessage)
 {
-    if (m_windowPinScriptHandle >= 0) {
-        // Existing script from a previous routine that wasn't cleaned up —
-        // tear it down before installing the new one so we don't end up
-        // with two scripts double-handling windowAdded.
-        unloadWindowPinScript();
+    // The recovery script is installed by install.sh and granted a scoped,
+    // passwordless sudoers entry. We invoke it via sudo -n (non-interactive):
+    // if the install didn't set up the sudoers rule, this fails cleanly rather
+    // than blocking on a password prompt the locked-down session can't answer.
+    const QStringList candidates {
+        QStringLiteral("/usr/local/lib/focusos/focusos-restore-sessions.sh"),
+        QStringLiteral("/opt/focusos/lib/focusos-restore-sessions.sh"),
+    };
+    QString script;
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            script = candidate;
+            break;
+        }
+    }
+    if (script.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Recovery is only available on a permanent install (run install.sh).");
+        }
+        return false;
     }
 
-    // KWin 6 scripting API: workspace.windowAdded fires for every new
-    // toplevel. The script creates/switches to desktop 2, stores that desktop
-    // object, then pins each new non-transient window there. This deliberately
-    // avoids Qt DBus property reads/writes, which are what crashed Fedora.
-    const QString scriptBody = QStringLiteral(R"(
-        var focusosDesktop = null;
-
-        function focusosEnsureDesktop() {
-            try {
-                var desktops = workspace.desktops || [];
-                while (desktops.length < 2 && workspace.createDesktop) {
-                    workspace.createDesktop(desktops.length, "Focus 2");
-                    desktops = workspace.desktops || desktops;
-                }
-                focusosDesktop = desktops.length >= 2 ? desktops[1] : workspace.currentDesktop;
-                if (focusosDesktop) {
-                    workspace.currentDesktop = focusosDesktop;
-                }
-            } catch (e) {
-                focusosDesktop = workspace.currentDesktop;
-            }
+    const QString sudo = QStandardPaths::findExecutable(QStringLiteral("sudo"));
+    if (sudo.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("sudo not found — cannot restore login sessions.");
         }
+        return false;
+    }
 
-        function focusosPinNewWindow(window) {
-            if (!window) return;
-            if (window.transient) return;
-            try {
-                if (!focusosDesktop) focusosEnsureDesktop();
-                window.desktops = [focusosDesktop || workspace.currentDesktop];
-            } catch (e) { /* KWin <6.0 didn't expose .desktops */ }
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(sudo, {QStringLiteral("-n"), script});
+    if (!process.waitForFinished(15000)) {
+        process.kill();
+        process.waitForFinished(200);
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Recovery timed out.");
         }
-
-        focusosEnsureDesktop();
-        workspace.windowAdded.connect(focusosPinNewWindow);
-    )");
-    m_windowPinScriptPlugin = QStringLiteral("focusos-window-pin-%1")
-                                  .arg(QDateTime::currentMSecsSinceEpoch());
-    m_windowPinScriptHandle = kwinScriptingLoad(scriptBody, m_windowPinScriptPlugin);
+        return false;
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        if (errorMessage) {
+            const QString output = QString::fromUtf8(process.readAll()).trimmed();
+            *errorMessage = output.isEmpty()
+                ? QStringLiteral("Recovery script failed (exit %1).").arg(process.exitCode())
+                : output;
+        }
+        return false;
+    }
+    return true;
 }
 
-void LinuxBackend::unloadWindowPinScript()
+QString LinuxBackend::watchdogScriptPath() const
 {
-    if (m_windowPinScriptHandle < 0) {
+    // Prefer an installed copy; fall back to the in-repo packaging script so
+    // a dev build (running out of <repo>/build/) gets the watchdog too.
+    const QStringList candidates {
+        QStringLiteral("/usr/local/lib/focusos/focusos-watchdog.sh"),
+        QStringLiteral("/opt/focusos/lib/focusos-watchdog.sh"),
+        QStringLiteral("/usr/local/bin/focusos-watchdog"),
+    };
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    // Dev fallback: <repo>/build/focusos → <repo>/packaging/linux/...
+    QDir dir(QCoreApplication::applicationDirPath());
+    dir.cdUp();
+    const QString repoScript = dir.absoluteFilePath(
+        QStringLiteral("packaging/linux/focusos-watchdog.sh"));
+    if (QFileInfo::exists(repoScript)) {
+        return repoScript;
+    }
+    return {};
+}
+
+void LinuxBackend::startWatchdog(const QString &binaryPath)
+{
+    const QString focusDir = QDir::homePath() + QStringLiteral("/.focusos");
+    QDir().mkpath(focusDir);
+
+    // Record the binary the watchdog should respawn. The watchdog reads this
+    // when its --binary arg is absent (e.g. the kiosk session command).
+    if (!binaryPath.isEmpty()) {
+        QFile binaryFile(focusDir + QStringLiteral("/watchdog-binary"));
+        if (binaryFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            binaryFile.write(binaryPath.toUtf8());
+            binaryFile.write("\n");
+            binaryFile.close();
+        }
+    }
+
+    const QString script = watchdogScriptPath();
+    if (script.isEmpty()) {
         return;
     }
-    kwinScriptingUnload(m_windowPinScriptHandle, m_windowPinScriptPlugin);
-    m_windowPinScriptHandle = -1;
-    m_windowPinScriptPlugin.clear();
+
+    // If a watchdog is already supervising us, the flock in the script makes a
+    // second launch a harmless no-op (the new instance can't take the lock and
+    // exits). Skip when we can already see one to avoid the churn. The script
+    // runs as `bash …/focusos-watchdog.sh`, so match the full command line.
+    {
+        const QString pgrep = QStandardPaths::findExecutable(QStringLiteral("pgrep"));
+        if (!pgrep.isEmpty()) {
+            QProcess probe;
+            probe.start(pgrep, {QStringLiteral("-f"), QStringLiteral("focusos-watchdog")});
+            if (probe.waitForFinished(300) &&
+                probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0) {
+                return;
+            }
+        }
+    }
+
+    const QString shell = firstExecutable({QStringLiteral("bash"), QStringLiteral("sh")});
+    if (shell.isEmpty()) {
+        return;
+    }
+
+    QStringList args { script };
+    if (!binaryPath.isEmpty()) {
+        args << QStringLiteral("--binary") << binaryPath;
+    }
+    QProcess::startDetached(shell, args);
 }

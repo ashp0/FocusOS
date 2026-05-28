@@ -28,20 +28,19 @@ public:
     bool desktopShellSupported() const override { return true; }
     void restoreShellPlacement() override;
     void setAlwaysAllowedApps(const QStringList &commandLines) override;
+    void startWatchdog(const QString &binaryPath) override;
+    bool restoreLoginSessions(QString *errorMessage = nullptr) override;
 
 private:
     void startLockdownWatchdog();
     void stopLockdownWatchdog();
     void tickLockdownWatchdog() const;
     QStringList alwaysAllowedProcessNames() const;
-    void loadWindowPinScript();
-    void unloadWindowPinScript();
+    QString watchdogScriptPath() const;
 
     NetGate m_netGate;
     QList<qint64> m_sessionPids;
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
-    int m_windowPinScriptHandle = -1;
-    QString m_windowPinScriptPlugin;
     QStringList m_alwaysAllowedCommandLines;
 };

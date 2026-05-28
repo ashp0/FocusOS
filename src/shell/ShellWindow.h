@@ -9,6 +9,7 @@ class RoutineManager;
 class StatsStore;
 class SystemStatus;
 class TOTPEngine;
+class Updater;
 
 class ShellWindow final : public QQuickView
 {
@@ -21,7 +22,8 @@ public:
                 MusicEngine *musicEngine,
                 StatsStore *statsStore,
                 SystemStatus *systemStatus,
-                InspirationStore *inspirationStore);
+                InspirationStore *inspirationStore,
+                Updater *updater);
 
     void showFocusShell();
 
@@ -29,6 +31,9 @@ private:
     void showWallpaper();
     void setRootWindowBackground();
     void minimizeFocusShell();
+    void updateProgressOverlay();
 
     QQuickView m_wallpaperWindow;
+    QQuickView m_progressOverlayWindow;
+    RoutineManager *m_routineManager = nullptr;
 };

@@ -2,6 +2,8 @@
 
 #include "platform/PlatformBackend.h"
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -27,6 +29,15 @@ QString routinesPath()
 QString configPath()
 {
     return RoutineManager::dataDirectory() + QStringLiteral("/config.json");
+}
+
+// Live-session checkpoint. Its mere existence means a routine is "armed" —
+// the respawn watchdog keeps FocusOS alive while this file is present, and a
+// fresh launch resumes the locked routine from it. Deleted only on a
+// legitimate end (expiry, or TOTP-unlock past the min-time floor).
+QString activeSessionPath()
+{
+    return RoutineManager::dataDirectory() + QStringLiteral("/active.json");
 }
 
 QStringList jsonArrayToStringList(const QJsonArray &array)
@@ -112,12 +123,20 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
         emit remainingSecondsChanged();
         emitRowsChanged();
         emitActiveSessionProgress();
+        // Refresh the checkpoint each tick so a kill/crash resumes from the
+        // most recent remaining-time, not the start-of-session value.
+        writeActiveSession();
     });
     connect(&m_routineTimer, &FocusTimer::pausedChanged, this, &RoutineManager::pausedChanged);
     connect(&m_routineTimer, &FocusTimer::expired, this, &RoutineManager::onRoutineExpired);
 
     m_accessTimer.setInterval(1000);
     connect(&m_accessTimer, &QTimer::timeout, this, &RoutineManager::tickOtherAccess);
+
+    // Deferred so ShellWindow's signal connections (activeChanged, etc.) are
+    // wired before a resumed routine fires them. Resumes a locked routine left
+    // behind by a kill/crash via the active.json checkpoint.
+    QTimer::singleShot(0, this, &RoutineManager::resumeActiveSessionIfPresent);
 }
 
 int RoutineManager::rowCount(const QModelIndex &parent) const
@@ -314,6 +333,7 @@ void RoutineManager::togglePause()
     } else {
         m_routineTimer.pause();
     }
+    writeActiveSession();
 }
 
 int RoutineManager::routineCount() const
@@ -394,6 +414,37 @@ void RoutineManager::removeAlwaysAllowedApp(int index)
     emit alwaysAllowedAppsChanged();
 }
 
+bool RoutineManager::sessionRecoverySupported() const
+{
+    return m_backend &&
+           (QFileInfo::exists(QStringLiteral("/usr/local/lib/focusos/focusos-restore-sessions.sh")) ||
+            QFileInfo::exists(QStringLiteral("/opt/focusos/lib/focusos-restore-sessions.sh")));
+}
+
+bool RoutineManager::restoreLoginSessions()
+{
+    // TOTP gate: the SYSTEM tab lives behind the unlock modal, and unlocking
+    // grants the admin access window. Refuse recovery unless that window is
+    // open so the six-digit code is the sole path out of the FocusOS-only
+    // session.
+    if (!accessGranted()) {
+        setStatusMessage(QStringLiteral("UNLOCK SETTINGS WITH YOUR CODE FIRST"));
+        return false;
+    }
+    if (!m_backend) {
+        return false;
+    }
+    QString error;
+    if (!m_backend->restoreLoginSessions(&error)) {
+        setStatusMessage(error.isEmpty()
+                             ? QStringLiteral("SESSION RECOVERY FAILED")
+                             : error.toUpper());
+        return false;
+    }
+    setStatusMessage(QStringLiteral("OTHER SESSIONS RESTORED — LOG OUT TO SWITCH"));
+    return true;
+}
+
 void RoutineManager::endActiveRoutine()
 {
     if (!active()) {
@@ -432,6 +483,10 @@ void RoutineManager::endActiveRoutine()
                                 m_activeStartedAt,
                                 QDateTime::currentDateTimeUtc());
     setFinishedSessionPrompt(routine, elapsedMinutes, QStringLiteral("unlocked"));
+
+    // Legitimate end past the min-time floor: tear down the checkpoint so the
+    // watchdog stops respawning and a fresh launch won't re-lock.
+    clearActiveSession();
 
     // Clear active state BEFORE stopping the timer to avoid the phantom-progress race.
     m_activeRoutineId.clear();
@@ -504,6 +559,22 @@ void RoutineManager::setOtherAccessMinutes(int minutes)
     emit configChanged();
 }
 
+bool RoutineManager::overlayProgressEnabled() const
+{
+    return m_overlayProgressEnabled;
+}
+
+void RoutineManager::setOverlayProgressEnabled(bool enabled)
+{
+    if (m_overlayProgressEnabled == enabled) {
+        return;
+    }
+
+    m_overlayProgressEnabled = enabled;
+    saveConfig();
+    emit overlayProgressEnabledChanged();
+}
+
 void RoutineManager::engage(const QString &routineId)
 {
     if (active() || accessGranted()) {
@@ -566,6 +637,9 @@ void RoutineManager::unlockOtherAccess()
     }
 
     if (active()) {
+        // TOTP unlock past the min-time floor counts as a legitimate end —
+        // retire the checkpoint so the respawn watchdog releases.
+        clearActiveSession();
         const int routineIndex = indexOfRoutine(m_activeRoutineId);
         if (routineIndex >= 0) {
             const Routine &routine = m_routines.at(routineIndex);
@@ -844,9 +918,12 @@ void RoutineManager::loadConfig()
         m_backend->setAlwaysAllowedApps(m_alwaysAllowedApps);
     }
 
+    m_overlayProgressEnabled = root.value(QStringLiteral("overlay_progress_enabled")).toBool(true);
+
     saveConfig();
     emit configChanged();
     emit alwaysAllowedAppsChanged();
+    emit overlayProgressEnabledChanged();
 }
 
 bool RoutineManager::saveConfig() const
@@ -858,6 +935,7 @@ bool RoutineManager::saveConfig() const
         alwaysAllowed.append(entry);
     }
     root.insert(QStringLiteral("always_allowed_apps"), alwaysAllowed);
+    root.insert(QStringLiteral("overlay_progress_enabled"), m_overlayProgressEnabled);
     QSaveFile saveFile(configPath());
     if (saveFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         saveFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
@@ -971,6 +1049,101 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     }
 }
 
+void RoutineManager::writeActiveSession() const
+{
+    if (!active()) {
+        return;
+    }
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    if (routineIndex < 0) {
+        return;
+    }
+    const Routine &routine = m_routines.at(routineIndex);
+
+    QJsonObject object;
+    object.insert(QStringLiteral("routine_id"), routine.id);
+    object.insert(QStringLiteral("started_at"), static_cast<qint64>(m_activeStartedAt.toSecsSinceEpoch()));
+    object.insert(QStringLiteral("total_seconds"), routine.timeLimitMinutes * 60);
+    object.insert(QStringLiteral("remaining_seconds"), m_routineTimer.remainingSeconds());
+    object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
+    object.insert(QStringLiteral("network_lock"), routine.networkLock);
+
+    QSaveFile file(activeSessionPath());
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+        file.commit();
+    }
+}
+
+void RoutineManager::clearActiveSession() const
+{
+    QFile::remove(activeSessionPath());
+}
+
+void RoutineManager::resumeActiveSessionIfPresent()
+{
+    if (active()) {
+        return;
+    }
+
+    QFile file(activeSessionPath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    if (!document.isObject()) {
+        clearActiveSession();
+        return;
+    }
+
+    const QJsonObject object = document.object();
+    const int routineIndex = indexOfRoutine(object.value(QStringLiteral("routine_id")).toString());
+    if (routineIndex < 0) {
+        clearActiveSession();
+        return;
+    }
+
+    const int remaining = object.value(QStringLiteral("remaining_seconds")).toInt(0);
+    if (remaining <= 0) {
+        // The routine had already run out before the crash/kill — don't
+        // resurrect an expired session.
+        clearActiveSession();
+        return;
+    }
+
+    const Routine &routine = m_routines.at(routineIndex);
+
+    if (m_backend) {
+        if (routine.networkLock) {
+            QString error;
+            // Best-effort: if the lock can't be reapplied we still resume the
+            // timer so the commitment holds; the status line surfaces why.
+            if (!m_backend->applyNetworkPolicy(routine.allowedUrls, &error) && !error.isEmpty()) {
+                setStatusMessage(QStringLiteral("NETWORK LOCK NOT REAPPLIED: %1").arg(error));
+            }
+        }
+        // Re-establish the lockdown posture (kills the desktop shell /
+        // launchers, starts the lockdown + respawn watchdogs). Routine apps are
+        // NOT relaunched — survivors of the crash are still open and the user
+        // can use Relaunch if they want fresh windows.
+        m_backend->prepareRoutineSession(routine.apps);
+        m_backend->startWatchdog(QCoreApplication::applicationFilePath());
+    }
+
+    m_activeRoutineId = routine.id;
+    const qint64 startedAt = object.value(QStringLiteral("started_at")).toVariant().toLongLong();
+    m_activeStartedAt = startedAt > 0 ? QDateTime::fromSecsSinceEpoch(startedAt).toUTC()
+                                      : QDateTime::currentDateTimeUtc();
+    emit activeChanged();
+    emitRowsChanged();
+    m_routineTimer.start(remaining);
+    writeActiveSession();
+
+    const int minutes = (remaining + 59) / 60;
+    setStatusMessage(QStringLiteral("ROUTINE RESUMED — %1 MIN REMAINING").arg(minutes));
+}
+
 void RoutineManager::onRoutineExpired()
 {
     const int routineIndex = indexOfRoutine(m_activeRoutineId);
@@ -990,6 +1163,8 @@ void RoutineManager::onRoutineExpired()
         m_backend->dropNetworkPolicy();
         m_backend->restoreShellPlacement();
     }
+    // Natural expiry is a legitimate end — drop the checkpoint.
+    clearActiveSession();
     m_activeRoutineId.clear();
     m_activeStartedAt = {};
     emit activeChanged();
@@ -1102,6 +1277,13 @@ bool RoutineManager::startRoutine(const Routine &routine, bool applyNetworkLock,
     emitRowsChanged();
     m_routineTimer.start(routine.timeLimitMinutes * 60);
     emitActiveSessionProgress();
+
+    // Arm the checkpoint and respawn watchdog: from here on a kill/crash
+    // re-launches FocusOS and resumes this locked routine.
+    writeActiveSession();
+    if (m_backend) {
+        m_backend->startWatchdog(QCoreApplication::applicationFilePath());
+    }
     return true;
 }
 

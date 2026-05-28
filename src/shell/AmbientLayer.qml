@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtMultimedia
 import "qrc:/qt/qml/FocusOS/assets/qml/theme.js" as Theme
 
@@ -16,12 +17,31 @@ Item {
     property bool showBackground: true
     property bool showMedia: true
     property bool showStars: true
+    property bool showDust: true       // background layer paints dust; overlay layer turns it off
     property bool showCircles: false   // legacy slot — circles removed for space feel
     property real circleOpacityScale: 0
     property real starOpacityScale: 1
     property int imageHoldMs: 10000
     property int activeAssetType: 0    // 0=image, 1=video
     property double fadeStartTime: Date.now()
+
+    // Stop burning CPU/GPU on the starfield when nothing can be seen: the app
+    // is unfocused/minimized (e.g. another app has focus during a routine) or
+    // this layer is hidden/transparent. Repaints resume on reactivation.
+    property bool animationActive: Qt.application.active &&
+                                   root.visible &&
+                                   root.opacity > 0.01 &&
+                                   (Window.window ? Window.window.visibility !== Window.Minimized
+                                                  && Window.window.visibility !== Window.Hidden : true)
+
+    onAnimationActiveChanged: {
+        if (animationActive) {
+            stars.requestPaint()
+            if (showDust) {
+                dust.requestPaint()
+            }
+        }
+    }
 
     function resetFade() {
         fadeStartTime = Date.now()
@@ -227,6 +247,9 @@ Item {
         anchors.fill: parent
         visible: root.showStars
         opacity: root.starOpacityScale
+        // Paint on a dedicated render thread so the 400-star draw loop never
+        // blocks the GUI thread — keeps the sidebar/hover snappy.
+        renderStrategy: Canvas.Threaded
 
         property var points: []
         property double startTime: Date.now()
@@ -332,7 +355,7 @@ Item {
 
         Timer {
             interval: 80
-            running: root.showStars
+            running: root.showStars && root.animationActive
             repeat: true
             onTriggered: stars.tick()
         }
@@ -342,8 +365,9 @@ Item {
     Canvas {
         id: dust
         anchors.fill: parent
-        visible: root.showStars
+        visible: root.showStars && root.showDust
         opacity: 0.55
+        renderStrategy: Canvas.Threaded
 
         property var motes: []
 
@@ -401,7 +425,7 @@ Item {
 
         Timer {
             interval: 120
-            running: root.showStars
+            running: root.showStars && root.showDust && root.animationActive
             repeat: true
             onTriggered: dust.tick()
         }
