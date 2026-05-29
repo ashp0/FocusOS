@@ -115,6 +115,84 @@ void deleteFocusTableIfPresent(const QString &nftPath)
     runNftQuietly(nftPath, {QStringLiteral("delete"), QStringLiteral("table"), QStringLiteral("inet"), QStringLiteral("focusos")});
 }
 
+// Replace the focusos table with `rules` via `nft -f -`. Shared by the
+// allowlist apply path and the full-deny clamp so both get identical start /
+// timeout / CAP_NET_ADMIN error handling.
+bool loadRulesetIntoNft(const QString &rules, QString *errorMessage)
+{
+    const QString nftPath = QStandardPaths::findExecutable(QStringLiteral("nft"));
+    if (nftPath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("nftables is not installed; install nftables and enable the FocusOS network lock");
+        }
+        return false;
+    }
+
+    deleteFocusTableIfPresent(nftPath);
+
+    QProcess nft;
+    nft.start(nftPath, {QStringLiteral("-f"), QStringLiteral("-")});
+    if (!nft.waitForStarted()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Unable to start nft");
+        }
+        return false;
+    }
+    nft.write(rules.toUtf8());
+    nft.closeWriteChannel();
+    if (!nft.waitForFinished(5000)) {
+        nft.kill();
+        nft.waitForFinished(100);
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("nftables did not finish applying the FocusOS network lock within 5 seconds");
+        }
+        return false;
+    }
+    if (nft.exitStatus() != QProcess::NormalExit || nft.exitCode() != 0) {
+        QString stderrText = QString::fromUtf8(nft.readAllStandardError()).trimmed();
+        // nft echoes the whole offending ruleset line (the allowlist can be
+        // thousands of characters) plus a caret line under it. Keep just the
+        // human-readable "… Error: …" diagnostic so the prompt doesn't run off
+        // the screen.
+        {
+            const QStringList lines = stderrText.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            QStringList kept;
+            for (const QString &line : lines) {
+                const QString trimmedLine = line.trimmed();
+                if (trimmedLine.contains(QStringLiteral("Error:"), Qt::CaseInsensitive) ||
+                    trimmedLine.contains(QStringLiteral("warning:"), Qt::CaseInsensitive)) {
+                    kept.append(trimmedLine.left(200));
+                }
+            }
+            if (!kept.isEmpty()) {
+                stderrText = kept.mid(0, 2).join(QStringLiteral(" "));
+            } else {
+                stderrText = stderrText.left(200);
+            }
+        }
+        // nftables needs CAP_NET_ADMIN — without it, the kernel rejects the
+        // netlink cache load with EPERM. Translate that into something the
+        // user can actually act on.
+        const bool looksUnprivileged = stderrText.contains(QStringLiteral("Operation not permitted"), Qt::CaseInsensitive) ||
+                                       stderrText.contains(QStringLiteral("cache initialization failed"), Qt::CaseInsensitive) ||
+                                       stderrText.contains(QStringLiteral("Permission denied"), Qt::CaseInsensitive);
+        if (errorMessage) {
+            if (looksUnprivileged) {
+                *errorMessage = QStringLiteral(
+                    "FocusOS needs CAP_NET_ADMIN to install firewall rules. Either run\n"
+                    "  sudo setcap cap_net_admin,cap_net_raw+ep $(command -v nft)\n"
+                    "or launch FocusOS via a small pkexec wrapper. Strict mode will not start until this is fixed.");
+            } else {
+                *errorMessage = stderrText.isEmpty()
+                    ? QStringLiteral("nftables refused the ruleset (unknown error)")
+                    : stderrText;
+            }
+        }
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 #endif
 
@@ -220,9 +298,26 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
             continue;
         }
 
-        const QHostInfo info = QHostInfo::fromName(host);
-        for (const QHostAddress &address : info.addresses()) {
-            insertAddress(address);
+        // Resolve the host AND its www. counterpart. The extension allows
+        // subdomains of an allowlisted host automatically (it matches host +
+        // path), but nftables can only allow concrete IPs — so if we only
+        // resolve the bare host the firewall silently drops the www. host the
+        // browser is actually redirected to. qt.io is the canonical break:
+        // allowing "qt.io" resolves one AWS IP, but the page lives on
+        // www.qt.io (a HubSpot CDN on entirely different IPs), so it never
+        // loads. Resolve both forms so the redirect target is reachable too.
+        QStringList namesToResolve;
+        namesToResolve.append(host);
+        if (host.startsWith(QStringLiteral("www."))) {
+            namesToResolve.append(host.mid(4));
+        } else {
+            namesToResolve.append(QStringLiteral("www.") + host);
+        }
+        for (const QString &name : namesToResolve) {
+            const QHostInfo info = QHostInfo::fromName(name);
+            for (const QHostAddress &address : info.addresses()) {
+                insertAddress(address);
+            }
         }
     }
 #endif
@@ -282,79 +377,32 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) const
 {
 #ifdef Q_OS_LINUX
-    const QString nftPath = QStandardPaths::findExecutable(QStringLiteral("nft"));
-    if (nftPath.isEmpty()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("nftables is not installed; install nftables and enable the FocusOS network lock");
-        }
-        return false;
-    }
-
-    deleteFocusTableIfPresent(nftPath);
-
-    QProcess nft;
-    nft.start(nftPath, {QStringLiteral("-f"), QStringLiteral("-")});
-    if (!nft.waitForStarted()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("Unable to start nft");
-        }
-        return false;
-    }
-    nft.write(buildRuleset(allowedHosts).toUtf8());
-    nft.closeWriteChannel();
-    if (!nft.waitForFinished(5000)) {
-        nft.kill();
-        nft.waitForFinished(100);
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("nftables did not finish applying the FocusOS network lock within 5 seconds");
-        }
-        return false;
-    }
-    if (nft.exitStatus() != QProcess::NormalExit || nft.exitCode() != 0) {
-        QString stderrText = QString::fromUtf8(nft.readAllStandardError()).trimmed();
-        // nft echoes the whole offending ruleset line (the allowlist can be
-        // thousands of characters) plus a caret line under it. Keep just the
-        // human-readable "… Error: …" diagnostic so the prompt doesn't run off
-        // the screen.
-        {
-            const QStringList lines = stderrText.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-            QStringList kept;
-            for (const QString &line : lines) {
-                const QString trimmedLine = line.trimmed();
-                if (trimmedLine.contains(QStringLiteral("Error:"), Qt::CaseInsensitive) ||
-                    trimmedLine.contains(QStringLiteral("warning:"), Qt::CaseInsensitive)) {
-                    kept.append(trimmedLine.left(200));
-                }
-            }
-            if (!kept.isEmpty()) {
-                stderrText = kept.mid(0, 2).join(QStringLiteral(" "));
-            } else {
-                stderrText = stderrText.left(200);
-            }
-        }
-        // nftables needs CAP_NET_ADMIN — without it, the kernel rejects the
-        // netlink cache load with EPERM. Translate that into something the
-        // user can actually act on.
-        const bool looksUnprivileged = stderrText.contains(QStringLiteral("Operation not permitted"), Qt::CaseInsensitive) ||
-                                       stderrText.contains(QStringLiteral("cache initialization failed"), Qt::CaseInsensitive) ||
-                                       stderrText.contains(QStringLiteral("Permission denied"), Qt::CaseInsensitive);
-        if (errorMessage) {
-            if (looksUnprivileged) {
-                *errorMessage = QStringLiteral(
-                    "FocusOS needs CAP_NET_ADMIN to install firewall rules. Either run\n"
-                    "  sudo setcap cap_net_admin,cap_net_raw+ep $(command -v nft)\n"
-                    "or launch FocusOS via a small pkexec wrapper. Strict mode will not start until this is fixed.");
-            } else {
-                *errorMessage = stderrText.isEmpty()
-                    ? QStringLiteral("nftables refused the ruleset (unknown error)")
-                    : stderrText;
-            }
-        }
-        return false;
-    }
-    return true;
+    return loadRulesetIntoNft(buildRuleset(allowedHosts), errorMessage);
 #else
     Q_UNUSED(allowedHosts)
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    return true;
+#endif
+}
+
+bool NetGate::applyFullDeny(QString *errorMessage) const
+{
+#ifdef Q_OS_LINUX
+    // No allowed sets, no DNS exception — only loopback survives. Anything that
+    // tries to leave the machine hits `counter drop`. This is the clamp we
+    // install when the browser blocker extension goes missing mid-session.
+    QString rules;
+    rules += QStringLiteral("table inet focusos {\n");
+    rules += QStringLiteral("  chain output {\n");
+    rules += QStringLiteral("    type filter hook output priority 0; policy drop;\n");
+    rules += QStringLiteral("    oifname \"lo\" accept;\n");
+    rules += QStringLiteral("    counter drop;\n");
+    rules += QStringLiteral("  }\n");
+    rules += QStringLiteral("}\n");
+    return loadRulesetIntoNft(rules, errorMessage);
+#else
     if (errorMessage) {
         errorMessage->clear();
     }

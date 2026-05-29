@@ -31,6 +31,13 @@ struct State
 QString blockerDir();
 QString policyFilePath();
 
+// ~/.focusos/blocker/host-alive — a liveness beacon the native host rewrites
+// every ~1.5s while a browser is connected to it (i.e. while the blocker
+// extension is enabled and talking to us). The main process reads its mtime to
+// tell whether the extension is actually enforcing; a stale/missing file while
+// a browser is running means the extension was disabled or removed.
+QString heartbeatFilePath();
+
 // Atomic write (temp + rename) of the signed blob.
 void write(bool active, const QStringList &allowlist);
 
