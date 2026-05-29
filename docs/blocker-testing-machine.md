@@ -105,6 +105,17 @@ allowlist, so FocusOS watches for it and refuses to let it work:
   watchdog restores the routine's normal allowlist automatically. Closing the
   browser also lifts the clamp (nothing left to escape through).
 
+**The clamp only arms after the extension has checked in at least once during
+the session.** If it never connects — broken host/extension wiring, not user
+tampering — the watchdog stays silent (no clamp, no nag) rather than stranding
+you. So a persistent "extension is disabled or missing" popup means the
+extension genuinely can't reach the native host; run `scripts/blocker-doctor.sh`
+to find out why.
+
+**Mute switch:** `touch ~/.focusos/blocker/presence-check-off` disables the
+presence enforcement entirely (and lifts any active clamp) until you remove the
+file — an escape hatch while debugging.
+
 ## Diagnostics
 
 - `~/.focusos/blocker/host.log` — every policy push, with the active flag and

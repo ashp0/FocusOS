@@ -673,6 +673,7 @@ bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *
     m_activeAllowedHosts = allowedHosts;
     m_networkLockActive = true;
     m_extensionBanActive = false;
+    m_extensionSeenAlive = false;
     m_extensionMissingSinceMs = 0;
     m_lastExtensionAlertMs = 0;
     ensureWatchdogTimer();
@@ -1004,12 +1005,39 @@ void LinuxBackend::enforceBlockerExtension()
         return;
     }
 
+    // Manual mute switch. If ~/.focusos/blocker/presence-check-off exists, skip
+    // the extension-presence enforcement entirely (lift any active clamp) — an
+    // escape hatch while the host/extension wiring is being debugged so a false
+    // "extension missing" can't strand the user behind a full-deny + nag loop.
+    if (QFileInfo::exists(BlockerPolicy::blockerDir() + QStringLiteral("/presence-check-off"))) {
+        if (m_extensionBanActive) {
+            QString error;
+            m_netGate.apply(m_activeAllowedHosts, &error);
+            m_extensionBanActive = false;
+        }
+        m_extensionMissingSinceMs = 0;
+        return;
+    }
+
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+    const bool alive = blockerExtensionAlive();
+    if (alive) {
+        m_extensionSeenAlive = true;
+    }
+
+    // Don't arm the ban until the extension has proven it can connect this
+    // session. A never-connecting extension means broken wiring (our problem),
+    // not circumvention — clamping + nagging then just strands the user.
+    if (!m_extensionSeenAlive) {
+        m_extensionMissingSinceMs = 0;
+        return;
+    }
 
     // Only escalate when a *user* browser is actually open: a closed browser has
     // no extension to enable, and clamping then would needlessly strand allowed
     // non-browser apps. (FocusOS kiosk browsers are excluded — see the helper.)
-    const bool missing = chromiumBrowserRunning() && !blockerExtensionAlive();
+    const bool missing = chromiumBrowserRunning() && !alive;
 
     if (!missing) {
         m_extensionMissingSinceMs = 0;

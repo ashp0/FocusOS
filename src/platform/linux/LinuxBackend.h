@@ -60,6 +60,11 @@ private:
     // allowlist after an extension-disabled full-deny clamp.
     bool m_networkLockActive = false;
     bool m_extensionBanActive = false;
+    // The presence-ban only arms once the extension has checked in at least
+    // once this session. If it never connects (broken host/extension wiring,
+    // not user tampering) we stay quiet rather than stranding the user behind a
+    // full-deny + nag loop. Set true the first tick the beacon is fresh.
+    bool m_extensionSeenAlive = false;
     QStringList m_activeAllowedHosts;
     // Wall-clock (ms) the "browser up but extension beacon stale" condition has
     // held continuously; 0 when clear. The ban only fires once it has persisted
