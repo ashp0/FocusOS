@@ -8,6 +8,12 @@
 set -euo pipefail
 
 EXT_ID="${EXT_ID:-gkbnapcbaflmaaoimfonclabmglfiden}"
+# Chromium/Brave refuse file:// update URLs for force-installed extensions, so
+# the crx + update manifest are served over a localhost HTTP origin (trusted as
+# a secure context). This port MUST match focusos-blocker-serve.sh and
+# focusos-policy-install.sh.
+PORT="${FOCUSOS_BLOCKER_PORT:-48217}"
+BASE_URL="http://127.0.0.1:$PORT"
 REPO_ROOT="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 EXT_SRC="$REPO_ROOT/resources/focusos-blocker"
 PEM="$EXT_SRC/focusos-blocker.pem"
@@ -40,13 +46,13 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 ( cd "$EXT_SRC" && tar --exclude='host' --exclude='*.pem' --exclude='.manifest-key.txt' \
     -cf - . ) | ( cd "$STAGE" && tar -xf - )
-python3 - "$STAGE/manifest.json" "$VERSION" <<'PY'
+python3 - "$STAGE/manifest.json" "$VERSION" "$BASE_URL" <<'PY'
 import json, sys
-path, version = sys.argv[1], sys.argv[2]
+path, version, base_url = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as fh:
     data = json.load(fh)
 data["version"] = version
-data["update_url"] = "file://" + __import__("os").path.expanduser("~/.focusos/blocker/dist/updates.xml")
+data["update_url"] = base_url + "/updates.xml"
 with open(path, "w") as fh:
     json.dump(data, fh, indent=2)
 PY
@@ -67,7 +73,7 @@ cat > "$UPDATES_PATH" <<EOF
 <?xml version='1.0' encoding='UTF-8'?>
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
   <app appid='$EXT_ID'>
-    <updatecheck codebase='file://$CRX_PATH' version='$VERSION' />
+    <updatecheck codebase='$BASE_URL/focusos-blocker.crx' version='$VERSION' />
   </app>
 </gupdate>
 EOF
@@ -75,3 +81,4 @@ EOF
 echo "Packed FocusOS Blocker $VERSION"
 echo "  crx:     $CRX_PATH"
 echo "  updates: $UPDATES_PATH"
+echo "  served at: $BASE_URL/updates.xml"

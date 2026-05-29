@@ -38,19 +38,27 @@ binary at a stable path). No terminal reconfiguration, ever.
 
 ## How the extension is delivered
 
-It is **self-hosted locally**, not from the Web Store:
+It is **self-hosted locally over `http://127.0.0.1`**, not from the Web Store:
 
 - `scripts/focusos-blocker-pack.sh` packs `resources/focusos-blocker/` into
   `~/.focusos/blocker/dist/focusos-blocker.crx` (signed with
   `focusos-blocker.pem`, so the ID stays pinned) and writes an Omaha update
-  manifest `updates.xml` next to it.
+  manifest `updates.xml` next to it, with the crx `codebase` and the manifest's
+  `update_url` pointing at `http://127.0.0.1:<port>` (default `48217`).
+- `scripts/focusos-blocker-serve.sh` serves `~/.focusos/blocker/dist/` on that
+  localhost port via a `systemd --user` unit (`focusos-blocker-dist.service`).
+  **This is mandatory:** Chromium/Brave refuse `file://` update URLs for
+  force-installed extensions — the policy is read but the crx is never fetched,
+  so the extension never loads and the native host never spawns. A localhost
+  HTTP origin is a trusted secure context and works. `apply-update.sh` keeps the
+  server running on every pull.
 - `scripts/focusos-policy-install.sh` drops a managed policy into every Brave
   channel policy root — `/etc/brave/policies/managed/` **and** the Brave-Origin
   roots (`/etc/brave-origin*/policies/managed/`), plus chromium/chrome if
   present — with `ExtensionInstallForcelist` +
-  `ExtensionSettings:force_installed` pointing at the `file://` update manifest,
-  plus `ExtensionInstallSources` to permit the local source. This is the only
-  step that needs `sudo`, and only once.
+  `ExtensionSettings:force_installed` pointing at the `http://127.0.0.1:<port>`
+  update manifest, plus `ExtensionInstallSources` to permit that local source.
+  It is idempotent and only needs `sudo` when a target is missing or changed.
 
 > **Brave channels (incl. Brave Origin / brave-origin-beta).** Both the
 > force-install policy and the native-messaging host are registered per browser
@@ -62,9 +70,13 @@ It is **self-hosted locally**, not from the Web Store:
 > native host failed to connect for that channel: re-run `install-host.sh` and
 > fully restart the browser.
 
-> If a future Brave build rejects `file://` update URLs, the fallback is to
-> serve `~/.focusos/blocker/dist/` over `http://127.0.0.1` via a `systemd --user`
-> static-file unit and point the policy URLs there. Not needed today.
+> **Diagnosing a non-installing extension.** Run `scripts/blocker-doctor.sh` —
+> it prints the install type, host-manifest locations, `host.log`, the managed
+> policy, and whether the local HTTP server is reachable. The classic failure is
+> an empty `host.log` (host never spawned) because the crx couldn't be fetched —
+> historically from `file://` URLs, which is why delivery now goes over
+> `http://127.0.0.1` (see above). Confirm the server with
+> `curl -sf http://127.0.0.1:48217/updates.xml`.
 
 ## How the rules resist tampering
 

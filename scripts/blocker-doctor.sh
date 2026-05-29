@@ -87,6 +87,20 @@ echo "  (Compare against brave://extensions — Developer mode ON shows each ID.
 
 sep "dist (self-hosted crx/updates.xml)"
 ls -la "$HOME/.focusos/blocker/dist/" 2>/dev/null || echo "  no dist dir — focusos-blocker-pack.sh has not run."
+echo "  -- updates.xml contents:"
+sed 's/^/     /' "$HOME/.focusos/blocker/dist/updates.xml" 2>/dev/null || echo "     (none)"
+
+sep "Local extension HTTP server (file:// URLs don't work — this must be up)"
+PORT="${FOCUSOS_BLOCKER_PORT:-48217}"
+systemctl --user status focusos-blocker-dist.service --no-pager 2>/dev/null | head -5 \
+  || echo "  no systemd --user unit"
+if command -v curl >/dev/null 2>&1; then
+  if curl -sf -o /dev/null "http://127.0.0.1:$PORT/updates.xml"; then
+    echo "  http://127.0.0.1:$PORT/updates.xml -> REACHABLE (good)"
+  else
+    echo "  http://127.0.0.1:$PORT/updates.xml -> NOT reachable (run scripts/focusos-blocker-serve.sh)"
+  fi
+fi
 
 echo
 echo "Doctor finished. Paste everything above."

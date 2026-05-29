@@ -13,7 +13,11 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 EXT_ID="${EXT_ID:-gkbnapcbaflmaaoimfonclabmglfiden}"
-UPDATES_URL="file://$HOME/.focusos/blocker/dist/updates.xml"
+# Served over a localhost HTTP origin (Chromium/Brave reject file:// update URLs
+# for force-installed extensions). Port MUST match focusos-blocker-serve.sh and
+# focusos-blocker-pack.sh.
+PORT="${FOCUSOS_BLOCKER_PORT:-48217}"
+UPDATES_URL="http://127.0.0.1:$PORT/updates.xml"
 
 if [ ! -f "$HOME/.focusos/blocker/dist/updates.xml" ]; then
   echo "Run scripts/focusos-blocker-pack.sh first — no updates.xml found." >&2
@@ -24,7 +28,7 @@ policy_json() {
   cat <<EOF
 {
   "ExtensionInstallForcelist": ["$EXT_ID;$UPDATES_URL"],
-  "ExtensionInstallSources": ["file:///*"],
+  "ExtensionInstallSources": ["http://127.0.0.1:$PORT/*"],
   "ExtensionSettings": {
     "$EXT_ID": {
       "installation_mode": "force_installed",

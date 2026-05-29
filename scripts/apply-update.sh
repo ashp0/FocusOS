@@ -18,6 +18,8 @@ cmake --build build
 echo "▸ Packing blocker extension…"
 if [ "$(uname -s)" = "Linux" ]; then
   bash scripts/focusos-blocker-pack.sh
+  echo "▸ Ensuring local extension server is running…"
+  bash scripts/focusos-blocker-serve.sh
 else
   echo "  (skipped — extension self-hosting is Linux-only)"
 fi
