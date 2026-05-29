@@ -103,7 +103,16 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
         }
     });
     connect(this, &QWindow::visibilityChanged, this, [this](QWindow::Visibility visibility) {
-        if (visibility != QWindow::Minimized && visibility != QWindow::FullScreen && isVisible()) {
+        // Only fight a WM-initiated restore when the shell is supposed to own
+        // the screen. While m_shellShouldHide is set we are deliberately
+        // minimized behind the routine's apps — re-showing here would yank the
+        // user back into FocusOS and bury the app they just switched to. (It
+        // would also defeat minimizeFocusShell itself: dropping the
+        // stays-on-top flag flips the window through a transient windowed state
+        // whose visibilityChanged would otherwise re-raise us before the
+        // minimize lands.)
+        if (!m_shellShouldHide && visibility != QWindow::Minimized &&
+            visibility != QWindow::FullScreen && isVisible()) {
             QTimer::singleShot(0, this, &ShellWindow::showFocusShell);
         }
     });
@@ -112,6 +121,7 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 
 void ShellWindow::showFocusShell()
 {
+    m_shellShouldHide = false;
 #if defined(Q_OS_LINUX)
     // When the FocusOS shell is fullscreen it already covers the screen, so
     // the wallpaper proxy is just dead weight in the WM. Hide it; we only
@@ -186,6 +196,7 @@ void ShellWindow::updateProgressOverlay()
 
 void ShellWindow::minimizeFocusShell()
 {
+    m_shellShouldHide = true;
 #if defined(Q_OS_LINUX)
     showWallpaper();
     setRootWindowBackground();

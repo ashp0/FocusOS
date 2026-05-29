@@ -36,4 +36,9 @@ private:
     QQuickView m_wallpaperWindow;
     QQuickView m_progressOverlayWindow;
     RoutineManager *m_routineManager = nullptr;
+    // True while the shell is intentionally minimized (a routine's apps, the
+    // desktop shell, or temporary access are in front). The visibilityChanged
+    // guard must not drag the shell back to fullscreen while this holds, or the
+    // user can never reach the windows we just got out of the way for.
+    bool m_shellShouldHide = false;
 };
