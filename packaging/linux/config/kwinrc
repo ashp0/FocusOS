@@ -39,6 +39,11 @@ windowviewEnabled=false
 slideEnabled=true
 
 [Windows]
-# Don't let focus-stealing prevention be bypassed; routine apps come up
-# normally but nothing can grab focus to pop a system surface.
-FocusStealingPreventionLevel=2
+# Focus-stealing prevention MUST be off here. FocusOS launches the routine apps
+# itself (it is the active window at launch time), so any non-zero level makes
+# KWin treat the new Brave / IDE / etc. windows as a foreign app stealing focus
+# and refuses to raise or focus them — they map in the background and never come
+# forward (you'd hear the app but never see it). This is NOT a security knob:
+# *which* apps may run is enforced by the watchdog kill-list and the network
+# gate, not by hiding their windows. 0 = None, let routine windows come up front.
+FocusStealingPreventionLevel=0

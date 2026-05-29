@@ -28,12 +28,10 @@ public:
     void showFocusShell();
 
 private:
-    void showWallpaper();
     void setRootWindowBackground();
     void minimizeFocusShell();
     void updateProgressOverlay();
 
-    QQuickView m_wallpaperWindow;
     QQuickView m_progressOverlayWindow;
     RoutineManager *m_routineManager = nullptr;
     // True while the shell is intentionally minimized (a routine's apps, the

@@ -30,16 +30,6 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
     setResizeMode(QQuickView::SizeRootObjectToView);
     setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
 
-    m_wallpaperWindow.setColor(QColor(QStringLiteral("#0A0A0F")));
-    m_wallpaperWindow.setResizeMode(QQuickView::SizeRootObjectToView);
-    // Tool + bottom + no-focus keeps the wallpaper proxy out of the WM's
-    // window list / Mission Control on KDE & GNOME — without Qt::Tool it
-    // shows up as a phantom black "second FocusOS" entry.
-    m_wallpaperWindow.setFlags(Qt::Tool |
-                               Qt::FramelessWindowHint |
-                               Qt::WindowStaysOnBottomHint |
-                               Qt::WindowDoesNotAcceptFocus);
-
     m_routineManager = routineManager;
 
     rootContext()->setContextProperty(QStringLiteral("routineManager"), routineManager);
@@ -122,14 +112,6 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 void ShellWindow::showFocusShell()
 {
     m_shellShouldHide = false;
-#if defined(Q_OS_LINUX)
-    // When the FocusOS shell is fullscreen it already covers the screen, so
-    // the wallpaper proxy is just dead weight in the WM. Hide it; we only
-    // need it when FocusOS minimizes during a routine.
-    if (m_wallpaperWindow.isVisible()) {
-        m_wallpaperWindow.hide();
-    }
-#endif
     if (QScreen *screen = QGuiApplication::primaryScreen()) {
         setScreen(screen);
         setGeometry(screen->geometry());
@@ -140,21 +122,6 @@ void ShellWindow::showFocusShell()
     raise();
     requestActivate();
     updateProgressOverlay();
-}
-
-void ShellWindow::showWallpaper()
-{
-#if defined(Q_OS_LINUX)
-    if (QScreen *screen = QGuiApplication::primaryScreen()) {
-        m_wallpaperWindow.setScreen(screen);
-        m_wallpaperWindow.setGeometry(screen->geometry());
-    }
-
-    if (!m_wallpaperWindow.isVisible()) {
-        m_wallpaperWindow.showFullScreen();
-    }
-    m_wallpaperWindow.lower();
-#endif
 }
 
 void ShellWindow::setRootWindowBackground()
@@ -198,11 +165,18 @@ void ShellWindow::minimizeFocusShell()
 {
     m_shellShouldHide = true;
 #if defined(Q_OS_LINUX)
-    showWallpaper();
+    // Get fully out of the way: the routine's apps own the screen now.
+    //
+    // We used to raise a fullscreen black "wallpaper" proxy here as a backdrop.
+    // But on KWin/Wayland a Qt::Tool window flagged WindowStaysOnBottomHint is
+    // NOT reliably kept below normal windows — it ended up *covering* the
+    // launched app (you'd hear Brave but see only black) and leaked a phantom
+    // entry into Alt+Tab. The launched apps fill the screen themselves, and
+    // plasmashell is killed during a routine, so there's nothing to back-fill.
     setRootWindowBackground();
     setFlags(Qt::Window | Qt::FramelessWindowHint);
     showMinimized();
-    m_wallpaperWindow.lower();
+    lower();
     QTimer::singleShot(120, this, &ShellWindow::updateProgressOverlay);
 #endif
 }
