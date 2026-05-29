@@ -72,7 +72,7 @@ spawn_focus() {
     bin="$(resolve_binary)"
     if [[ -x "$bin" ]]; then
         log "respawning $bin"
-        setsid "$bin" >/dev/null 2>&1 &
+        setsid "$bin" >> "$LOG_FILE" 2>&1 &
     else
         log "binary not executable: $bin"
     fi

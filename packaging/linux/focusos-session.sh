@@ -11,16 +11,14 @@ FOCUSOS_MODE="${FOCUSOS_MODE:-kwin}"
 FOCUSOS_LIB="${FOCUSOS_LIB:-/usr/local/lib/focusos}"
 WATCHDOG="${FOCUSOS_WATCHDOG:-$FOCUSOS_LIB/focusos-watchdog.sh}"
 
-# Point KWin/KGlobalShortcuts at FocusOS's locked-down config so the launcher,
-# overview and activity shortcuts are stripped while Alt+Tab survives. install.sh
-# stages these files; fall back to the user's config if they're absent.
+# ── FIX 1: Use XDG_CONFIG_DIRS instead of XDG_CONFIG_HOME ────────────
+# This allows KWin/FocusOS to read your locked-down system configs
+# as a fallback, while still being able to write their necessary caches
+# and lock files to the user's writable ~/.config directory.
 if [[ -d "$FOCUSOS_LIB/config" ]]; then
-    export XDG_CONFIG_HOME="$FOCUSOS_LIB/config"
+    export XDG_CONFIG_DIRS="$FOCUSOS_LIB/config:${XDG_CONFIG_DIRS:-/etc/xdg}"
 fi
 
-# The kiosk watchdog is the long-lived process: it keeps FocusOS respawned for
-# the life of the login session (and respawns it across an in-app update). If
-# the watchdog isn't installed, fall back to running FocusOS directly.
 run_session() {
     if [[ -x "$WATCHDOG" ]]; then
         exec bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
@@ -31,18 +29,14 @@ run_session() {
 
 case "$FOCUSOS_MODE" in
     kwin)
+        # ── FIX 2: Single-line exec command ──────────────────────────
+        # The line break here was previously causing KWin to launch without
+        # an app to run, leaving you stranded on a black screen while the
+        # watchdog was completely ignored by Bash.
         if [[ -x "$WATCHDOG" ]]; then
-            exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session \
-                bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
+            exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
         else
             exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session "$FOCUSOS_BIN"
-        fi
-        ;;
-    cage)
-        if [[ -x "$WATCHDOG" ]]; then
-            exec dbus-run-session -- cage -- bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
-        else
-            exec dbus-run-session -- cage -- "$FOCUSOS_BIN"
         fi
         ;;
     direct)
