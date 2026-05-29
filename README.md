@@ -1,4 +1,101 @@
-# FocusOS Linux Desktop Replacement Guide
+<div align="center">
+
+# ФОКУС//05 — FocusOS
+
+### A full-screen **mission control** for your work. No dock. No launcher. No escape hatch. Just the routine in front of you.
+
+FocusOS replaces your desktop with a calm, space-themed shell built to make focused work the *only* thing you can do. On Linux it doesn't theme your desktop — it **becomes** the login session, so the dock, launcher, and app menu simply stop existing.
+
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-0b0e14?style=for-the-badge)](#)
+[![Qt](https://img.shields.io/badge/Qt-6.7%2B-41cd52?style=for-the-badge&logo=qt&logoColor=white)](#)
+[![C++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white)](#)
+[![Wayland](https://img.shields.io/badge/Wayland-kiosk-d33?style=for-the-badge)](#)
+
+</div>
+
+---
+
+<div align="center">
+
+<img src="assets/github/mission-control.png" width="85%" alt="FocusOS mission control — the routine list over a slowly fading starfield" />
+
+<em>Mission Control — your routines as launchable missions, over a starfield that fades as you settle in.</em>
+
+</div>
+
+---
+
+## Why FocusOS?
+
+Most "focus" apps are a window you can close. FocusOS is the **whole session**. There is no taskbar to peek at, no notifications sliding in, no launcher one shortcut away. You pick a mission, you engage, and the machine commits to it with you — right down to a network allowlist that drops everything except the sites your routine actually needs.
+
+It's designed around a single feeling: sitting at a quiet console, late at night, with one job to do.
+
+## Highlights
+
+- 🚀 **Missions, not apps** — Define routines ("Learn Rust", "Deep Write") and *engage* them like a launch sequence, complete with countdown.
+- 🌌 **Living starfield** — Drop images or videos into `~/.focusos/inspiration/` and the background folds them in, fading from visible to barely-there over a 30-minute settle.
+- 🔒 **Network lockdown** — During a routine, nftables drops all outbound traffic except DNS and the resolved addresses on your allowlist. Fails *closed*: no firewall, no routine.
+- 📊 **Astronaut Log** — Daily target, streak, total time, and a production graph that tracks every logged minute.
+- 🛡️ **Real session replacement** — On Linux, FocusOS launches via SDDM instead of KDE Plasma. No Plasma shell, dock, or launcher is ever started.
+- 🔐 **TOTP-gated settings** — Escaping to an unrestricted window requires a six-digit code (works with Apple Passwords or any authenticator) and expires automatically.
+- 🎛️ **Built-in controls** — Volume, brightness, and battery live in the toolbar, so a locked routine session never needs Plasma.
+
+---
+
+## Screenshots
+
+<div align="center">
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/github/active-mission.png" alt="Active mission countdown" /></td>
+    <td width="50%"><img src="assets/github/astronaut-log.png" alt="Astronaut Log with production graph" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Active Mission</strong><br/><em>A full-screen countdown — pause, relaunch, or end early.</em></td>
+    <td align="center"><strong>Astronaut Log</strong><br/><em>Daily target, streak, total, and your production graph.</em></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/github/astronaut-log-panel.png" alt="Mission control with the log panel open" /></td>
+    <td width="50%"><img src="assets/github/mission-notes.png" alt="Mission notes panel" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Console + Log</strong><br/><em>Routines on the left, your log docked on the right.</em></td>
+    <td align="center"><strong>Mission Notes</strong><br/><em>Capture thoughts mid-routine without leaving the shell.</em></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/github/mission-complete.png" alt="Mission complete dialog" /></td>
+    <td width="50%"><img src="assets/github/access-authorization.png" alt="TOTP access authorization" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Mission Complete</strong><br/><em>Log what you accomplished before you stand down.</em></td>
+    <td align="center"><strong>Access Authorization</strong><br/><em>TOTP-gated escape to a temporary unrestricted window.</em></td>
+  </tr>
+</table>
+
+</div>
+
+---
+
+## Quick Start
+
+FocusOS needs **Qt 6.7+**, **CMake**, **Ninja**, a **C++20** compiler, and Wayland. Build it from the repo root:
+
+```bash
+cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux
+sudo mkdir -p /opt/focusos/bin
+sudo install -m 0755 build-linux/focusos /opt/focusos/bin/focusos
+```
+
+On macOS the same `cmake` flow works and is the fastest loop for trying out the UI. To turn FocusOS into your actual Linux login session — replacing KDE Plasma — follow the full guide below.
+
+> 📦 **Install dependencies** (Arch / Fedora / Ubuntu), session setup, hardening, and recovery are all covered in the [**Linux Desktop Replacement Guide**](#linux-desktop-replacement-guide) below, with extra detail in [INSTALL.md](INSTALL.md).
+
+---
+
+# Linux Desktop Replacement Guide
 
 FocusOS is a full-screen intentional-work shell. On Linux, the goal is not to theme KDE Plasma. The goal is to stop launching Plasma, start FocusOS as the login session, and make the normal desktop/dock/application-launcher path disappear.
 
@@ -318,3 +415,5 @@ The current Linux session replacement is strong enough for a non-admin productiv
 - systemd-logind virtual terminal options: https://www.freedesktop.org/software/systemd/man/latest/logind.conf.html
 - Apple iPhone verification code setup: https://support.apple.com/guide/iphone/automatically-fill-in-verification-codes-ipha6173c19f/ios
 - Apple iCloud Keychain verification-code URL support: https://developer.apple.com/documentation/AuthenticationServices/securing-logins-with-icloud-keychain-verification-codes
+</content>
+</invoke>

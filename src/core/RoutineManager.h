@@ -128,7 +128,7 @@ public:
     Q_INVOKABLE QVariantList routinesForEditing() const;
     Q_INVOKABLE bool saveRoutines(const QVariantList &routines);
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
-    Q_INVOKABLE QString pickApplication() const;
+    Q_INVOKABLE QString pickApplication();
     Q_INVOKABLE QString applicationDisplayName(const QString &path) const;
     Q_INVOKABLE bool addAlwaysAllowedApp(const QString &commandLine);
     Q_INVOKABLE void removeAlwaysAllowedApp(int index);

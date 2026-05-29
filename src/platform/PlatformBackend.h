@@ -27,6 +27,11 @@ public:
     // duration of a routine. Idempotent — call with true to hold the display
     // on, false to release. No-op on platforms without a power-management hook.
     virtual void setDisplaySleepInhibited(bool inhibited) { Q_UNUSED(inhibited); }
+    // Forcibly release any lingering display-sleep inhibitors, including ones
+    // owned by a predecessor process. Safe to call from a crash/signal handler.
+    // Distinct from setDisplaySleepInhibited(false), which only releases an
+    // inhibitor this instance still owns. No-op where unsupported.
+    virtual void releaseDisplaySleepInhibitors() {}
     // Apps the user has flagged as "always allowed" — calendar, word
     // processor, etc. The backend exempts them from the lockdown watchdog
     // and won't terminate them between routines.

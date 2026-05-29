@@ -887,7 +887,7 @@ void RoutineManager::updateDisplaySleepInhibit()
     emit displayStaysAwakeChanged();
 }
 
-QString RoutineManager::pickApplication() const
+QString RoutineManager::pickApplication()
 {
 #if defined(Q_OS_MACOS)
     return QFileDialog::getOpenFileName(
