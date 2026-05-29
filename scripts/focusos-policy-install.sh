@@ -35,10 +35,21 @@ policy_json() {
       "update_url": "$UPDATES_URL",
       "toolbar_pin": "force_pinned"
     }
-  }
+  },
+  "IncognitoModeAvailability": 1,
+  "BrowserGuestModeEnabled": false
 }
 EOF
 }
+
+# IncognitoModeAvailability=1 (disabled) + BrowserGuestModeEnabled=false close
+# the obvious bypass: the extension does NOT run in private/incognito windows by
+# default (and there's no policy to force an extension into incognito), and a
+# normal window keeps the native-host heartbeat fresh — so the presence
+# watchdog would NOT notice a private window browsing freely. Killing those two
+# window types is the only reliable way to plug it. These are global browser
+# settings (always on, not just during a routine); remove the keys if you want
+# private/guest windows back on this machine.
 
 # Install the policy for each browser detected on the machine; default to Brave
 # (the user's primary) if none are detected yet.
