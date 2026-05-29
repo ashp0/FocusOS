@@ -31,7 +31,13 @@ var unblockedBadgeInfo = {};
 var allowanceTabsUrl = {};
 var allowanceTabsTitle = {};
 var mutedTabInfo = {};
-var blockListInfo = {};
+// Seed with an empty `blocks` map so the v5 check functions that read
+// `blockListInfo.blocks` directly (checkBlockYouTube / checkBlockAdult are
+// called from the message handler with no version gate) don't throw
+// "Object.entries(undefined)" on a YouTube/adult page that loads before the
+// native host has pushed the first policy. Replaced wholesale once a policy
+// arrives.
+var blockListInfo = { blocks: {} };
 var statsYouTube = {};
 var restrictYouTubeControls = false;
 var allowYouTubeConsent = false;
