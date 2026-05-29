@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fires after `git pull` / `git merge`. Rebuilds FocusOS and republishes the
+# blocker extension so the freshly-pulled rules go live with no manual steps.
+# Enable with: git config core.hooksPath .githooks (done by setup-testing-machine.sh).
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+exec "$REPO_ROOT/scripts/apply-update.sh"

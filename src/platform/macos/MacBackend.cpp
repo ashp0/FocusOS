@@ -1,5 +1,7 @@
 #include "platform/macos/MacBackend.h"
 
+#include "blocker/BlockerPolicy.h"
+
 #include <QFileInfo>
 #include <QProcess>
 
@@ -84,15 +86,18 @@ void MacBackend::terminateApps(const QStringList &appPaths)
 
 bool MacBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
 {
-    Q_UNUSED(allowedHosts)
+    // No NetGate on macOS — the blocker extension is the only enforcement path.
+    // Writing the active policy here is what makes a routine's network lock real.
     if (errorMessage) {
         errorMessage->clear();
     }
+    BlockerPolicy::write(true, allowedHosts);
     return true;
 }
 
 void MacBackend::dropNetworkPolicy()
 {
+    BlockerPolicy::write(false, {});
 }
 
 bool MacBackend::openSystemTerminal(QString *errorMessage)

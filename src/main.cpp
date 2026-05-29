@@ -6,6 +6,8 @@
 #include "core/SystemStatus.h"
 #include "core/TOTPEngine.h"
 #include "core/Updater.h"
+#include "blocker/BlockerHost.h"
+#include "blocker/BlockerPolicy.h"
 #include "platform/PlatformBackend.h"
 #include "shell/ShellWindow.h"
 
@@ -65,6 +67,31 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
 
 int main(int argc, char *argv[])
 {
+    // Native-host mode: the browser spawns this binary as the blocker
+    // extension's native-messaging host. Detected via the explicit flag the
+    // install wrapper passes, or the chrome-extension:// origin Chrome/Brave
+    // always appends. Runs headless — branch out before any GUI / instance lock.
+    for (int i = 1; i < argc; ++i) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg == QLatin1String("--native-host")
+            || arg.startsWith(QLatin1String("chrome-extension://"))) {
+            return focusos::runBlockerHost();
+        }
+        // Ops/diagnostic hook: write the signed blocker rules from the CLI.
+        //   focusos --write-policy <0|1> [host ...]
+        // (Normal operation drives this from RoutineManager via the backends.)
+        if (arg == QLatin1String("--write-policy")) {
+            const bool active = (i + 1 < argc)
+                && QString::fromLocal8Bit(argv[i + 1]) != QLatin1String("0");
+            QStringList hosts;
+            for (int j = i + 2; j < argc; ++j) {
+                hosts << QString::fromLocal8Bit(argv[j]);
+            }
+            BlockerPolicy::write(active, hosts);
+            return 0;
+        }
+    }
+
     QCoreApplication::setOrganizationName(QStringLiteral("FocusOS"));
     QCoreApplication::setApplicationName(QStringLiteral("FocusOS"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));

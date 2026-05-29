@@ -1,0 +1,57 @@
+{
+   "manifest_version": 3,
+   "name": "FocusOS Blocker",
+   "version": "4.9.4",
+   "description": "Enforces the FocusOS allow-list inside the browser during a focus session. Managed by FocusOS.",
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6crLQ9A6MSTUM7oK8yKPsUGe6j3LkyGOv62qC5DUi2WL3Ito5bks/nL7VX3L6TGzTU5NKeyxG4cGOPnNDguAitTjD/fcwnmdxkXEfYFWHHrLQD82BaNCWNXXcObhXvhD+2b6jL7ad5l3U02VVmcKrvCuRw/zH0+VVD1G1NdUDdCYd5kE8zoMxwZ/SjvKmVk+nF4AbGuBTX08cqY+DR6YgLNDQ7AdgOvKDvNxSFfQeMOG9/vPNdxrMjtt/aOU8zCgwv7btJ1Ep+7oa2GonI9OzY93u+vEXY2gkuFdnV9oE7PiXxkSsvm7IyiApZO9Ct5iFqQXJkPrMekVn0sVZUCy2QIDAQAB",
+   "background": {
+      "service_worker": "ctBackground.js"
+   },
+   "content_scripts": [
+      {
+         "all_frames": true,
+         "js": [
+            "ctContent.js"
+         ],
+         "matches": [
+            "<all_urls>"
+         ],
+         "run_at": "document_start"
+      }
+   ],
+   "permissions": [
+      "nativeMessaging",
+      "tabs",
+      "idle",
+      "storage",
+      "notifications",
+      "alarms"
+   ],
+   "host_permissions": [
+      "<all_urls>"
+   ],
+   "action": {
+      "default_icon": {
+         "16": "icon16.png",
+         "32": "icon32.png",
+         "48": "icon48.png",
+         "128": "icon128.png"
+      },
+      "default_popup": "ctMenu.html"
+   },
+   "icons": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+   },
+   "web_accessible_resources": [
+      {
+         "matches": [
+            "<all_urls>"
+         ],
+         "resources": [
+            "blocked.html"
+         ]
+      }
+   ]
+}

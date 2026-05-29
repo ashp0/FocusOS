@@ -34,6 +34,10 @@ endif()
 
 set(FOCUSOS_SOURCES
     src/main.cpp
+    src/blocker/BlockerPolicy.cpp
+    src/blocker/BlockerPolicy.h
+    src/blocker/BlockerHost.cpp
+    src/blocker/BlockerHost.h
     src/core/NotesStore.cpp
     src/core/NotesStore.h
     src/core/MusicEngine.cpp
