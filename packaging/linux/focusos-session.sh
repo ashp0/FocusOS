@@ -21,7 +21,7 @@ fi
 
 run_session() {
     if [[ -x "$WATCHDOG" ]]; then
-        exec bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
+        exec bash "$WATCHDOG" "$FOCUSOS_BIN"
     else
         exec "$FOCUSOS_BIN"
     fi
