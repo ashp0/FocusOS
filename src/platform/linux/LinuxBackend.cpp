@@ -63,6 +63,8 @@
 
 #include "platform/linux/LinuxBackend.h"
 
+#include "blocker/BlockerPolicy.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -334,11 +336,18 @@ void pkillExact(const QString &processName)
     // warning and silently match nothing. Switch to -f for any name that
     // doesn't fit. We anchor to the command start so /foo/bar doesn't match
     // /foo/bar2.
+    //
+    // startDetached, NOT execute: pkillExact is fire-and-forget (no caller
+    // reads the result), and the lockdown watchdog calls it on the GUI thread.
+    // QProcess::execute blocks until pkill exits, so a sweep of ~45 names froze
+    // the Qt event loop for a fraction of a second every tick — stalling the
+    // clock, the countdown, the starfield, and notes input. Detaching keeps the
+    // event loop free.
     if (processName.size() <= 15) {
-        QProcess::execute(QStringLiteral("pkill"), {QStringLiteral("-x"), processName});
+        QProcess::startDetached(QStringLiteral("pkill"), {QStringLiteral("-x"), processName});
         return;
     }
-    QProcess::execute(QStringLiteral("pkill"), {
+    QProcess::startDetached(QStringLiteral("pkill"), {
         QStringLiteral("-f"),
         QStringLiteral("^%1($| )").arg(QRegularExpression::escape(processName))
     });
@@ -650,11 +659,19 @@ void LinuxBackend::terminateApps(const QStringList &appPaths)
 
 bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
 {
-    return m_netGate.apply(allowedHosts, errorMessage);
+    // NetGate is the network-level backstop. Only arm the extension policy if it
+    // succeeds — if the backstop can't apply the routine aborts, and writing an
+    // active policy here would strand the browser behind a half-applied lock.
+    if (!m_netGate.apply(allowedHosts, errorMessage)) {
+        return false;
+    }
+    BlockerPolicy::write(true, allowedHosts);
+    return true;
 }
 
 void LinuxBackend::dropNetworkPolicy()
 {
+    BlockerPolicy::write(false, {});
     m_netGate.drop();
 }
 
@@ -873,12 +890,29 @@ void LinuxBackend::tickLockdownWatchdog() const
         QStringLiteral("steam"),
         QStringLiteral("spotify")
     };
+    // Run the whole sweep as ONE detached shell, not 45 blocking pkills on the
+    // GUI thread. FocusOS forks a single `sh -c` and returns immediately; the
+    // individual pkills run sequentially inside that child, off the event loop.
+    // Every name below comes from the hard-coded `outlawed` list (plain
+    // [a-z-] literals); user-supplied always-allowed names are only ever used to
+    // *exclude* entries, so nothing untrusted is interpolated into the script.
     const QStringList alwaysAllowed = alwaysAllowedProcessNames();
+    QStringList commands;
+    commands.reserve(outlawed.size());
     for (const QString &name : outlawed) {
         if (alwaysAllowed.contains(name)) {
             continue;
         }
-        pkillExact(name);
+        if (name.size() <= 15) {
+            commands.append(QStringLiteral("pkill -x -- %1").arg(name));
+        } else {
+            // -f anchored to the command start (matches pkillExact's long-name path).
+            commands.append(QStringLiteral("pkill -f -- '^%1($| )'").arg(name));
+        }
+    }
+    if (!commands.isEmpty()) {
+        QProcess::startDetached(QStringLiteral("sh"),
+                                {QStringLiteral("-c"), commands.join(QStringLiteral("; "))});
     }
 }
 

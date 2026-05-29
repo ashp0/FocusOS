@@ -1,0 +1,9 @@
+# FocusOS Blocker allowlist.
+# One domain per line. Everything NOT listed here is blocked during a session.
+# Subdomains and asset CDNs of a listed site are allowed automatically (the
+# extension matches host + path), so listing the bare domain is enough.
+# Lines starting with '#' are comments; blank lines are ignored.
+# Edits are picked up live (within ~2s) — no browser restart needed.
+
+youtube.com
+github.com

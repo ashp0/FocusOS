@@ -1,4 +1,11 @@
-/.DS_Store
+.DS_Store
 build/
 assets/music
 build-linux/
+
+# Extension signing secrets — public repo, never commit. Hand-place the key on
+# the testing machine (see scripts/setup-testing-machine.sh). The key never
+# changes, so this is a one-time copy, not a per-pull step.
+resources/focusos-blocker/focusos-blocker.pem
+resources/focusos-blocker/.manifest-key.txt
+resources/focusos-blocker/host/host.log
