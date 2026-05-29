@@ -125,6 +125,24 @@ qint64 policyMtimeMs()
     return info.exists() ? info.lastModified().toMSecsSinceEpoch() : 0;
 }
 
+// Liveness beacon: rewrite the heartbeat file so its mtime tracks "now". The
+// browser only spawns this host while the extension is enabled and connected,
+// so a fresh file == the extension is alive and enforcing. The main process
+// watches it to detect a disabled/removed extension and clamp the network.
+void touchHeartbeat()
+{
+    QFile file(BlockerPolicy::heartbeatFilePath());
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        file.write(QByteArray::number(QDateTime::currentMSecsSinceEpoch()));
+        file.close();
+    }
+}
+
+void clearHeartbeat()
+{
+    QFile::remove(BlockerPolicy::heartbeatFilePath());
+}
+
 } // namespace
 
 namespace focusos {
@@ -135,16 +153,19 @@ int runBlockerHost()
 
     BlockerPolicy::State state = BlockerPolicy::read();
     sendPolicy(state);
+    touchHeartbeat();
 
     std::atomic<bool> stop{false};
     qint64 lastMtime = policyMtimeMs();
 
     // Poll policy.json; push a fresh frame whenever it changes, so adding a site
     // (or engaging/ending a routine) takes effect without a browser restart.
+    // The same loop refreshes the liveness beacon every tick.
     std::thread watcher([&] {
         BlockerPolicy::State current = state;
         while (!stop.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            touchHeartbeat();
             const qint64 mtime = policyMtimeMs();
             BlockerPolicy::State fresh = BlockerPolicy::read();
             if (mtime != lastMtime || fresh.active != current.active
@@ -167,6 +188,9 @@ int runBlockerHost()
     if (watcher.joinable()) {
         watcher.join();
     }
+    // Port closed (extension disabled / browser quit). Drop the beacon so the
+    // main process sees the extension is gone within a couple of poll cycles.
+    clearHeartbeat();
     hostLog(QStringLiteral("host stopping (port closed)"));
     return 0;
 }

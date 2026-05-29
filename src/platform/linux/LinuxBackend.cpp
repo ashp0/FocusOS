@@ -666,11 +666,25 @@ bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *
         return false;
     }
     BlockerPolicy::write(true, allowedHosts);
+
+    // Arm the extension-presence watchdog: remember the allowlist so we can
+    // restore it after a full-deny clamp, and start the timer (independent of
+    // the app-lockdown sweep, which a network-only routine might not run).
+    m_activeAllowedHosts = allowedHosts;
+    m_networkLockActive = true;
+    m_extensionBanActive = false;
+    m_extensionMissingSinceMs = 0;
+    m_lastExtensionAlertMs = 0;
+    ensureWatchdogTimer();
     return true;
 }
 
 void LinuxBackend::dropNetworkPolicy()
 {
+    m_networkLockActive = false;
+    m_extensionBanActive = false;
+    m_activeAllowedHosts.clear();
+    maybeStopWatchdogTimer();
     BlockerPolicy::write(false, {});
     m_netGate.drop();
 }
@@ -791,12 +805,26 @@ void LinuxBackend::restoreShellPlacement()
     // shell back to the foreground when a routine ends.
 }
 
-void LinuxBackend::startLockdownWatchdog()
+void LinuxBackend::ensureWatchdogTimer()
 {
-    m_lockdownActive = true;
     if (!m_lockdownTimer.isActive()) {
         m_lockdownTimer.start();
     }
+}
+
+void LinuxBackend::maybeStopWatchdogTimer()
+{
+    // The single timer drives both the app-lockdown sweep and the
+    // extension-presence check; only stop it once neither needs it.
+    if (!m_lockdownActive && !m_networkLockActive && m_lockdownTimer.isActive()) {
+        m_lockdownTimer.stop();
+    }
+}
+
+void LinuxBackend::startLockdownWatchdog()
+{
+    m_lockdownActive = true;
+    ensureWatchdogTimer();
     // Fire once immediately so the first kill happens before the user can
     // open the spotlight.
     tickLockdownWatchdog();
@@ -805,13 +833,14 @@ void LinuxBackend::startLockdownWatchdog()
 void LinuxBackend::stopLockdownWatchdog()
 {
     m_lockdownActive = false;
-    if (m_lockdownTimer.isActive()) {
-        m_lockdownTimer.stop();
-    }
+    maybeStopWatchdogTimer();
 }
 
-void LinuxBackend::tickLockdownWatchdog() const
+void LinuxBackend::tickLockdownWatchdog()
 {
+    if (m_networkLockActive) {
+        enforceBlockerExtension();
+    }
     if (!m_lockdownActive) {
         return;
     }
@@ -914,6 +943,148 @@ void LinuxBackend::tickLockdownWatchdog() const
         QProcess::startDetached(QStringLiteral("sh"),
                                 {QStringLiteral("-c"), commands.join(QStringLiteral("; "))});
     }
+}
+
+// The native host rewrites ~/.focusos/blocker/host-alive every ~1.5s while a
+// browser is connected to it. Treat the extension as alive if that beacon was
+// touched within the last few seconds (a couple of missed ticks of slack).
+bool LinuxBackend::blockerExtensionAlive() const
+{
+    const QFileInfo info(BlockerPolicy::heartbeatFilePath());
+    if (!info.exists()) {
+        return false;
+    }
+    const qint64 ageMs = info.lastModified().msecsTo(QDateTime::currentDateTime());
+    return ageMs >= 0 && ageMs < 6000;
+}
+
+// True if a *user* Chromium-family browser is running. Reads /proc/<pid>/comm
+// directly (cheap, no subprocess) — comm is truncated to 15 chars by the
+// kernel, which isChromiumFamily's prefix match already tolerates.
+//
+// FocusOS's own kiosk browsers are excluded: they run on a throwaway
+// `focusos-kiosk-*` profile with no extensions by design, so judging them
+// "extension missing" and clamping the network would break the very site the
+// routine pinned. We spot them (and their renderer children, which inherit the
+// flag) by the --user-data-dir marker in /proc/<pid>/cmdline.
+bool LinuxBackend::chromiumBrowserRunning() const
+{
+    QDir proc(QStringLiteral("/proc"));
+    const QStringList pids = proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &pid : pids) {
+        bool isPid = false;
+        pid.toLongLong(&isPid);
+        if (!isPid) {
+            continue;
+        }
+        QFile comm(QStringLiteral("/proc/%1/comm").arg(pid));
+        if (!comm.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QString name = QString::fromUtf8(comm.readAll()).trimmed();
+        if (name.isEmpty() || !isChromiumFamily(name)) {
+            continue;
+        }
+        QFile cmdline(QStringLiteral("/proc/%1/cmdline").arg(pid));
+        if (cmdline.open(QIODevice::ReadOnly)) {
+            // cmdline args are NUL-separated; a plain contains() is enough.
+            const QByteArray raw = cmdline.readAll();
+            if (raw.contains("focusos-kiosk-")) {
+                continue; // FocusOS kiosk browser — not a user-controlled browser.
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+void LinuxBackend::enforceBlockerExtension()
+{
+    if (!m_networkLockActive) {
+        return;
+    }
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+    // Only escalate when a *user* browser is actually open: a closed browser has
+    // no extension to enable, and clamping then would needlessly strand allowed
+    // non-browser apps. (FocusOS kiosk browsers are excluded — see the helper.)
+    const bool missing = chromiumBrowserRunning() && !blockerExtensionAlive();
+
+    if (!missing) {
+        m_extensionMissingSinceMs = 0;
+        if (m_extensionBanActive) {
+            // Extension is back (or the browser closed) — restore the routine
+            // allowlist so allowed sites work again.
+            QString error;
+            m_netGate.apply(m_activeAllowedHosts, &error);
+            m_extensionBanActive = false;
+            m_lastExtensionAlertMs = 0;
+        }
+        return;
+    }
+
+    // Debounce: require the condition to hold continuously before clamping, so
+    // browser/extension/native-host startup lag (session start, or the user
+    // restarting their browser) doesn't trip a false ban.
+    if (m_extensionMissingSinceMs == 0) {
+        m_extensionMissingSinceMs = nowMs;
+    }
+    constexpr qint64 kMissingDebounceMs = 15000;
+    if (!m_extensionBanActive && (nowMs - m_extensionMissingSinceMs) < kMissingDebounceMs) {
+        return;
+    }
+
+    // Clamp once on entry (not every tick); keep the ban latched even if the
+    // clamp call fails so we don't thrash nft or re-alert per tick.
+    if (!m_extensionBanActive) {
+        m_extensionBanActive = true;
+        QString error;
+        m_netGate.applyFullDeny(&error);
+    }
+    // Nag on entry and every 30s while clamped, so the user can't miss why
+    // nothing loads. Rate-limited independently of the clamp.
+    if (m_lastExtensionAlertMs == 0 || (nowMs - m_lastExtensionAlertMs) > 30000) {
+        showExtensionDisabledAlert();
+        m_lastExtensionAlertMs = nowMs;
+    }
+}
+
+// Pop a real window the user can't miss. We can't rely on notify-send: the
+// routine lockdown kills plasmashell, taking KDE's notification daemon with it.
+// kdialog / zenity / xmessage each draw their own window straight through the
+// compositor (still alive), so they show regardless. notify-send is a last
+// resort.
+void LinuxBackend::showExtensionDisabledAlert() const
+{
+    const QString title = QStringLiteral("FocusOS — Enable the Blocker extension");
+    const QString message = QStringLiteral(
+        "The FocusOS Blocker browser extension is disabled or missing.\n\n"
+        "Internet access is BLOCKED until you re-enable it:\n"
+        "open your browser's extensions page and turn FocusOS Blocker back on.");
+
+    if (!firstExecutable({QStringLiteral("kdialog")}).isEmpty()) {
+        QProcess::startDetached(QStringLiteral("kdialog"),
+                                {QStringLiteral("--title"), title,
+                                 QStringLiteral("--sorry"), message});
+        return;
+    }
+    if (!firstExecutable({QStringLiteral("zenity")}).isEmpty()) {
+        QProcess::startDetached(QStringLiteral("zenity"),
+                                {QStringLiteral("--warning"),
+                                 QStringLiteral("--title"), title,
+                                 QStringLiteral("--text"), message});
+        return;
+    }
+    if (!firstExecutable({QStringLiteral("xmessage")}).isEmpty()) {
+        QProcess::startDetached(QStringLiteral("xmessage"),
+                                {QStringLiteral("-center"),
+                                 title + QStringLiteral("\n\n") + message});
+        return;
+    }
+    QProcess::startDetached(QStringLiteral("notify-send"),
+                            {QStringLiteral("-u"), QStringLiteral("critical"),
+                             title, message});
 }
 
 QStringList LinuxBackend::alwaysAllowedProcessNames() const

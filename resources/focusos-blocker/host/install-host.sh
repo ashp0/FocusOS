@@ -65,37 +65,44 @@ manifest_json() {
 EOF
 }
 
+# Auto-discover every Chromium-family profile dir present on this machine and
+# register the host into each one's NativeMessagingHosts/ subdir. We GLOB rather
+# than hardcode channel names so any Brave channel — Brave-Browser{,-Beta,-Dev,
+# -Nightly} AND the newer Brave-Origin{,-Beta,-Nightly} line — is picked up
+# automatically, plus any future channel Brave/Google/MS ship. (Hardcoding is
+# what missed brave-origin-beta and left its extension with no native host.)
+shopt -s nullglob
+PROFILE_DIRS=()
 case "$(uname -s)" in
   Darwin)
     BASE="$HOME/Library/Application Support"
-    TARGET_DIRS=(
-      "$BASE/Google/Chrome/NativeMessagingHosts"
-      "$BASE/Google/Chrome Beta/NativeMessagingHosts"
-      "$BASE/Google/Chrome Dev/NativeMessagingHosts"
-      "$BASE/Google/Chrome Canary/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser-Beta/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser-Dev/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser-Nightly/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Origin-Nightly/NativeMessagingHosts"
-      "$BASE/Chromium/NativeMessagingHosts"
-      "$BASE/Microsoft Edge/NativeMessagingHosts"
-    ) ;;
+    PROFILE_DIRS+=("$BASE"/Google/Chrome*)
+    PROFILE_DIRS+=("$BASE"/BraveSoftware/*)
+    PROFILE_DIRS+=("$BASE"/Chromium)
+    PROFILE_DIRS+=("$BASE"/Microsoft\ Edge*)
+    PROFILE_DIRS+=("$BASE"/Vivaldi)
+    ;;
   Linux)
     BASE="$HOME/.config"
-    TARGET_DIRS=(
-      "$BASE/google-chrome/NativeMessagingHosts"
-      "$BASE/google-chrome-beta/NativeMessagingHosts"
-      "$BASE/google-chrome-unstable/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser-Beta/NativeMessagingHosts"
-      "$BASE/BraveSoftware/Brave-Browser-Nightly/NativeMessagingHosts"
-      "$BASE/chromium/NativeMessagingHosts"
-      "$BASE/microsoft-edge/NativeMessagingHosts"
-    ) ;;
+    PROFILE_DIRS+=("$BASE"/google-chrome*)
+    PROFILE_DIRS+=("$BASE"/chromium*)
+    PROFILE_DIRS+=("$BASE"/BraveSoftware/*)
+    PROFILE_DIRS+=("$BASE"/microsoft-edge*)
+    PROFILE_DIRS+=("$BASE"/vivaldi*)
+    ;;
   *)
     echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
 esac
+shopt -u nullglob
+
+TARGET_DIRS=()
+for profile in "${PROFILE_DIRS[@]}"; do
+  # A profile dir always has a Local State / Preferences file; skip stray
+  # non-browser dirs that happen to match the glob.
+  if [ -d "$profile" ]; then
+    TARGET_DIRS+=("$profile/NativeMessagingHosts")
+  fi
+done
 
 echo "Extension ID: $EXT_ID"
 echo "focusos bin:  $FOCUSOS_BIN"

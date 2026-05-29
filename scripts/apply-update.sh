@@ -25,5 +25,14 @@ fi
 echo "▸ Refreshing native messaging host…"
 bash resources/focusos-blocker/host/install-host.sh
 
+if [ "$(uname -s)" = "Linux" ]; then
+  echo "▸ Ensuring force-install policy is current…"
+  # Idempotent — only prompts for sudo when a managed-policy target is missing
+  # or stale (e.g. the first pull after a new Brave channel like brave-origin is
+  # added). Best-effort: a no-tty / declined sudo must not abort the rebuild.
+  bash scripts/focusos-policy-install.sh \
+    || echo "  (skipped — run scripts/focusos-policy-install.sh manually if the extension isn't force-installed)"
+fi
+
 VERSION="4.9.$(git rev-list --count HEAD)"
 echo "✓ FocusOS blocker updated to $VERSION — new rules are live."

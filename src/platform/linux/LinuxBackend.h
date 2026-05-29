@@ -37,14 +37,35 @@ public:
 private:
     void startLockdownWatchdog();
     void stopLockdownWatchdog();
-    void tickLockdownWatchdog() const;
+    void tickLockdownWatchdog();
     QStringList alwaysAllowedProcessNames() const;
     QString watchdogScriptPath() const;
+
+    // While a network lock is live: if a browser is running but the blocker
+    // extension stopped talking to its native host (i.e. it was disabled or
+    // removed), clamp the network to a full deny and nag the user to re-enable
+    // it; restore the routine allowlist once the extension is back.
+    void ensureWatchdogTimer();
+    void maybeStopWatchdogTimer();
+    void enforceBlockerExtension();
+    bool blockerExtensionAlive() const;
+    bool chromiumBrowserRunning() const;
+    void showExtensionDisabledAlert() const;
 
     NetGate m_netGate;
     QList<qint64> m_sessionPids;
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
+    // Network-lock state, tracked so the watchdog can restore the routine
+    // allowlist after an extension-disabled full-deny clamp.
+    bool m_networkLockActive = false;
+    bool m_extensionBanActive = false;
+    QStringList m_activeAllowedHosts;
+    // Wall-clock (ms) the "browser up but extension beacon stale" condition has
+    // held continuously; 0 when clear. The ban only fires once it has persisted
+    // past a debounce, so browser/extension startup lag doesn't false-trigger.
+    qint64 m_extensionMissingSinceMs = 0;
+    qint64 m_lastExtensionAlertMs = 0;
     QStringList m_alwaysAllowedCommandLines;
     // Holds a systemd-inhibit lock (--what=idle) while a routine wants the
     // screen kept on; terminated to release. Reaped on destruction.

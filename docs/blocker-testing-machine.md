@@ -44,11 +44,23 @@ It is **self-hosted locally**, not from the Web Store:
   `~/.focusos/blocker/dist/focusos-blocker.crx` (signed with
   `focusos-blocker.pem`, so the ID stays pinned) and writes an Omaha update
   manifest `updates.xml` next to it.
-- `scripts/focusos-policy-install.sh` drops a managed policy into
-  `/etc/brave/policies/managed/` (and chromium/chrome if present) with
-  `ExtensionInstallForcelist` + `ExtensionSettings:force_installed` pointing at
-  the `file://` update manifest, plus `ExtensionInstallSources` to permit the
-  local source. This is the only step that needs `sudo`, and only once.
+- `scripts/focusos-policy-install.sh` drops a managed policy into every Brave
+  channel policy root — `/etc/brave/policies/managed/` **and** the Brave-Origin
+  roots (`/etc/brave-origin*/policies/managed/`), plus chromium/chrome if
+  present — with `ExtensionInstallForcelist` +
+  `ExtensionSettings:force_installed` pointing at the `file://` update manifest,
+  plus `ExtensionInstallSources` to permit the local source. This is the only
+  step that needs `sudo`, and only once.
+
+> **Brave channels (incl. Brave Origin / brave-origin-beta).** Both the
+> force-install policy and the native-messaging host are registered per browser
+> channel. `host/install-host.sh` now auto-discovers *every* profile dir under
+> `~/.config/BraveSoftware/*` (and the Chrome/Chromium/Edge equivalents), so any
+> Brave channel — including the Brave-Origin line — gets the
+> `com.focusos.blocker` host without hardcoding its name. If the extension is
+> installed but enforces nothing (you can browse freely during a routine), the
+> native host failed to connect for that channel: re-run `install-host.sh` and
+> fully restart the browser.
 
 > If a future Brave build rejects `file://` update URLs, the fallback is to
 > serve `~/.focusos/blocker/dist/` over `http://127.0.0.1` via a `systemd --user`
@@ -72,6 +84,26 @@ harder.
 A determined user with a disassembler can still recover the HMAC key from the
 binary; defeating that is out of scope. The bar here is "not trivially editable,"
 which this clears.
+
+## If the extension is disabled mid-session
+
+Disabling or removing the extension is the obvious way to defeat an in-browser
+allowlist, so FocusOS watches for it and refuses to let it work:
+
+- The native host rewrites `~/.focusos/blocker/host-alive` every ~1.5s while a
+  browser is connected to it, and deletes it when the port closes. A fresh file
+  == the extension is enabled and enforcing.
+- While a routine's network lock is live, the Linux watchdog checks (every
+  1.5s, after a ~20s start-up grace) whether a Chromium-family browser is
+  running while that beacon is stale. If so, it assumes the extension was turned
+  off and **clamps the network to a full deny** (`NetGate::applyFullDeny` —
+  loopback only, no allowlist, no DNS) and pops a dialog (kdialog / zenity /
+  xmessage — chosen because the routine kills plasmashell, so notify-send may
+  have no daemon) telling the user to re-enable it. The dialog re-shows every
+  30s while clamped.
+- Re-enabling the extension reconnects the host, refreshes the beacon, and the
+  watchdog restores the routine's normal allowlist automatically. Closing the
+  browser also lifts the clamp (nothing left to escape through).
 
 ## Diagnostics
 

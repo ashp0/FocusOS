@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Force-install the FocusOS Blocker extension via Chromium-family managed policy,
-# pointing at the locally self-hosted updates.xml (file://). Run ONCE per machine
-# — it needs sudo to write under /etc. After this, the extension installs and
-# auto-updates silently; the per-pull refresh (apply-update.sh) never needs sudo.
+# pointing at the locally self-hosted updates.xml (file://). It writes under
+# /etc, so it needs sudo the first time (and whenever a new Brave channel adds a
+# target). The script is idempotent: it compares each target against the desired
+# policy and exits without sudo when everything already matches, so apply-update.sh
+# can safely call it on every `git pull`.
 set -euo pipefail
 
 if [ "$(uname -s)" != "Linux" ]; then
@@ -36,13 +38,34 @@ EOF
 
 # Install the policy for each browser detected on the machine; default to Brave
 # (the user's primary) if none are detected yet.
+#
+# Brave ships several channels, each potentially reading its own managed-policy
+# root: the classic Brave-Browser line (/etc/brave) and the newer Brave-Origin
+# line (/etc/brave-origin*). We write the policy into ALL of them so whichever
+# channel the user runs — including brave-origin-beta — force-installs the
+# extension. Creating an unused /etc/<x>/policies/managed dir is harmless.
+BRAVE_POLICY_DIRS=(
+  "/etc/brave/policies/managed"
+  "/etc/brave-beta/policies/managed"
+  "/etc/brave-nightly/policies/managed"
+  "/etc/brave-origin/policies/managed"
+  "/etc/brave-origin-beta/policies/managed"
+  "/etc/brave-origin-nightly/policies/managed"
+)
+# Also fold in any other Brave policy roots already present on the machine.
+for existing in /etc/brave*/policies/managed; do
+  [ -d "$existing" ] || continue
+  case " ${BRAVE_POLICY_DIRS[*]} " in
+    *" $existing "*) ;;
+    *) BRAVE_POLICY_DIRS+=("$existing") ;;
+  esac
+done
+
 declare -A POLICY_DIRS=(
-  [brave]="/etc/brave/policies/managed"
   [chromium]="/etc/chromium/policies/managed"
   [chrome]="/etc/opt/chrome/policies/managed"
 )
 declare -A DETECT=(
-  [brave]="brave-browser brave"
   [chromium]="chromium chromium-browser"
   [chrome]="google-chrome google-chrome-stable"
 )
@@ -51,21 +74,40 @@ TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 policy_json > "$TMP"
 
-installed=0
+# Assemble the full target list: every Brave channel root (always — Brave is the
+# primary) plus chromium/chrome if their binaries are present.
+TARGETS=("${BRAVE_POLICY_DIRS[@]}")
 for key in "${!POLICY_DIRS[@]}"; do
-  present=0
   for bin in ${DETECT[$key]}; do
-    if command -v "$bin" >/dev/null 2>&1; then present=1; break; fi
+    if command -v "$bin" >/dev/null 2>&1; then
+      TARGETS+=("${POLICY_DIRS[$key]}")
+      break
+    fi
   done
-  if [ "$present" -eq 0 ] && [ "$key" != "brave" ]; then
+done
+
+# Idempotent: only touch /etc (and only prompt for sudo) when a target is
+# missing or out of date. This lets apply-update.sh call us on every `git pull`
+# without nagging for a password once everything is already in place.
+NEED_WRITE=()
+for dir in "${TARGETS[@]}"; do
+  dst="$dir/focusos-blocker.json"
+  if [ -f "$dst" ] && cmp -s "$TMP" "$dst"; then
     continue
   fi
-  dir="${POLICY_DIRS[$key]}"
+  NEED_WRITE+=("$dir")
+done
+
+if [ "${#NEED_WRITE[@]}" -eq 0 ]; then
+  echo "Force-install policy already current for ${#TARGETS[@]} target(s); nothing to do."
+  exit 0
+fi
+
+echo "Updating force-install policy for ${#NEED_WRITE[@]} target(s) (needs sudo)…"
+for dir in "${NEED_WRITE[@]}"; do
   sudo mkdir -p "$dir"
   sudo install -m 644 "$TMP" "$dir/focusos-blocker.json"
   echo "  installed -> $dir/focusos-blocker.json"
-  installed=$((installed + 1))
 done
 
-echo "Force-install policy written for $installed browser(s)."
-echo "Restart the browser; the FocusOS Blocker installs silently and stays pinned."
+echo "Done. Restart the browser; the FocusOS Blocker installs silently and stays pinned."

@@ -54,6 +54,11 @@ QString policyFilePath()
     return blockerDir() + QStringLiteral("/policy.dat");
 }
 
+QString heartbeatFilePath()
+{
+    return blockerDir() + QStringLiteral("/host-alive");
+}
+
 void write(bool active, const QStringList &allowlist)
 {
     QStringList hosts;
