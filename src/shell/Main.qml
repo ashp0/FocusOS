@@ -595,8 +595,12 @@ Item {
             color: "#e8050508"
         }
 
+        // hoverEnabled so this overlay grabs hover while it's up — otherwise the
+        // ENGAGE button underneath keeps the hover state it had at click time and
+        // stays highlighted/scaled after the routine is aborted.
         MouseArea {
             anchors.fill: parent
+            hoverEnabled: true
         }
 
         Rectangle {

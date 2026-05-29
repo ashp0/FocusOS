@@ -80,4 +80,8 @@ private:
     RoutineSession m_activeSession;
     bool m_hasActiveSession = false;
     int m_dailyTargetMinutes = 180;
+    // Last time save() actually wrote to disk. Live progress ticks every second
+    // but only persist occasionally so the SSD isn't hammered; final-state and
+    // settings writes still go through immediately.
+    mutable qint64 m_lastSaveMs = 0;
 };

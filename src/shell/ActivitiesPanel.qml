@@ -801,7 +801,13 @@ Item {
                             MouseArea {
                                 id: buttonMouse
                                 anchors.fill: parent
-                                hoverEnabled: true
+                                // Drop hover tracking while the network-lock prompt
+                                // is up: clicking ENGAGE pops that modal over this
+                                // button, and without this the button stays
+                                // highlighted/scaled after an abort because it never
+                                // received a hover-leave. Toggling hoverEnabled forces
+                                // containsMouse to re-evaluate when the prompt closes.
+                                hoverEnabled: !routineManager.networkLockPromptVisible
                                 enabled: delegateRoot.buttonEnabled
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: routineManager.engage(delegateRoot.routineId)
@@ -947,6 +953,38 @@ Item {
                     controlAvailable: systemStatus.brightnessAvailable
                     onValueEdited: function(nextValue) {
                         systemStatus.setBrightness(nextValue)
+                    }
+                }
+
+                // Per-routine display-sleep toggle — only meaningful while a
+                // routine is engaged. Defaults to STAY AWAKE; the choice is
+                // saved against the active routine so it sticks per routine.
+                Rectangle {
+                    id: displaySleepButton
+                    visible: routineManager.active
+                    width: 124
+                    height: 28
+                    color: displaySleepMouse.containsMouse ? Theme.steel : "transparent"
+                    border.width: 1
+                    border.color: displaySleepMouse.containsMouse ? Theme.goldDim : Theme.textGhost
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: routineManager.displayStaysAwake ? "☀ STAY AWAKE" : "☾ ALLOW SLEEP"
+                        color: routineManager.displayStaysAwake
+                               ? (displaySleepMouse.containsMouse ? Theme.gold : Theme.goldDim)
+                               : (displaySleepMouse.containsMouse ? Theme.goldDim : Theme.textDim)
+                        font.family: root.headerFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    MouseArea {
+                        id: displaySleepMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: routineManager.displayStaysAwake = !routineManager.displayStaysAwake
                     }
                 }
             }

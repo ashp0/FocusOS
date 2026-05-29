@@ -2,6 +2,8 @@
 
 #include "platform/PlatformBackend.h"
 
+#include <QProcess>
+
 class MacBackend final : public PlatformBackend
 {
 public:
@@ -13,4 +15,10 @@ public:
     void dropNetworkPolicy() override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;
     void terminateUnrestrictedApps() override;
+    void setDisplaySleepInhibited(bool inhibited) override;
+
+private:
+    // Holds `caffeinate` while a routine wants the display kept on; terminated
+    // (or never started) otherwise. Destroyed -> child is reaped automatically.
+    QProcess m_caffeinate;
 };

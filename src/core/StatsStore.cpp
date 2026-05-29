@@ -2,6 +2,7 @@
 
 #include "core/RoutineManager.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -10,6 +11,11 @@
 #include <QSaveFile>
 
 namespace {
+
+// Live-session progress is reported every second; persist it to disk at most
+// this often. Final-session / target / reflection writes are not throttled.
+constexpr qint64 kProgressSaveIntervalMs = 45 * 1000;
+
 
 QString statsPath()
 {
@@ -261,10 +267,23 @@ void StatsStore::recordRoutineSessionProgress(const QString &routineId,
         return;
     }
 
+    const int previousMinutes = m_hasActiveSession ? m_activeSession.minutes : -1;
     m_activeSession = session;
     m_hasActiveSession = true;
-    save();
-    emit statsChanged();
+
+    // Throttle the disk write — the in-memory active session is always current,
+    // but we only flush it occasionally. The UI is refreshed when the displayed
+    // minute changes (or on a flush) so the graphs stay live without rebuilding
+    // every second.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    bool persisted = false;
+    if (now - m_lastSaveMs >= kProgressSaveIntervalMs) {
+        save();
+        persisted = true;
+    }
+    if (persisted || session.minutes != previousMinutes) {
+        emit statsChanged();
+    }
 }
 
 void StatsStore::load()
@@ -354,7 +373,11 @@ bool StatsStore::save() const
     }
 
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    const bool committed = file.commit();
+    if (committed) {
+        m_lastSaveMs = QDateTime::currentMSecsSinceEpoch();
+    }
+    return committed;
 }
 
 QVariantMap StatsStore::aggregateForDate(const QDate &date) const

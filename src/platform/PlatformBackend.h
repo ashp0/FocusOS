@@ -23,6 +23,10 @@ public:
     // Return the FocusOS shell to its home workspace + clean up any routine
     // window-management state. Called when a routine ends.
     virtual void restoreShellPlacement() {}
+    // Keep the display awake (inhibit screen blanking / sleep) for the
+    // duration of a routine. Idempotent — call with true to hold the display
+    // on, false to release. No-op on platforms without a power-management hook.
+    virtual void setDisplaySleepInhibited(bool inhibited) { Q_UNUSED(inhibited); }
     // Apps the user has flagged as "always allowed" — calendar, word
     // processor, etc. The backend exempts them from the lockdown watchdog
     // and won't terminate them between routines.

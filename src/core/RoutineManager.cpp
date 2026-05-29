@@ -21,6 +21,11 @@
 
 namespace {
 
+// The routine timer ticks every second, but the user doesn't want the SSD
+// touched that often. Persist the crash checkpoint at most this often on the
+// ordinary tick path; legitimate state transitions force an immediate write.
+constexpr qint64 kCheckpointWriteIntervalMs = 30 * 1000;
+
 QString routinesPath()
 {
     return RoutineManager::dataDirectory() + QStringLiteral("/routines.json");
@@ -333,7 +338,7 @@ void RoutineManager::togglePause()
     } else {
         m_routineTimer.pause();
     }
-    writeActiveSession();
+    writeActiveSession(true);
 }
 
 int RoutineManager::routineCount() const
@@ -492,6 +497,7 @@ void RoutineManager::endActiveRoutine()
     m_activeRoutineId.clear();
     m_activeStartedAt = {};
     m_routineTimer.stop();
+    updateDisplaySleepInhibit();
     emit activeChanged();
     emitRowsChanged();
 }
@@ -659,6 +665,7 @@ void RoutineManager::unlockOtherAccess()
         m_activeRoutineId.clear();
         m_activeStartedAt = {};
         m_routineTimer.stop();
+        updateDisplaySleepInhibit();
         emit activeChanged();
         emitRowsChanged();
     }
@@ -706,6 +713,7 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
+        object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
         routines.append(object);
     }
     return routines;
@@ -763,6 +771,7 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
         routine.insert(QStringLiteral("break_frequency_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0)));
         routine.insert(QStringLiteral("break_duration_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0)));
+        routine.insert(QStringLiteral("keep_display_awake"), object.value(QStringLiteral("keep_display_awake"), true).toBool());
         array.append(routine);
     }
 
@@ -799,6 +808,19 @@ bool RoutineManager::updateRoutineDescription(const QString &routineId, const QS
     }
     m_routines[routineIndex].description = trimmed;
 
+    if (!persistRoutines()) {
+        return false;
+    }
+
+    emit dataChanged(index(routineIndex, 0), index(routineIndex, 0), { DescriptionRole });
+    return true;
+}
+
+// Serialize the in-memory routines back to routines.json. Shared by the
+// description editor and the per-routine display-sleep toggle so both keep the
+// full routine record (including keep_display_awake) intact on disk.
+bool RoutineManager::persistRoutines() const
+{
     QJsonArray array;
     for (const Routine &routine : m_routines) {
         QJsonArray appArray;
@@ -820,6 +842,7 @@ bool RoutineManager::updateRoutineDescription(const QString &routineId, const QS
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
+        object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
         array.append(object);
     }
 
@@ -831,12 +854,37 @@ bool RoutineManager::updateRoutineDescription(const QString &routineId, const QS
         return false;
     }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    if (!file.commit()) {
-        return false;
-    }
+    return file.commit();
+}
 
-    emit dataChanged(index(routineIndex, 0), index(routineIndex, 0), { DescriptionRole });
-    return true;
+bool RoutineManager::displayStaysAwake() const
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    return routineIndex >= 0 ? m_routines.at(routineIndex).keepDisplayAwake : true;
+}
+
+void RoutineManager::setDisplayStaysAwake(bool stayAwake)
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    if (routineIndex < 0 || m_routines[routineIndex].keepDisplayAwake == stayAwake) {
+        return;
+    }
+    m_routines[routineIndex].keepDisplayAwake = stayAwake;
+    persistRoutines();
+    updateDisplaySleepInhibit();
+}
+
+// Hold the display awake while a routine that asks for it is active; release
+// otherwise. Emits displayStaysAwakeChanged so the bottom-bar toggle reflects
+// the active routine's stored preference.
+void RoutineManager::updateDisplaySleepInhibit()
+{
+    if (m_backend) {
+        const int routineIndex = indexOfRoutine(m_activeRoutineId);
+        const bool inhibit = routineIndex >= 0 && m_routines.at(routineIndex).keepDisplayAwake;
+        m_backend->setDisplaySleepInhibited(inhibit);
+    }
+    emit displayStaysAwakeChanged();
 }
 
 QString RoutineManager::pickApplication() const
@@ -848,18 +896,61 @@ QString RoutineManager::pickApplication() const
         QStringLiteral("/Applications"),
         QStringLiteral("Applications (*.app)"));
 #elif defined(Q_OS_LINUX)
-    const QString applicationsPath = QFileInfo::exists(QStringLiteral("/usr/share/applications"))
-        ? QStringLiteral("/usr/share/applications")
-        : QDir::homePath();
-    const QString path = QFileDialog::getOpenFileName(
-        nullptr,
-        QStringLiteral("Select Allowed Application"),
-        applicationsPath,
-        QStringLiteral("Applications (*.desktop);;Executables (*)"));
+    // Apps live in lots of places on Linux: system .desktop files, per-user and
+    // Flatpak/Snap exports (under dotted/hidden dirs), and standalone binaries /
+    // AppImages anywhere in $HOME. The old picker started in /usr/share and used
+    // the native dialog, which hid dotfolders — so apps like Obsidian (Flatpak,
+    // or an AppImage in ~/Applications) were unreachable. Use a Qt dialog with
+    // hidden files revealed, shortcuts to the common app dirs, and a filter that
+    // also matches AppImages / plain executables.
+    static const QStringList appDirs {
+        QDir::homePath() + QStringLiteral("/.local/share/applications"),
+        QDir::homePath() + QStringLiteral("/.local/share/flatpak/exports/share/applications"),
+        QStringLiteral("/var/lib/flatpak/exports/share/applications"),
+        QStringLiteral("/var/lib/snapd/desktop/applications"),
+        QStringLiteral("/usr/share/applications"),
+        QDir::homePath() + QStringLiteral("/Applications"),
+    };
+
+    QString startDir = QDir::homePath();
+    for (const QString &dir : appDirs) {
+        if (QFileInfo::exists(dir)) {
+            startDir = dir;
+            break;
+        }
+    }
+
+    QFileDialog dialog(nullptr, QStringLiteral("Select Allowed Application"), startDir);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    // Qt-drawn dialog so the hidden-files filter and sidebar shortcuts below are
+    // actually honored (the native portal dialog ignores them).
+    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    dialog.setFilter(dialog.filter() | QDir::Hidden);
+    dialog.setNameFilters({
+        QStringLiteral("Apps & executables (*.desktop *.AppImage *.appimage *.sh *)"),
+        QStringLiteral("Desktop entries (*.desktop)"),
+        QStringLiteral("AppImages (*.AppImage *.appimage)"),
+        QStringLiteral("All files (*)"),
+    });
+
+    QList<QUrl> shortcuts { QUrl::fromLocalFile(QDir::homePath()) };
+    for (const QString &dir : appDirs) {
+        if (QFileInfo::exists(dir)) {
+            shortcuts.append(QUrl::fromLocalFile(dir));
+        }
+    }
+    dialog.setSidebarUrls(shortcuts);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return {};
+    }
+    const QStringList selected = dialog.selectedFiles();
+    const QString path = selected.isEmpty() ? QString() : selected.first();
     const QFileInfo info(path);
     if (!path.isEmpty() &&
         info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) != 0 &&
         !info.isExecutable()) {
+        setStatusMessage(QStringLiteral("THAT FILE ISN'T EXECUTABLE — chmod +x IT, OR TYPE A COMMAND LIKE: flatpak run md.obsidian.Obsidian"));
         return {};
     }
     return path;
@@ -985,6 +1076,7 @@ void RoutineManager::loadRoutines()
         routine.networkLock = object.value(QStringLiteral("network_lock")).toBool(true);
         routine.breakFrequencyMinutes = qMax(0, object.value(QStringLiteral("break_frequency_minutes")).toInt(0));
         routine.breakDurationMinutes = qMax(0, object.value(QStringLiteral("break_duration_minutes")).toInt(0));
+        routine.keepDisplayAwake = object.value(QStringLiteral("keep_display_awake")).toBool(true);
         if (!routine.id.isEmpty() && !routine.name.isEmpty()) {
             m_routines.append(routine);
         }
@@ -1008,6 +1100,7 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     deepWork.insert(QStringLiteral("network_lock"), true);
     deepWork.insert(QStringLiteral("break_frequency_minutes"), 0);
     deepWork.insert(QStringLiteral("break_duration_minutes"), 0);
+    deepWork.insert(QStringLiteral("keep_display_awake"), true);
     routines.append(deepWork);
 
     QJsonObject research;
@@ -1024,6 +1117,7 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     research.insert(QStringLiteral("network_lock"), true);
     research.insert(QStringLiteral("break_frequency_minutes"), 0);
     research.insert(QStringLiteral("break_duration_minutes"), 0);
+    research.insert(QStringLiteral("keep_display_awake"), true);
     routines.append(research);
 
     QJsonObject reflection;
@@ -1037,6 +1131,7 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     reflection.insert(QStringLiteral("network_lock"), true);
     reflection.insert(QStringLiteral("break_frequency_minutes"), 0);
     reflection.insert(QStringLiteral("break_duration_minutes"), 0);
+    reflection.insert(QStringLiteral("keep_display_awake"), true);
     routines.append(reflection);
 
     QJsonObject root;
@@ -1049,7 +1144,7 @@ void RoutineManager::writeDefaultRoutines(const QString &path) const
     }
 }
 
-void RoutineManager::writeActiveSession() const
+void RoutineManager::writeActiveSession(bool force) const
 {
     if (!active()) {
         return;
@@ -1058,6 +1153,15 @@ void RoutineManager::writeActiveSession() const
     if (routineIndex < 0) {
         return;
     }
+
+    // Per-tick writes are throttled to spare the disk; only forced writes (state
+    // transitions) and the periodic checkpoint actually hit storage.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!force && (now - m_lastCheckpointWriteMs) < kCheckpointWriteIntervalMs) {
+        return;
+    }
+    m_lastCheckpointWriteMs = now;
+
     const Routine &routine = m_routines.at(routineIndex);
 
     QJsonObject object;
@@ -1138,7 +1242,8 @@ void RoutineManager::resumeActiveSessionIfPresent()
     emit activeChanged();
     emitRowsChanged();
     m_routineTimer.start(remaining);
-    writeActiveSession();
+    writeActiveSession(true);
+    updateDisplaySleepInhibit();
 
     const int minutes = (remaining + 59) / 60;
     setStatusMessage(QStringLiteral("ROUTINE RESUMED — %1 MIN REMAINING").arg(minutes));
@@ -1167,6 +1272,7 @@ void RoutineManager::onRoutineExpired()
     clearActiveSession();
     m_activeRoutineId.clear();
     m_activeStartedAt = {};
+    updateDisplaySleepInhibit();
     emit activeChanged();
     emitRowsChanged();
 }
@@ -1280,10 +1386,11 @@ bool RoutineManager::startRoutine(const Routine &routine, bool applyNetworkLock,
 
     // Arm the checkpoint and respawn watchdog: from here on a kill/crash
     // re-launches FocusOS and resumes this locked routine.
-    writeActiveSession();
+    writeActiveSession(true);
     if (m_backend) {
         m_backend->startWatchdog(QCoreApplication::applicationFilePath());
     }
+    updateDisplaySleepInhibit();
     return true;
 }
 

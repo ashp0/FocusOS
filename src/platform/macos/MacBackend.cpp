@@ -111,3 +111,24 @@ void MacBackend::terminateUnrestrictedApps()
         QStringLiteral("tell application \"Terminal\" to quit")
     });
 }
+
+void MacBackend::setDisplaySleepInhibited(bool inhibited)
+{
+    if (inhibited) {
+        if (m_caffeinate.state() != QProcess::NotRunning) {
+            return;
+        }
+        // caffeinate -d holds an assertion that prevents the display from
+        // sleeping; it lives until we terminate it (or FocusOS exits).
+        m_caffeinate.start(QStringLiteral("/usr/bin/caffeinate"), {QStringLiteral("-d")});
+        return;
+    }
+
+    if (m_caffeinate.state() != QProcess::NotRunning) {
+        m_caffeinate.terminate();
+        if (!m_caffeinate.waitForFinished(1000)) {
+            m_caffeinate.kill();
+            m_caffeinate.waitForFinished(200);
+        }
+    }
+}

@@ -21,6 +21,7 @@ struct Routine
     bool networkLock = true;
     int breakFrequencyMinutes = 0;
     int breakDurationMinutes = 0;
+    bool keepDisplayAwake = true;
 };
 
 class RoutineManager final : public QAbstractListModel
@@ -53,6 +54,7 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(QString networkLockRoutineName READ networkLockRoutineName NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QStringList alwaysAllowedApps READ alwaysAllowedApps NOTIFY alwaysAllowedAppsChanged)
     Q_PROPERTY(bool overlayProgressEnabled READ overlayProgressEnabled WRITE setOverlayProgressEnabled NOTIFY overlayProgressEnabledChanged)
+    Q_PROPERTY(bool displayStaysAwake READ displayStaysAwake WRITE setDisplayStaysAwake NOTIFY displayStaysAwakeChanged)
 
 public:
     enum Role {
@@ -110,6 +112,8 @@ public:
     QStringList alwaysAllowedApps() const;
     bool overlayProgressEnabled() const;
     void setOverlayProgressEnabled(bool enabled);
+    bool displayStaysAwake() const;
+    void setDisplayStaysAwake(bool stayAwake);
 
     Q_INVOKABLE void engage(const QString &routineId);
     Q_INVOKABLE void abortPendingRoutineStart();
@@ -147,6 +151,7 @@ signals:
     void networkLockPromptChanged();
     void alwaysAllowedAppsChanged();
     void overlayProgressEnabledChanged();
+    void displayStaysAwakeChanged();
     void desktopAccessRequested();
     void routineSessionFinished(const QString &routineId,
                                 const QString &routineName,
@@ -165,8 +170,10 @@ private:
     bool saveConfig() const;
     void loadRoutines();
     void writeDefaultRoutines(const QString &path) const;
-    void writeActiveSession() const;
+    void writeActiveSession(bool force = false) const;
     void clearActiveSession() const;
+    bool persistRoutines() const;
+    void updateDisplaySleepInhibit();
     void resumeActiveSessionIfPresent();
     void onRoutineExpired();
     void tickOtherAccess();
@@ -206,4 +213,8 @@ private:
     bool m_overlayProgressEnabled = true;
     bool m_editMode = false;
     bool m_desktopShellRunning = false;
+    // Throttle for the active.json crash checkpoint — the timer ticks every
+    // second but we only need to touch the disk occasionally. Forced writes
+    // (start, pause/resume, resume-on-launch) bypass it.
+    mutable qint64 m_lastCheckpointWriteMs = 0;
 };

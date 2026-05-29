@@ -914,6 +914,56 @@ void LinuxBackend::setAlwaysAllowedApps(const QStringList &commandLines)
     m_alwaysAllowedCommandLines = commandLines;
 }
 
+void LinuxBackend::setDisplaySleepInhibited(bool inhibited)
+{
+    if (inhibited) {
+        if (m_displayInhibitor.state() != QProcess::NotRunning) {
+            return;
+        }
+        const QString inhibit = QStandardPaths::findExecutable(QStringLiteral("systemd-inhibit"));
+        if (inhibit.isEmpty()) {
+            return;
+        }
+        // Hold a logind idle/sleep inhibitor for the lifetime of `sleep
+        // infinity`; powerdevil / KWin honor it and won't blank or sleep the
+        // display. Terminating the helper releases the lock.
+        m_displayInhibitor.setProgram(inhibit);
+        m_displayInhibitor.setArguments({
+            QStringLiteral("--what=idle:sleep"),
+            QStringLiteral("--who=FocusOS"),
+            QStringLiteral("--why=Focus routine active"),
+            QStringLiteral("--mode=block"),
+            QStringLiteral("sleep"),
+            QStringLiteral("infinity")
+        });
+        m_displayInhibitor.start();
+        return;
+    }
+
+    if (m_displayInhibitor.state() != QProcess::NotRunning) {
+        m_displayInhibitor.terminate();
+        if (!m_displayInhibitor.waitForFinished(1000)) {
+            m_displayInhibitor.kill();
+            m_displayInhibitor.waitForFinished(200);
+        }
+    }
+}
+
+void LinuxBackend::releaseDisplaySleepInhibitors()
+{
+    // The crash handler can't drive a QProcess we may not own (the inhibitor
+    // could belong to a predecessor the respawn watchdog just replaced), and the
+    // helper is started detached, so it outlives a crashing FocusOS. Sweep every
+    // FocusOS-tagged systemd-inhibit by its --who marker instead. The pattern
+    // matches only our own inhibitor command line, never the FocusOS binary or
+    // an unrelated lock. startDetached so this is safe from the signal handler:
+    // the pkill survives our own death and completes independently.
+    QProcess::startDetached(QStringLiteral("pkill"),
+                            {QStringLiteral("-f"),
+                             QStringLiteral("--"),
+                             QStringLiteral("--who=FocusOS")});
+}
+
 bool LinuxBackend::restoreLoginSessions(QString *errorMessage)
 {
     // The recovery script is installed by install.sh and granted a scoped,

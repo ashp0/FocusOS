@@ -4,6 +4,7 @@
 #include "platform/linux/NetGate.h"
 
 #include <QList>
+#include <QProcess>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -30,6 +31,8 @@ public:
     void setAlwaysAllowedApps(const QStringList &commandLines) override;
     void startWatchdog(const QString &binaryPath) override;
     bool restoreLoginSessions(QString *errorMessage = nullptr) override;
+    void setDisplaySleepInhibited(bool inhibited) override;
+    void releaseDisplaySleepInhibitors() override;
 
 private:
     void startLockdownWatchdog();
@@ -43,4 +46,7 @@ private:
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
     QStringList m_alwaysAllowedCommandLines;
+    // Holds a systemd-inhibit lock (--what=idle) while a routine wants the
+    // screen kept on; terminated to release. Reaped on destruction.
+    QProcess m_displayInhibitor;
 };

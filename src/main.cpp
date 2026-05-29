@@ -38,6 +38,11 @@ static void focusosFatalSignalHandler(int signum)
 {
     if (g_crashCleanupBackend) {
         g_crashCleanupBackend->dropNetworkPolicy();
+        // Release the display-sleep inhibitor too — otherwise the respawn
+        // watchdog relaunches FocusOS while the orphaned systemd-inhibit/sleep
+        // helper keeps holding the lock, and they pile up across crashes,
+        // blocking idle/sleep indefinitely.
+        g_crashCleanupBackend->releaseDisplaySleepInhibitors();
         // Restore the desktop shell on the way down — otherwise the user is
         // staring at a black screen with no launcher after the abort.
         g_crashCleanupBackend->launchDesktopShell(nullptr);
@@ -80,6 +85,11 @@ int main(int argc, char *argv[])
 #elif defined(Q_OS_LINUX)
     LinuxBackend backend;
     installCrashCleanupHandlers(&backend);
+    // Startup sweep: if a previous instance crashed (or was killed) before it
+    // could release its display-sleep inhibitor, the respawn watchdog has just
+    // relaunched us — clear any orphaned FocusOS inhibitor before this session
+    // starts so the locks don't accumulate.
+    backend.releaseDisplaySleepInhibitors();
 #else
 #error "FocusOS currently supports macOS and Linux backends only."
 #endif

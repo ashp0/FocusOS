@@ -102,7 +102,8 @@ PercentReading readBrightness()
 
 void writeSystemVolume(int percent)
 {
-    QProcess::execute(QStringLiteral("/usr/bin/osascript"), {
+    // Fire-and-forget so the UI thread never blocks waiting on osascript.
+    QProcess::startDetached(QStringLiteral("/usr/bin/osascript"), {
         QStringLiteral("-e"),
         QStringLiteral("set volume output volume %1").arg(clampedPercent(percent))
     });
@@ -110,7 +111,7 @@ void writeSystemVolume(int percent)
 
 void writeMuteToggle()
 {
-    QProcess::execute(QStringLiteral("/usr/bin/osascript"), {
+    QProcess::startDetached(QStringLiteral("/usr/bin/osascript"), {
         QStringLiteral("-e"),
         QStringLiteral("set volume output muted (not (output muted of (get volume settings)))")
     });
@@ -243,8 +244,10 @@ void writeSystemVolume(int percent)
     const int clamped = clampedPercent(percent);
     const QString pactl = QStandardPaths::findExecutable(QStringLiteral("pactl"));
     if (!pactl.isEmpty()) {
-        QProcess::execute(pactl, {QStringLiteral("set-sink-mute"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("0")});
-        QProcess::execute(pactl, {QStringLiteral("set-sink-volume"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("%1%").arg(clamped)});
+        // Detached so dragging the volume slider doesn't stall the UI thread on
+        // a synchronous pactl round-trip for every step.
+        QProcess::startDetached(pactl, {QStringLiteral("set-sink-mute"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("0")});
+        QProcess::startDetached(pactl, {QStringLiteral("set-sink-volume"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("%1%").arg(clamped)});
     }
 }
 
@@ -252,7 +255,7 @@ void writeMuteToggle()
 {
     const QString pactl = QStandardPaths::findExecutable(QStringLiteral("pactl"));
     if (!pactl.isEmpty()) {
-        QProcess::execute(pactl, {QStringLiteral("set-sink-mute"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("toggle")});
+        QProcess::startDetached(pactl, {QStringLiteral("set-sink-mute"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("toggle")});
     }
 }
 
@@ -363,14 +366,21 @@ void SystemStatus::adjustSystemVolume(int deltaPercent)
 
 void SystemStatus::setSystemVolume(int percent)
 {
-    writeSystemVolume(percent);
-    refreshStatus();
+    const int clamped = clampedPercent(percent);
+    writeSystemVolume(clamped);
+    // Optimistically reflect the new value instead of blocking on a read-back —
+    // the periodic refresh reconciles any drift. Keeps the slider instant.
+    if (!m_volumeAvailable || m_volumePercent != clamped) {
+        m_volumePercent = clamped;
+        m_volumeAvailable = true;
+        emit statusChanged();
+    }
 }
 
 void SystemStatus::toggleMute()
 {
+    // Detached write; the 30s refresh (or a later volume change) catches up.
     writeMuteToggle();
-    refreshStatus();
 }
 
 void SystemStatus::adjustBrightness(int deltaPercent)
@@ -381,8 +391,13 @@ void SystemStatus::adjustBrightness(int deltaPercent)
 
 void SystemStatus::setBrightness(int percent)
 {
-    writeBrightness(percent);
-    refreshStatus();
+    const int clamped = clampedPercent(percent);
+    writeBrightness(clamped);
+    if (!m_brightnessAvailable || m_brightnessPercent != clamped) {
+        m_brightnessPercent = clamped;
+        m_brightnessAvailable = true;
+        emit statusChanged();
+    }
 }
 
 void SystemStatus::refresh()

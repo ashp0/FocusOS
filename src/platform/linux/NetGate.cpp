@@ -148,22 +148,63 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
         }
     }
 
+    // Sanitize a single resolved/literal address into the right family bucket.
+    // Strips IPv6 zone ids (nft's ipv6_addr set can't parse a "%iface" suffix)
+    // and folds IPv4-mapped/-compatible forms (e.g. ::ffff:1.2.3.4) back to
+    // plain IPv4 so they don't land in the ipv6 set carrying an embedded
+    // dotted-quad that nft would reject.
+    const auto insertAddress = [&resolvedIpv4Addresses, &resolvedIpv6Addresses](QHostAddress address) {
+        if (address.isNull()) {
+            return;
+        }
+        if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+            resolvedIpv4Addresses.insert(address.toString());
+            return;
+        }
+        if (address.protocol() != QAbstractSocket::IPv6Protocol) {
+            return;
+        }
+        address.setScopeId(QString());
+        QString text = address.toString();
+        const int zone = text.indexOf(QLatin1Char('%'));
+        if (zone >= 0) {
+            text = text.left(zone);
+        }
+        if (text.contains(QLatin1Char('.'))) {
+            bool ok = false;
+            const quint32 mapped = address.toIPv4Address(&ok);
+            if (ok) {
+                resolvedIpv4Addresses.insert(QHostAddress(mapped).toString());
+            }
+            return;
+        }
+        resolvedIpv6Addresses.insert(text);
+    };
+
     for (const QString &entry : expandedEntries) {
         QString host = entry.trimmed().toLower();
         if (host.isEmpty()) {
             continue;
         }
 
-        // CIDR ranges (e.g. 173.194.0.0/16 or 2607:f8b0::/32) pass straight
-        // into the nftables interval sets — no DNS resolution needed.
+        // A genuine CIDR ("173.194.0.0/16", "2607:f8b0::/32") passes straight
+        // into the nftables interval sets — no DNS needed. But a full URL
+        // ("https://www.youtube.com/watch") or a host+path ("youtube.com/watch")
+        // ALSO contains '/'. The old code only looked for a ':' before the
+        // slash, so "https:" read as IPv6 and the whole raw URL was dumped into
+        // the ipv6 set — that is the "syntax error, unexpected /" the network
+        // routine hit. Validate it as an actual subnet first; if it isn't one,
+        // fall through to URL/host extraction + DNS below.
         if (host.contains(QLatin1Char('/'))) {
-            const QString addressPart = host.section(QLatin1Char('/'), 0, 0);
-            if (addressPart.contains(QLatin1Char(':'))) {
-                resolvedIpv6Addresses.insert(host);
-            } else {
-                resolvedIpv4Addresses.insert(host);
+            const QPair<QHostAddress, int> subnet = QHostAddress::parseSubnet(host);
+            if (!subnet.first.isNull() && subnet.second >= 0) {
+                if (subnet.first.protocol() == QAbstractSocket::IPv6Protocol) {
+                    resolvedIpv6Addresses.insert(host);
+                } else {
+                    resolvedIpv4Addresses.insert(host);
+                }
+                continue;
             }
-            continue;
         }
 
         const QUrl url = QUrl::fromUserInput(host);
@@ -175,21 +216,13 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
 
         const QHostAddress literalAddress(host);
         if (!literalAddress.isNull()) {
-            if (literalAddress.protocol() == QAbstractSocket::IPv4Protocol) {
-                resolvedIpv4Addresses.insert(literalAddress.toString());
-            } else if (literalAddress.protocol() == QAbstractSocket::IPv6Protocol) {
-                resolvedIpv6Addresses.insert(literalAddress.toString());
-            }
+            insertAddress(literalAddress);
             continue;
         }
 
         const QHostInfo info = QHostInfo::fromName(host);
         for (const QHostAddress &address : info.addresses()) {
-            if (address.protocol() == QAbstractSocket::IPv4Protocol) {
-                resolvedIpv4Addresses.insert(address.toString());
-            } else if (address.protocol() == QAbstractSocket::IPv6Protocol) {
-                resolvedIpv6Addresses.insert(address.toString());
-            }
+            insertAddress(address);
         }
     }
 #endif
@@ -279,6 +312,26 @@ bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) cons
     }
     if (nft.exitStatus() != QProcess::NormalExit || nft.exitCode() != 0) {
         QString stderrText = QString::fromUtf8(nft.readAllStandardError()).trimmed();
+        // nft echoes the whole offending ruleset line (the allowlist can be
+        // thousands of characters) plus a caret line under it. Keep just the
+        // human-readable "… Error: …" diagnostic so the prompt doesn't run off
+        // the screen.
+        {
+            const QStringList lines = stderrText.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            QStringList kept;
+            for (const QString &line : lines) {
+                const QString trimmedLine = line.trimmed();
+                if (trimmedLine.contains(QStringLiteral("Error:"), Qt::CaseInsensitive) ||
+                    trimmedLine.contains(QStringLiteral("warning:"), Qt::CaseInsensitive)) {
+                    kept.append(trimmedLine.left(200));
+                }
+            }
+            if (!kept.isEmpty()) {
+                stderrText = kept.mid(0, 2).join(QStringLiteral(" "));
+            } else {
+                stderrText = stderrText.left(200);
+            }
+        }
         // nftables needs CAP_NET_ADMIN — without it, the kernel rejects the
         // netlink cache load with EPERM. Translate that into something the
         // user can actually act on.
