@@ -1,0 +1,35 @@
+# FocusOS locked-down KWin window rules.
+#
+# Read via XDG_CONFIG_DIRS (set by focusos-session.sh) — the same mechanism as
+# kwinrc / kglobalshortcutsrc.
+#
+# Why this file exists: the progress overlay is a transparent, click-through
+# window that paints the routine countdown border on top of everything. On
+# X11 that "stay on top" came for free from Qt::WindowStaysOnTopHint, but on
+# KWin/Wayland that hint — and QWindow::raise() — are no-ops (a Wayland client
+# can't restack itself). So once the routine apps map and take focus they cover
+# the overlay and you lose the countdown. The only reliable fix is a
+# server-side KWin rule that FORCES the overlay window to keep-above.
+#
+# The overlay sets its window caption to "FocusOS Focus Progress Overlay"
+# (ShellWindow.cpp); we match that exact title so the rule touches nothing
+# else. Match/set enums: titlematch 1 = exact; *rule 2 = Force.
+
+[General]
+count=1
+rules=focusos_progress_overlay
+
+[focusos_progress_overlay]
+Description=FocusOS progress overlay stays above routine apps
+title=FocusOS Focus Progress Overlay
+titlematch=1
+above=true
+aboverule=2
+skiptaskbar=true
+skiptaskbarrule=2
+skipswitcher=true
+skipswitcherrule=2
+skippager=true
+skippagerrule=2
+acceptfocus=false
+acceptfocusrule=2

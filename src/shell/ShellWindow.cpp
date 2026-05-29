@@ -54,6 +54,12 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
     }
     m_progressOverlayWindow.setColor(QColor(Qt::transparent));
     m_progressOverlayWindow.setResizeMode(QQuickView::SizeRootObjectToView);
+    // Distinctive caption so the locked-down KWin window rule (kwinrulesrc) can
+    // match *only* this window and force it to keep-above. Qt's
+    // WindowStaysOnTopHint and QWindow::raise() are no-ops on Wayland, so the
+    // server-side rule is the only thing that actually keeps the countdown
+    // border on top of the routine apps. Must be set before the window maps.
+    m_progressOverlayWindow.setTitle(QStringLiteral("FocusOS Focus Progress Overlay"));
     m_progressOverlayWindow.setFlags(Qt::Tool |
                                      Qt::FramelessWindowHint |
                                      Qt::WindowStaysOnTopHint |
