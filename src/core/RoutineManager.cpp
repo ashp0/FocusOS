@@ -477,7 +477,7 @@ void RoutineManager::endActiveRoutine()
 
     // Strict mode: the END button cannot release the routine before
     // min_time_minutes has elapsed. The escape hatch is Settings access (TOTP),
-    // which honors the same floor.
+    // which bypasses this floor (see unlockOtherAccess).
     const int minSeconds = routine.minTimeMinutes * 60;
     if (minSeconds > 0 && elapsedSecondsValue < minSeconds) {
         const int remaining = minSeconds - elapsedSecondsValue;
@@ -629,26 +629,10 @@ void RoutineManager::unlockOtherAccess()
 {
     clearFinishedSessionPrompt();
 
-    // Honor each routine's min_time_minutes as a hard floor on early exits.
-    // The user set this value precisely so a moment-of-weakness TOTP entry
-    // doesn't dissolve the session — refuse the unlock and tell them how much
-    // longer they're committed to.
-    if (active()) {
-        const int activeIndex = indexOfRoutine(m_activeRoutineId);
-        if (activeIndex >= 0) {
-            const Routine &activeRoutine = m_routines.at(activeIndex);
-            const int minSeconds = activeRoutine.minTimeMinutes * 60;
-            if (minSeconds > 0) {
-                const int elapsed = qMax(0, activeRoutine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
-                if (elapsed < minSeconds) {
-                    const int remaining = minSeconds - elapsed;
-                    const int minutes = (remaining + 59) / 60;
-                    setStatusMessage(QStringLiteral("MIN-TIME LOCK ACTIVE — %1 MIN REMAINING").arg(minutes));
-                    return;
-                }
-            }
-        }
-    }
+    // Settings access (TOTP) is the authenticated escape hatch: a correct code
+    // releases the session regardless of min_time_minutes. The min-time floor
+    // still applies to the ordinary END button (see endActiveRoutine) — proving
+    // you hold the TOTP secret is what buys the early exit.
 
     if (m_backend) {
         m_backend->dropNetworkPolicy();

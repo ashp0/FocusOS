@@ -314,6 +314,31 @@ bool NotesStore::updateSessionNote(const QString &sessionId, const QString &text
     return false;
 }
 
+bool NotesStore::recordSessionReflection(const QString &reflection)
+{
+    // The "MISSION COMPLETE" popup collects a reflection after a routine ends.
+    // By that point onRoutineSessionFinished() has already archived the session
+    // (with whatever in-session draft text existed), so fold the reflection into
+    // that most recent note — this is what surfaces in the calendar/timeline.
+    const QString trimmed = reflection.trimmed();
+    if (trimmed.isEmpty() || m_archive.isEmpty()) {
+        return false;
+    }
+
+    SessionNote &note = m_archive.last();
+    const QString existing = note.text.trimmed();
+    const QString combined = existing.isEmpty()
+                                 ? trimmed
+                                 : existing + QStringLiteral("\n\n") + trimmed;
+    if (note.text == combined) {
+        return false;
+    }
+    note.text = combined;
+    writeSessionFile(note);
+    emit archiveChanged();
+    return true;
+}
+
 void NotesStore::onRoutineEngaged(const QString &routineId, const QString &routineName)
 {
     m_draftRoutineId = routineId;

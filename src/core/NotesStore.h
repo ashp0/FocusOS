@@ -43,6 +43,7 @@ public:
     Q_INVOKABLE QString sessionNoteText(const QString &sessionId) const;
     Q_INVOKABLE QVariantMap sessionNote(const QString &sessionId) const;
     Q_INVOKABLE bool updateSessionNote(const QString &sessionId, const QString &text);
+    Q_INVOKABLE bool recordSessionReflection(const QString &reflection);
     Q_INVOKABLE QString combinedNotesForDate(const QString &date) const;
     Q_INVOKABLE QVariantMap timelineSummaryForDate(const QString &date) const;
     Q_INVOKABLE QVariantList timelineForDate(const QString &date) const;

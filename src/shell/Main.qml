@@ -225,6 +225,7 @@ Item {
 
         function finish(quitApps) {
             statsStore.recordLastSessionReflection(reflectionField.text)
+            notesStore.recordSessionReflection(reflectionField.text)
             if (quitApps) {
                 routineManager.quitFinishedSession()
             } else {
