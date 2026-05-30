@@ -54,3 +54,19 @@ Log Out=none,none,Log Out
 Log Out Without Confirmation=none,none,Log Out Without Confirmation
 Halt Without Confirmation=none,none,Halt Without Confirmation
 Reboot Without Confirmation=none,none,Reboot Without Confirmation
+
+# KWin/Wayland builds expose VT switching under different translated action
+# names across releases. Keep all known FocusOS variants unbound; logind/getty
+# lockdown is the real backstop.
+Switch to VT 1=none,none,Switch to VT 1
+Switch to VT 2=none,none,Switch to VT 2
+Switch to VT 3=none,none,Switch to VT 3
+Switch to VT 4=none,none,Switch to VT 4
+Switch to VT 5=none,none,Switch to VT 5
+Switch to VT 6=none,none,Switch to VT 6
+Switch to TTY 1=none,none,Switch to TTY 1
+Switch to TTY 2=none,none,Switch to TTY 2
+Switch to TTY 3=none,none,Switch to TTY 3
+Switch to TTY 4=none,none,Switch to TTY 4
+Switch to TTY 5=none,none,Switch to TTY 5
+Switch to TTY 6=none,none,Switch to TTY 6

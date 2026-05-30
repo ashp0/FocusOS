@@ -7,6 +7,7 @@ Item {
 
     property string headerFont
     property string bodyFont
+    property int activeTab: 0
     property bool graphRevealed: false
     property int graphVisibleDays: 14
     property int graphOffsetDays: 0
@@ -17,13 +18,50 @@ Item {
     readonly property var graphRanges: [7, 14, 30, 60, 90]
     property string selectedSessionId: ""
     property bool sessionsExpanded: false
-    property bool todayNotesExpanded: false
+    property bool todayNotesExpanded: true
     property int todayNotesMinHeight: 260
     property int todayNotesMaxHeight: 540
     property int sessionListMinHeight: 280
     property int sessionListMaxHeight: 560
+    property string timelineDate: todayIsoDate()
+    property int notesRevision: 0
+    readonly property var sidebarTabs: [
+        {"label": "ROUTINES", "idx": 0},
+        {"label": "NOTES", "idx": 1},
+        {"label": "TIMELINE", "idx": 2}
+    ]
     signal toggleNotes()
     signal collapseSidebar()
+
+    function todayIsoDate() {
+        const now = new Date()
+        return now.getFullYear() + "-" + Theme.pad2(now.getMonth() + 1) + "-" + Theme.pad2(now.getDate())
+    }
+
+    function shiftTimelineDate(deltaDays) {
+        const parts = timelineDate.split("-")
+        const date = parts.length === 3
+              ? new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+              : new Date()
+        date.setDate(date.getDate() + deltaDays)
+        timelineDate = date.getFullYear() + "-" + Theme.pad2(date.getMonth() + 1) + "-" + Theme.pad2(date.getDate())
+    }
+
+    function timelineEntries() {
+        const revision = notesRevision
+        return notesStore.timelineForDate(timelineDate)
+    }
+
+    function timelineSummary() {
+        const revision = notesRevision
+        return notesStore.timelineSummaryForDate(timelineDate)
+    }
+
+    function tabTitle() {
+        if (activeTab === 1) return "MISSION NOTES"
+        if (activeTab === 2) return "DEBRIEF TIMELINE"
+        return "ROUTINE TELEMETRY"
+    }
 
     function formatMinutes(minutes) {
         const value = Math.max(0, Number(minutes || 0))
@@ -142,6 +180,12 @@ Item {
         border.color: Theme.goldDim
     }
 
+    Connections {
+        target: notesStore
+        function onArchiveChanged() { root.notesRevision += 1 }
+        function onTextChanged() { root.notesRevision += 1 }
+    }
+
     // Tick strip down the inside-left edge — a thin "measurement scale" that
     // sells the instrument-panel feel.
     Canvas {
@@ -179,7 +223,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 70
+        height: 108
         color: "#dd0a0a14"
 
         // Pulsing telemetry LED — sells "live link" to the bridge.
@@ -209,7 +253,7 @@ Item {
             anchors.leftMargin: 10
             anchors.top: parent.top
             anchors.topMargin: 11
-            text: "ASTRONAUT LOG"
+            text: root.tabTitle()
             color: Theme.gold
             font.family: root.headerFont
             font.pixelSize: 15
@@ -267,6 +311,47 @@ Item {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.collapseSidebar()
+            }
+        }
+
+        Row {
+            id: tabRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 14
+            anchors.rightMargin: 54
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 10
+            height: 28
+            spacing: 6
+
+            Repeater {
+                model: root.sidebarTabs
+                delegate: Rectangle {
+                    required property var modelData
+                    width: (tabRow.width - 12) / 3
+                    height: tabRow.height
+                    color: root.activeTab === modelData.idx ? "#221510" : Theme.voidColor
+                    border.width: 1
+                    border.color: root.activeTab === modelData.idx ? Theme.gold : Theme.goldDim
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: modelData.label
+                        color: root.activeTab === modelData.idx ? Theme.gold : Theme.textDim
+                        elide: Text.ElideRight
+                        font.family: root.headerFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.activeTab = modelData.idx
+                    }
+                }
             }
         }
 
@@ -367,6 +452,7 @@ Item {
             Rectangle {
                 width: parent.width
                 height: 102
+                visible: root.activeTab === 0
                 color: "#dd0d0d18"
                 border.width: 1
                 border.color: Theme.goldDim
@@ -478,6 +564,7 @@ Item {
             Row {
                 width: parent.width
                 height: 64
+                visible: root.activeTab === 0
                 spacing: 8
 
                 Repeater {
@@ -563,6 +650,7 @@ Item {
                 id: graphCard
                 width: parent.width
                 height: root.graphRevealed ? 272 : 50
+                visible: root.activeTab === 0
                 color: "#dd0d0d18"
                 border.width: 1
                 border.color: root.graphRevealed ? Theme.gold : Theme.goldDim
@@ -824,10 +912,82 @@ Item {
                 }
             }
 
+            // ---- Editable mission notes ----
+            Rectangle {
+                id: notesEditorCard
+                width: parent.width
+                height: Math.max(310, Math.min(430, bodyFlick.height * 0.46))
+                visible: root.activeTab === 1
+                color: "#dd0d0d18"
+                border.width: 1
+                border.color: Theme.gold
+
+                Text {
+                    id: notesEditorTitle
+                    anchors.left: parent.left
+                    anchors.leftMargin: 14
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.top: parent.top
+                    anchors.topMargin: 12
+                    text: notesStore.draftRoutineName.length > 0
+                          ? "ACTIVE MISSION LOG  ■  " + notesStore.draftRoutineName
+                          : "MISSION LOG DRAFT"
+                    color: Theme.gold
+                    elide: Text.ElideRight
+                    font.family: root.headerFont
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                }
+
+                TextArea {
+                    id: sidebarNotesArea
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: notesEditorTitle.bottom
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 12
+                    anchors.topMargin: 10
+                    text: notesStore.text
+                    color: Theme.textPrimary
+                    selectedTextColor: Theme.voidColor
+                    selectionColor: Theme.gold
+                    placeholderText: notesStore.draftRoutineName.length > 0
+                                     ? "Record decisions, links, commands, dead ends, and next vectors..."
+                                     : "Engage a routine to bind this log to a mission. Draft text is still saved locally."
+                    placeholderTextColor: Theme.textGhost
+                    wrapMode: TextArea.Wrap
+                    font.family: root.bodyFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                    background: Rectangle {
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: sidebarNotesArea.activeFocus ? Theme.gold : Theme.goldDim
+                    }
+
+                    onTextChanged: {
+                        if (notesStore.text !== text) {
+                            notesStore.text = text
+                        }
+                    }
+                }
+
+                Connections {
+                    target: notesStore
+                    function onTextChanged() {
+                        if (sidebarNotesArea.text !== notesStore.text) {
+                            sidebarNotesArea.text = notesStore.text
+                        }
+                    }
+                }
+            }
+
             // ---- Today's notes (collapsible) ----
             Rectangle {
                 id: todayCard
                 width: parent.width
+                visible: root.activeTab === 1
                 color: "#dd0d0d18"
                 border.width: 1
                 border.color: Theme.goldDim
@@ -876,7 +1036,7 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.toggleNotes()
+                            onClicked: sidebarNotesArea.forceActiveFocus()
                         }
                     }
 
@@ -940,6 +1100,7 @@ Item {
             Rectangle {
                 id: sessionsCard
                 width: parent.width
+                visible: root.activeTab === 1
                 color: "#dd0d0d18"
                 border.width: 1
                 border.color: Theme.goldDim
@@ -1079,11 +1240,34 @@ Item {
                     Rectangle {
                         id: detailPanel
                         width: parent.width
-                        height: 190
+                        height: 320
                         visible: root.selectedSessionId.length > 0
                         color: "#ee06060d"
                         border.width: 1
                         border.color: Theme.gold
+
+                        // Re-seed the editor whenever a different session is opened.
+                        // Seeding is explicit (not a binding) so it does NOT re-fire on
+                        // our own save (which only bumps notesRevision), preserving the
+                        // cursor. detailEditor.boundSessionId tracks which session the
+                        // current text belongs to, so a save always targets that row even
+                        // if selectedSessionId has already advanced to the next one.
+                        function seedEditor() {
+                            detailEditor.flushPending()
+                            detailEditor.boundSessionId = root.selectedSessionId
+                            detailEditor.text = notesStore.sessionNoteText(root.selectedSessionId)
+                        }
+
+                        onVisibleChanged: if (visible) seedEditor()
+
+                        Connections {
+                            target: root
+                            function onSelectedSessionIdChanged() {
+                                if (root.selectedSessionId.length > 0) {
+                                    detailPanel.seedEditor()
+                                }
+                            }
+                        }
 
                         Text {
                             id: detailHeader
@@ -1129,31 +1313,332 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.selectedSessionId = ""
+                                onClicked: {
+                                    detailEditor.flushPending()
+                                    root.selectedSessionId = ""
+                                }
                             }
                         }
 
-                        Flickable {
+                        ScrollView {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.top: detailHeader.bottom
-                            anchors.bottom: parent.bottom
+                            anchors.bottom: detailFooter.top
                             anchors.margins: 8
                             anchors.topMargin: 6
                             clip: true
-                            contentHeight: detailText.implicitHeight
 
-                            Text {
-                                id: detailText
-                                width: parent.width
-                                text: notesStore.sessionNoteText(root.selectedSessionId) || "(no notes captured)"
+                            TextArea {
+                                id: detailEditor
+                                // The session id the current text belongs to. Saves
+                                // target this, never the live selectedSessionId, so a
+                                // session switch can never write edits to the wrong row.
+                                property string boundSessionId: ""
+                                function flushPending() {
+                                    if (boundSessionId.length > 0) {
+                                        notesStore.updateSessionNote(boundSessionId, text)
+                                    }
+                                }
                                 color: Theme.textPrimary
-                                wrapMode: Text.WordWrap
+                                selectedTextColor: Theme.voidColor
+                                selectionColor: Theme.gold
+                                placeholderText: "(no notes captured — type to add a debrief)"
+                                placeholderTextColor: Theme.textGhost
+                                wrapMode: TextArea.Wrap
                                 font.family: root.bodyFont
-                                font.pixelSize: 11
-                                lineHeight: 1.4
+                                font.pixelSize: 12
+                                background: Rectangle {
+                                    color: Theme.voidColor
+                                    border.width: 1
+                                    border.color: detailEditor.activeFocus ? Theme.gold : Theme.goldDim
+                                }
+                                // Autosave on focus loss so edits survive without an
+                                // explicit action.
+                                onActiveFocusChanged: if (!activeFocus) flushPending()
                             }
                         }
+
+                        Text {
+                            id: detailFooter
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 10
+                            anchors.bottomMargin: 6
+                            height: 14
+                            text: "◈ EDITS SAVE AUTOMATICALLY"
+                            color: Theme.textGhost
+                            font.family: root.bodyFont
+                            font.pixelSize: 9
+                        }
+                    }
+                }
+            }
+
+            // ---- Calendar-style mission debrief timeline ----
+            Rectangle {
+                id: timelineCard
+                width: parent.width
+                visible: root.activeTab === 2
+                height: timelineColumn.implicitHeight + 24
+                color: "#dd0d0d18"
+                border.width: 1
+                border.color: Theme.goldDim
+
+                Column {
+                    id: timelineColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 12
+                    spacing: 10
+
+                    Row {
+                        width: parent.width
+                        height: 32
+                        spacing: 8
+
+                        Rectangle {
+                            width: 32
+                            height: 30
+                            color: prevDayMouse.containsMouse ? Theme.steel : Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.goldDim
+                            Text {
+                                anchors.centerIn: parent
+                                text: "‹"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                id: prevDayMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.shiftTimelineDate(-1)
+                            }
+                        }
+
+                        Rectangle {
+                            width: Math.max(120, parent.width - 144)
+                            height: 30
+                            color: Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.gold
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: {
+                                    const summary = root.timelineSummary()
+                                    return String(summary.dateLabel || root.timelineDate).toUpperCase()
+                                }
+                                color: Theme.gold
+                                elide: Text.ElideRight
+                                font.family: root.headerFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+                        }
+
+                        Rectangle {
+                            width: 32
+                            height: 30
+                            color: nextDayMouse.containsMouse ? Theme.steel : Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.goldDim
+                            Text {
+                                anchors.centerIn: parent
+                                text: "›"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                id: nextDayMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.shiftTimelineDate(1)
+                            }
+                        }
+
+                        Rectangle {
+                            width: 54
+                            height: 30
+                            color: todayMouse.containsMouse ? Theme.steel : Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.goldDim
+                            Text {
+                                anchors.centerIn: parent
+                                text: "TODAY"
+                                color: Theme.goldDim
+                                font.family: root.headerFont
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: todayMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.timelineDate = root.todayIsoDate()
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 64
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: Theme.textGhost
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 8
+
+                            Repeater {
+                                model: [
+                                    {"label": "FOCUS", "value": root.formatMinutes(Number(root.timelineSummary().focusMinutes || 0))},
+                                    {"label": "MISSIONS", "value": Number(root.timelineSummary().sessions || 0)},
+                                    {"label": "NOTES", "value": Number(root.timelineSummary().notes || 0)}
+                                ]
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    width: (parent.width - 16) / 3
+                                    height: parent.height
+                                    color: "#dd0a0a14"
+                                    border.width: 1
+                                    border.color: Theme.goldDim
+
+                                    Text {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 8
+                                        anchors.top: parent.top
+                                        anchors.topMargin: 7
+                                        text: modelData.label
+                                        color: Theme.textDim
+                                        font.family: root.headerFont
+                                        font.pixelSize: 9
+                                    }
+
+                                    Text {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 8
+                                        anchors.bottom: parent.bottom
+                                        anchors.bottomMargin: 7
+                                        text: modelData.value
+                                        color: Theme.textPrimary
+                                        font.family: root.headerFont
+                                        font.pixelSize: 14
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: root.timelineEntries()
+                        delegate: Rectangle {
+                            required property var modelData
+                            width: timelineColumn.width
+                            height: Math.max(82, timelineBody.implicitHeight + 56)
+                            color: modelData.type === "draft" ? "#221510" : "#dd0a0a14"
+                            border.width: 1
+                            border.color: modelData.type === "draft" ? Theme.gold : Theme.goldDim
+
+                            Text {
+                                id: timelineTime
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.top: parent.top
+                                anchors.topMargin: 9
+                                text: modelData.timeLabel
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+
+                            Text {
+                                anchors.left: timelineTime.right
+                                anchors.leftMargin: 10
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.top: parent.top
+                                anchors.topMargin: 9
+                                elide: Text.ElideRight
+                                text: String(modelData.title || "MISSION").toUpperCase()
+                                color: Theme.textPrimary
+                                font.family: root.headerFont
+                                font.pixelSize: 12
+                                font.letterSpacing: 0
+                            }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.top: timelineTime.bottom
+                                anchors.topMargin: 6
+                                text: modelData.detail
+                                color: Theme.textDim
+                                font.family: root.bodyFont
+                                font.pixelSize: 10
+                                font.letterSpacing: 0
+                            }
+
+                            TextArea {
+                                id: timelineBody
+                                anchors.left: parent.left
+                                anchors.leftMargin: 8
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                anchors.top: timelineTime.bottom
+                                anchors.topMargin: 20
+                                text: modelData.noteText
+                                color: modelData.hasNote ? Theme.textPrimary : Theme.textGhost
+                                selectedTextColor: Theme.voidColor
+                                selectionColor: Theme.gold
+                                placeholderText: "(no log text captured — type to add a debrief)"
+                                placeholderTextColor: Theme.textGhost
+                                wrapMode: TextArea.Wrap
+                                font.family: root.bodyFont
+                                font.pixelSize: 11
+                                background: Rectangle {
+                                    color: timelineBody.activeFocus ? Theme.voidColor : "transparent"
+                                    border.width: timelineBody.activeFocus ? 1 : 0
+                                    border.color: Theme.goldDim
+                                }
+                                // Autosave on focus loss. Draft rows write the live
+                                // draft buffer; archived rows persist via their id.
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        return
+                                    }
+                                    if (modelData.type === "draft") {
+                                        if (notesStore.text !== text) {
+                                            notesStore.text = text
+                                        }
+                                    } else {
+                                        notesStore.updateSessionNote(modelData.sessionId, text)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        width: parent.width
+                        visible: root.timelineEntries().length === 0
+                        text: "NO ACTIVITY RECORDED FOR THIS DAY"
+                        color: Theme.textGhost
+                        horizontalAlignment: Text.AlignHCenter
+                        font.family: root.headerFont
+                        font.pixelSize: 11
                     }
                 }
             }
@@ -1162,6 +1647,7 @@ Item {
             Rectangle {
                 width: parent.width
                 height: 84
+                visible: root.activeTab === 0
                 color: "#dd0d0d18"
                 border.width: 1
                 border.color: Theme.goldDim

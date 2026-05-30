@@ -1,61 +1,74 @@
-# FocusOS Blocker
+# FocusOS Blocker Component
 
-A FocusOS-controlled fork of the Cold Turkey browser extension. During a focus
-session it enforces an **allowlist**: the entire internet is blocked except the
-domains FocusOS explicitly permits.
+This directory contains the FocusOS-controlled fork of the Cold Turkey browser
+extension. The upstream snapshot is kept separately in `resources/Cold Turkey/`
+so extension changes can be reviewed against the original source.
 
-Upstream is kept pristine at `resources/Cold Turkey/`. This directory is the
-fork that FocusOS ships and controls.
+For installation, local CRX delivery, managed browser policy, and diagnostics,
+use [../../docs/browser-blocker.md](../../docs/browser-blocker.md).
 
-## Why a browser extension (vs. blocking subprocesses / the network)
+## Job
 
-The previous approach clamped the network / killed browser subprocesses, which
-broke too many sites (modern pages pull from dozens of hosts). This extension
-instead matches **navigations** — the document URL of the top frame and each
-iframe — and leaves sub-resources (images, scripts, XHR, media) alone. So:
+During a FocusOS routine, the extension blocks browser document navigations
+outside the active allowlist. It intentionally leaves subresources alone:
+scripts, images, XHR, video segments, and other page assets can load when the
+top-level site itself is allowed.
 
-- Allowlisting `youtube.com` loads the page **and** its video stream
-  (`googlevideo.com`) and thumbnails (`ytimg.com`), because those are
-  sub-resources, not navigations. No per-CDN / CIDR bookkeeping.
-- Subdomains of an allowed domain are allowed automatically
-  (`m.youtube.com`, `www.youtube.com`).
-- Everything else — any navigation to a non-allowlisted document — is replaced
-  by the offline `blocked.html` page (no break / unblock / password bypass).
+This avoids the brittle CDN bookkeeping that comes from trying to express
+modern websites as firewall-only host lists.
 
-## Architecture
+## Source Tree
 
-```
-  Browser (Chrome / Brave / Chromium / Edge)
-    └─ FocusOS Blocker extension  (ctBackground.js service worker)
-         │  chrome.runtime.connectNative('com.focusos.blocker')
-         ▼
-  Native messaging host  ── pushes the allowlist policy over stdio
-```
+| Path | Purpose |
+|------|---------|
+| `manifest.json` | Chromium extension manifest with the pinned key/ID. |
+| `ctBackground.js` | Service worker and navigation-blocking engine. |
+| `ctContent.js` | Content-side behavior inherited from the fork base. |
+| `ctMenu.*` | Minimal extension UI surface. |
+| `blocked.html`, `blocked.js` | Offline blocked page shown for denied navigations. |
+| `host/` | Development native-host script, allowlist file, and installer. |
+| `assets/`, icons, fonts | Static extension assets. |
 
-The extension is a pure policy *enforcer*; it holds no allowlist of its own. The
-**native host** owns the policy and pushes it to the extension. Today that host
-is the standalone dev script in `host/`; in production it becomes a
-`--native-host` mode of the `focusos` binary, speaking the identical protocol.
+Pinned extension ID:
 
-### Extension ID
-
-Pinned by the `key` in `manifest.json` (so the ID is stable when dev-loaded):
-
-```
+```text
 gkbnapcbaflmaaoimfonclabmglfiden
 ```
 
-## Native messaging protocol
+## Architecture
 
-Standard Chromium native messaging framing: each message is a **4-byte
-little-endian length prefix** followed by that many bytes of UTF-8 JSON.
-`stdout` carries framed messages only — never log to it.
+```text
+Chromium / Brave / Chrome / Edge
+  FocusOS Blocker extension
+    chrome.runtime.connectNative("com.focusos.blocker")
+      Native messaging host
+        focusos --native-host
+          signed policy from ~/.focusos/blocker/policy.dat
+```
 
-### Host → extension (the policy)
+The extension is only the enforcer. It does not own the allowlist. The native
+host verifies the signed policy written by FocusOS and pushes the current
+policy to the extension over the native-messaging port.
 
-The host pushes a **version 5** `blockListInfo`. To block everything except an
-allowlist, use a single block whose `blockList` is `["*"]` (the `*` compiles to
-`.*`, matching every navigation) and whose `exceptionList` is the allowlist:
+The Python host in `host/focusos_blocker_host.py` remains a development
+backstop. Production should use `focusos --native-host` so policy parsing,
+signature verification, and runtime behavior match the app.
+
+## Native Messaging Protocol
+
+Chromium native messaging uses:
+
+- 4-byte little-endian payload length.
+- UTF-8 JSON payload.
+- Framed messages on stdout only.
+
+Never write logs to stdout from a native host. Use stderr or a log file.
+
+### Host To Extension
+
+The host sends a version 5 `blockListInfo`. To block everything except an
+allowlist, send one block with `blockList: ["*"]` and the allowed domains in
+`exceptionList`:
 
 ```json
 {
@@ -78,60 +91,57 @@ allowlist, use a single block whose `blockList` is `["*"]` (the `*` compiles to
 }
 ```
 
-Push it once on connect, and again whenever the policy changes. The extension
-diffs `blockListInfo` and re-checks open tabs on every change.
+Push once on connect and again whenever policy changes. The extension diffs the
+policy and re-checks open tabs.
 
-### Extension → host (ignorable)
+### Extension To Host
 
-The extension emits chatter the host can safely ignore: `port-check` (a
-once-a-minute liveness probe — no reply needed; the extension only reconnects if
-its own `postMessage` throws), plus `counter@…`, `stats@…`, `blocked@…`, and
-`open-blocker`. The host just needs to **stay alive** (keep stdin open) to hold
-the port; it exits on stdin EOF when the browser closes the port.
+The extension may send chatter such as:
 
-## Dev setup (confirm end-to-end blocking)
+- `port-check`
+- `counter@...`
+- `stats@...`
+- `blocked@...`
+- `open-blocker`
 
-1. **Load the unpacked extension.** In Chrome/Brave open `…/extensions`, enable
-   *Developer mode*, click *Load unpacked*, and select this
-   `resources/focusos-blocker/` directory. Confirm the ID matches the one above.
+The host can ignore these messages. It only needs to keep stdin open and push
+policy updates. It exits when the browser closes the port.
 
-2. **Register the native host.** Run the installer (auto-detects which
-   Chromium-family browsers are present and writes the host manifest into each):
+## Development Host Flow
 
-   ```sh
+For unpacked extension testing:
+
+1. Open the browser extensions page.
+2. Enable Developer mode.
+3. Load this directory as an unpacked extension.
+4. Confirm the extension ID matches the pinned ID above.
+5. Run:
+
+   ```bash
    ./host/install-host.sh
    ```
 
-   Then fully **restart the browser** so it picks up the new host.
+6. Fully restart the browser.
+7. Edit `host/allowlist.txt`; the development host picks up changes and pushes
+   a new policy.
 
-3. **Edit the allowlist.** `host/allowlist.txt` — one domain per line. Edits are
-   picked up live (~2s) and pushed to the extension; no restart needed.
+The production testing-machine path uses the scripts documented in
+[../../docs/browser-blocker.md](../../docs/browser-blocker.md) instead of manual
+unpacked loading.
 
-4. **Verify.** A non-listed site (e.g. `reddit.com`) shows the offline blocked
-   page; a listed site (e.g. `youtube.com`) loads fully, video included.
+## Changes From Upstream
 
-### Files in `host/`
+- Native host retargeted from `com.getcoldturkey` to `com.focusos.blocker`.
+- FocusOS-owned signing key and pinned extension ID.
+- Offline blocked page replaces remote blocked-page dependencies.
+- Telemetry, pause-key fetches, permission/consent nag tabs, the web-store
+  metadata signature, and the `ctFrame` bridge were removed.
+- Core navigation matching remains close to the upstream behavior.
+
+## Files In `host/`
 
 | File | Purpose |
 |------|---------|
-| `focusos_blocker_host.py` | Standalone native messaging host (dev backstop). Pushes the v5 policy and live-watches the allowlist. |
-| `allowlist.txt` | The allowed domains. One per line; `#` comments allowed. |
-| `install-host.sh` | Registers `com.focusos.blocker` for Chrome/Brave/Chromium/Edge on macOS & Linux. `EXT_ID=… ./install-host.sh` to override the ID. |
-
-## Phase 1 changes vs. upstream (done)
-
-- Native host retargeted from `com.getcoldturkey` → `com.focusos.blocker`; own
-  signing key / pinned extension ID.
-- Offline `blocked.html` / `blocked.js` replace the remote
-  `getcoldturkey.com/blocked` iframe — no network needed, no bypass UI.
-- Telemetry, permission/consent nag tabs, remote pause-key fetch, the web-store
-  `_metadata` signature, and the `ctFrame` bridge removed.
-- Core navigation-matching engine untouched.
-
-## Phase 2 — integration into FocusOS (next)
-
-- Promote the native host into the `focusos` binary (`--native-host` mode, same
-  stdio protocol as `host/`).
-- `RoutineManager` exports the active session's allowlist as the v5 policy.
-- Force-install the extension (enterprise policy) + NetGate backstop so the
-  session can't be trivially bypassed by removing the extension.
+| `focusos_blocker_host.py` | Standalone development native messaging host. |
+| `allowlist.txt` | Development allowlist, one domain per line with `#` comments allowed. |
+| `install-host.sh` | Registers `com.focusos.blocker` host manifests for Chromium-family browsers. |

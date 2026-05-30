@@ -63,7 +63,8 @@ Item {
             "min_time_minutes": Math.max(0, Number(routine.min_time_minutes || 0)),
             "network_lock": routine.network_lock === undefined ? true : Boolean(routine.network_lock),
             "break_frequency_minutes": Math.max(0, Number(routine.break_frequency_minutes || 0)),
-            "break_duration_minutes": Math.max(0, Number(routine.break_duration_minutes || 0))
+            "break_duration_minutes": Math.max(0, Number(routine.break_duration_minutes || 0)),
+            "keep_display_awake": routine.keep_display_awake === undefined ? true : Boolean(routine.keep_display_awake)
         }
     }
 
@@ -147,7 +148,8 @@ Item {
             "min_time_minutes": 0,
             "network_lock": true,
             "break_frequency_minutes": 0,
-            "break_duration_minutes": 0
+            "break_duration_minutes": 0,
+            "keep_display_awake": true
         })
         routineDrafts = drafts
     }
@@ -869,13 +871,6 @@ Item {
 
                     Item { Layout.fillHeight: true }
 
-                    SettingsToggleRow {
-                        label: "EDIT CONTROLS"
-                        detail: "SHOW ROUTINE PENCILS"
-                        checked: routineManager.editMode
-                        onToggled: routineManager.editMode = !routineManager.editMode
-                    }
-
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 70
@@ -1173,6 +1168,80 @@ Item {
                                                 to: 1440
                                                 onValueModified: function(nextValue) {
                                                     root.updateRoutineField(routineCard.index, "min_time_minutes", nextValue)
+                                                }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 14
+
+                                            Text {
+                                                text: "BREAK EVERY"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            AdminSpinner {
+                                                value: Number(routineCard.modelData.break_frequency_minutes || 0)
+                                                from: 0
+                                                to: 240
+                                                onValueModified: function(nextValue) {
+                                                    root.updateRoutineField(routineCard.index, "break_frequency_minutes", nextValue)
+                                                }
+                                            }
+
+                                            Text {
+                                                text: "REST WINDOW"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            AdminSpinner {
+                                                value: Number(routineCard.modelData.break_duration_minutes || 0)
+                                                from: 0
+                                                to: 60
+                                                onValueModified: function(nextValue) {
+                                                    root.updateRoutineField(routineCard.index, "break_duration_minutes", nextValue)
+                                                }
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            Rectangle {
+                                                Layout.preferredWidth: 166
+                                                Layout.preferredHeight: 34
+                                                color: Boolean(routineCard.modelData.keep_display_awake) ? "#1f1a12" : Theme.voidColor
+                                                border.width: 1
+                                                border.color: Boolean(routineCard.modelData.keep_display_awake) ? Theme.gold : Theme.goldDim
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: Boolean(routineCard.modelData.keep_display_awake) ? "DISPLAY AWAKE" : "DISPLAY MAY SLEEP"
+                                                    color: Boolean(routineCard.modelData.keep_display_awake) ? Theme.gold : Theme.textDim
+                                                    elide: Text.ElideRight
+                                                    font.family: root.headerFont
+                                                    font.pixelSize: 10
+                                                    font.letterSpacing: 0
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        const drafts = root.cloneDrafts()
+                                                        drafts[routineCard.index].keep_display_awake = !Boolean(routineCard.modelData.keep_display_awake)
+                                                        root.routineDrafts = drafts
+                                                    }
                                                 }
                                             }
 

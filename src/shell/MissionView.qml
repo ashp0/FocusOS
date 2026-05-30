@@ -32,6 +32,22 @@ Item {
         return Math.round(progress() * 100)
     }
 
+    function breakStatusText() {
+        const frequency = Number(routineManager.activeRoutineBreakFrequencyMinutes || 0)
+        const duration = Number(routineManager.activeRoutineBreakDurationMinutes || 0)
+        if (frequency <= 0 || duration <= 0) {
+            return ""
+        }
+        const cycleSeconds = frequency * 60
+        const elapsed = Math.max(0, Number(routineManager.elapsedSeconds || 0))
+        const sinceBreak = elapsed % cycleSeconds
+        const remaining = Math.max(0, cycleSeconds - sinceBreak)
+        if (sinceBreak < duration * 60 && elapsed >= cycleSeconds) {
+            return "REST WINDOW  ■  " + duration + "M AUTHORIZED"
+        }
+        return "NEXT REST CHECK  ■  " + root.formatSecondsClock(remaining)
+    }
+
     // ────────── Faint constellation background ──────────
     Canvas {
         id: constellation
@@ -316,6 +332,26 @@ Item {
                 font.family: root.headerFont
                 font.pixelSize: 12
                 font.letterSpacing: 2
+            }
+        }
+
+        Rectangle {
+            visible: root.breakStatusText().length > 0
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width, breakText.implicitWidth + 34)
+            height: 28
+            color: "#221510"
+            border.width: 1
+            border.color: Theme.goldDim
+
+            Text {
+                id: breakText
+                anchors.centerIn: parent
+                text: root.breakStatusText()
+                color: Theme.goldDim
+                font.family: root.headerFont
+                font.pixelSize: 11
+                font.letterSpacing: 0
             }
         }
 

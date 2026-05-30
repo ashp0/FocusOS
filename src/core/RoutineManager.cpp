@@ -256,6 +256,18 @@ QString RoutineManager::activeRoutineDescription() const
     return routineIndex >= 0 ? m_routines.at(routineIndex).description : QString();
 }
 
+int RoutineManager::activeRoutineBreakFrequencyMinutes() const
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    return routineIndex >= 0 ? m_routines.at(routineIndex).breakFrequencyMinutes : 0;
+}
+
+int RoutineManager::activeRoutineBreakDurationMinutes() const
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    return routineIndex >= 0 ? m_routines.at(routineIndex).breakDurationMinutes : 0;
+}
+
 int RoutineManager::remainingSeconds() const
 {
     return m_routineTimer.remainingSeconds();

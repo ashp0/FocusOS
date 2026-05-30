@@ -72,6 +72,7 @@ private:
     qint64 m_extensionMissingSinceMs = 0;
     qint64 m_lastExtensionAlertMs = 0;
     QStringList m_alwaysAllowedCommandLines;
+    QStringList m_sessionAllowedProcessNames;
     // Holds a systemd-inhibit lock (--what=idle) while a routine wants the
     // screen kept on; terminated to release. Reaped on destruction.
     QProcess m_displayInhibitor;

@@ -7,6 +7,7 @@
 #include <QFileInfoList>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -134,6 +135,32 @@ QVariantList NotesStore::sessionHistory() const
     return list;
 }
 
+QVariantList NotesStore::availableDates() const
+{
+    QMap<QDate, int> counts;
+    for (const SessionNote &note : m_archive) {
+        const QDate date = note.endedAt.toLocalTime().date();
+        if (date.isValid()) {
+            counts[date] += 1;
+        }
+    }
+    if (!m_text.trimmed().isEmpty()) {
+        counts[QDate::currentDate()] += 1;
+    }
+
+    QVariantList list;
+    auto it = counts.constEnd();
+    while (it != counts.constBegin()) {
+        --it;
+        QVariantMap entry;
+        entry.insert(QStringLiteral("date"), it.key().toString(Qt::ISODate));
+        entry.insert(QStringLiteral("label"), it.key().toString(QStringLiteral("MMM d")));
+        entry.insert(QStringLiteral("count"), it.value());
+        list.append(entry);
+    }
+    return list;
+}
+
 QString NotesStore::sessionNoteText(const QString &sessionId) const
 {
     for (const SessionNote &note : m_archive) {
@@ -142,6 +169,112 @@ QString NotesStore::sessionNoteText(const QString &sessionId) const
         }
     }
     return {};
+}
+
+QString NotesStore::combinedNotesForDate(const QString &date) const
+{
+    const QDate target = parseDateOrToday(date);
+    QStringList chunks;
+    for (const SessionNote &note : m_archive) {
+        if (note.endedAt.toLocalTime().date() != target) {
+            continue;
+        }
+        chunks.append(formatSession(note));
+    }
+    if (target == QDate::currentDate() && !m_text.trimmed().isEmpty()) {
+        SessionNote pending;
+        pending.routineName = m_draftRoutineName.isEmpty() ? QStringLiteral("CURRENT DRAFT") : m_draftRoutineName;
+        pending.startedAt = m_draftStartedAt.isValid() ? m_draftStartedAt : QDateTime::currentDateTime();
+        pending.endedAt = QDateTime::currentDateTime();
+        pending.result = QStringLiteral("draft");
+        pending.text = m_text;
+        chunks.append(formatSession(pending));
+    }
+    return chunks.join(QStringLiteral("\n\n"));
+}
+
+QVariantMap NotesStore::timelineSummaryForDate(const QString &date) const
+{
+    const QDate target = parseDateOrToday(date);
+    int sessions = 0;
+    int noteCount = 0;
+    int focusMinutes = 0;
+    for (const SessionNote &note : m_archive) {
+        if (note.endedAt.toLocalTime().date() != target) {
+            continue;
+        }
+        ++sessions;
+        focusMinutes += qMax(0, note.minutes);
+        if (!note.text.trimmed().isEmpty()) {
+            ++noteCount;
+        }
+    }
+    if (target == QDate::currentDate() && !m_text.trimmed().isEmpty()) {
+        ++noteCount;
+    }
+
+    QVariantMap summary;
+    summary.insert(QStringLiteral("date"), target.toString(Qt::ISODate));
+    summary.insert(QStringLiteral("dateLabel"), target.toString(QStringLiteral("dddd, MMMM d")));
+    summary.insert(QStringLiteral("sessions"), sessions);
+    summary.insert(QStringLiteral("notes"), noteCount);
+    summary.insert(QStringLiteral("focusMinutes"), focusMinutes);
+    return summary;
+}
+
+QVariantList NotesStore::timelineForDate(const QString &date) const
+{
+    const QDate target = parseDateOrToday(date);
+    QList<QVariantMap> rows;
+    for (const SessionNote &note : m_archive) {
+        if (note.endedAt.toLocalTime().date() != target) {
+            continue;
+        }
+        const QDateTime started = note.startedAt.toLocalTime();
+        const QDateTime ended = note.endedAt.toLocalTime();
+        QVariantMap entry;
+        entry.insert(QStringLiteral("type"), QStringLiteral("routine"));
+        entry.insert(QStringLiteral("sessionId"), note.sessionId);
+        entry.insert(QStringLiteral("title"), note.routineName);
+        entry.insert(QStringLiteral("timeLabel"), QStringLiteral("%1-%2")
+                                                  .arg(started.toString(QStringLiteral("HH:mm")),
+                                                       ended.toString(QStringLiteral("HH:mm"))));
+        entry.insert(QStringLiteral("detail"), QStringLiteral("%1M  ■  %2")
+                                               .arg(QString::number(qMax(0, note.minutes)),
+                                                    note.result.toUpper()));
+        entry.insert(QStringLiteral("minutes"), qMax(0, note.minutes));
+        entry.insert(QStringLiteral("result"), note.result);
+        entry.insert(QStringLiteral("noteText"), note.text.trimmed());
+        entry.insert(QStringLiteral("hasNote"), !note.text.trimmed().isEmpty());
+        entry.insert(QStringLiteral("sortKey"), started.isValid() ? started.toMSecsSinceEpoch() : ended.toMSecsSinceEpoch());
+        rows.append(entry);
+    }
+
+    if (target == QDate::currentDate() && !m_text.trimmed().isEmpty()) {
+        const QDateTime started = m_draftStartedAt.isValid() ? m_draftStartedAt.toLocalTime() : QDateTime::currentDateTime();
+        QVariantMap entry;
+        entry.insert(QStringLiteral("type"), QStringLiteral("draft"));
+        entry.insert(QStringLiteral("sessionId"), QStringLiteral("draft"));
+        entry.insert(QStringLiteral("title"), m_draftRoutineName.isEmpty() ? QStringLiteral("CURRENT MISSION DRAFT") : m_draftRoutineName);
+        entry.insert(QStringLiteral("timeLabel"), QStringLiteral("%1-NOW").arg(started.toString(QStringLiteral("HH:mm"))));
+        entry.insert(QStringLiteral("detail"), QStringLiteral("LIVE NOTE  ■  UNSUBMITTED"));
+        entry.insert(QStringLiteral("minutes"), 0);
+        entry.insert(QStringLiteral("result"), QStringLiteral("draft"));
+        entry.insert(QStringLiteral("noteText"), m_text.trimmed());
+        entry.insert(QStringLiteral("hasNote"), true);
+        entry.insert(QStringLiteral("sortKey"), started.toMSecsSinceEpoch());
+        rows.append(entry);
+    }
+
+    std::sort(rows.begin(), rows.end(), [](const QVariantMap &a, const QVariantMap &b) {
+        return a.value(QStringLiteral("sortKey")).toLongLong() < b.value(QStringLiteral("sortKey")).toLongLong();
+    });
+
+    QVariantList list;
+    for (const QVariantMap &row : rows) {
+        list.append(row);
+    }
+    return list;
 }
 
 QVariantMap NotesStore::sessionNote(const QString &sessionId) const
@@ -162,6 +295,23 @@ QVariantMap NotesStore::sessionNote(const QString &sessionId) const
         return entry;
     }
     return {};
+}
+
+bool NotesStore::updateSessionNote(const QString &sessionId, const QString &text)
+{
+    for (SessionNote &note : m_archive) {
+        if (note.sessionId != sessionId) {
+            continue;
+        }
+        if (note.text == text) {
+            return true;
+        }
+        note.text = text;
+        writeSessionFile(note);
+        emit archiveChanged();
+        return true;
+    }
+    return false;
 }
 
 void NotesStore::onRoutineEngaged(const QString &routineId, const QString &routineName)
@@ -364,4 +514,10 @@ QString NotesStore::formatSession(const SessionNote &note)
                              ? QStringLiteral("(no notes captured)")
                              : note.text.trimmed();
     return header + QStringLiteral("\n") + body;
+}
+
+QDate NotesStore::parseDateOrToday(const QString &date)
+{
+    const QDate parsed = QDate::fromString(date.trimmed(), Qt::ISODate);
+    return parsed.isValid() ? parsed : QDate::currentDate();
 }

@@ -32,6 +32,8 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(QString activeRoutineName READ activeRoutineName NOTIFY activeChanged)
     Q_PROPERTY(int activeRoutineTotalSeconds READ activeRoutineTotalSeconds NOTIFY activeChanged)
     Q_PROPERTY(QString activeRoutineDescription READ activeRoutineDescription NOTIFY activeChanged)
+    Q_PROPERTY(int activeRoutineBreakFrequencyMinutes READ activeRoutineBreakFrequencyMinutes NOTIFY activeChanged)
+    Q_PROPERTY(int activeRoutineBreakDurationMinutes READ activeRoutineBreakDurationMinutes NOTIFY activeChanged)
     Q_PROPERTY(int remainingSeconds READ remainingSeconds NOTIFY remainingSecondsChanged)
     Q_PROPERTY(int elapsedSeconds READ elapsedSeconds NOTIFY remainingSecondsChanged)
     Q_PROPERTY(bool accessGranted READ accessGranted NOTIFY accessChanged)
@@ -87,6 +89,8 @@ public:
     QString activeRoutineName() const;
     int activeRoutineTotalSeconds() const;
     QString activeRoutineDescription() const;
+    int activeRoutineBreakFrequencyMinutes() const;
+    int activeRoutineBreakDurationMinutes() const;
     int remainingSeconds() const;
     int elapsedSeconds() const;
     bool accessGranted() const;

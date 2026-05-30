@@ -18,6 +18,7 @@ WATCHDOG="${FOCUSOS_WATCHDOG:-$FOCUSOS_LIB/focusos-watchdog.sh}"
 if [[ -d "$FOCUSOS_LIB/config" ]]; then
     export XDG_CONFIG_DIRS="$FOCUSOS_LIB/config:${XDG_CONFIG_DIRS:-/etc/xdg}"
 fi
+export KWIN_COMPOSE="${KWIN_COMPOSE:-O2}"
 
 run_session() {
     if [[ -x "$WATCHDOG" ]]; then
@@ -29,10 +30,6 @@ run_session() {
 
 case "$FOCUSOS_MODE" in
     kwin)
-        # ── FIX 2: Single-line exec command ──────────────────────────
-        # The line break here was previously causing KWin to launch without
-        # an app to run, leaving you stranded on a black screen while the
-        # watchdog was completely ignored by Bash.
         if [[ -x "$WATCHDOG" ]]; then
             exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
         else

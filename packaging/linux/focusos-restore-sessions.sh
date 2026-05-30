@@ -15,6 +15,7 @@ LIB_DIR="/usr/local/lib/focusos"
 STASH_DIR="$LIB_DIR/stashed-sessions"
 WAYLAND_SESSIONS="/usr/share/wayland-sessions"
 X_SESSIONS="/usr/share/xsessions"
+SDDM_CONF="/etc/sddm.conf.d/10-focusos.conf"
 
 if [[ "${EUID}" -ne 0 ]]; then
     echo "must run as root (via the focusos sudoers rule)" >&2
@@ -42,6 +43,11 @@ if [[ -f /etc/systemd/logind.conf.d/90-focusos-logind.conf ]]; then
     systemctl restart systemd-logind 2>/dev/null || true
     echo "removed logind lockdown"
 fi
+
+rm -f "$SDDM_CONF"
+for n in 1 2 3 4 5 6; do
+    systemctl unmask "getty@tty${n}.service" "autovt@tty${n}.service" >/dev/null 2>&1 || true
+done
 
 if [[ "$restored" -eq 0 ]]; then
     echo "WARNING: no stashed sessions found to restore." >&2

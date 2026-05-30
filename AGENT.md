@@ -1,100 +1,125 @@
-# AGENT.md
+# Agent Guide
 
-Orientation for AI agents working in FocusOS. Read this first to avoid
-re-deriving the layout. Keep it accurate when structure changes.
+Orientation for AI agents and contributors working in FocusOS. Read this before
+editing so you can move with the shape of the repo instead of rediscovering it.
 
-## What this is
+## Project Shape
 
-FocusOS is a full-screen **productivity shell for deep work** — a Qt6/QML app
-that takes over the screen during a "routine," launches only the apps you've
-allowed, and locks down everything else (network, other apps, sleep) until the
-session ends or you unlock with a TOTP code. C++/Qt backend, QML frontend.
+FocusOS is a Qt 6 / QML productivity shell for deep work. The C++ backend owns
+routine state, platform control, TOTP, notes, stats, media, updates, and browser
+policy. QML owns the single-window presentation.
 
-- **Build system:** CMake ≥ 3.24, C++20, Qt6 ≥ 6.7 (Core, Gui, Multimedia,
-  Network, Qml, Quick, QuickControls2, Test, Widgets).
-- **Platforms:** macOS (Apple Silicon by default) and Linux/KDE Plasma 6. There
-  is no third platform — `main.cpp` `#error`s otherwise.
-- **User testing:** primarily KDE Plasma 6 with Brave. The Linux lockdown story
-  (network gate, watchdog, session swapping, in-place updater) is the deep end.
+The strict product target is a Linux/KDE Wayland login session for a dedicated
+non-admin user. macOS is supported as a softer shell and fast UI development
+loop, but it is not the same security boundary.
 
-## Build & test
+## Build And Test
 
-```sh
-cmake -B build            # configure (first time)
-cmake --build build       # builds the `focusos` app + `totp_tests`
-ctest --test-dir build    # runs the TOTP unit tests
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build
 ```
 
-The macOS build produces `build/focusos.app`. **Note:** Linux-only code lives
-behind `#if defined(Q_OS_LINUX)` / `elseif(UNIX)` in CMake, so a macOS build
-will NOT catch Linux compile errors (and vice versa). Cross-platform code
-(`PlatformBackend.h`, `RoutineManager`, `main.cpp`'s crash handler) is the
-common gotcha — a method called through `PlatformBackend*` must be declared on
-the base class even if only one platform overrides it.
+Linux foreground run:
 
-## Directory map
-
+```bash
+./build/focusos
 ```
-CMakeLists.txt          Single top-level build file; lists every source + QML
+
+macOS foreground run:
+
+```bash
+open build/focusos.app
+```
+
+Linux-only code is behind the UNIX platform branch in CMake and `Q_OS_LINUX`
+guards. A macOS build will not catch Linux compile errors, and a Linux build
+will not catch macOS backend mistakes.
+
+## Directory Map
+
+```text
+CMakeLists.txt
+README.md
+INSTALL.md
+AGENT.md
+docs/
+  architecture-decisions.md
+  browser-blocker.md
+assets/
+  fonts/                  Bundled UI fonts.
+  github/                 README screenshots.
+  music/                  Bundled fallback ambient audio.
+  qml/theme.js            Shared QML theme constants.
 src/
-  main.cpp              Entry point. Picks the platform backend, installs the
-                        crash-cleanup signal handler (Linux), constructs the
-                        core C++ objects, wires their signals, and hands them
-                        to ShellWindow. Single-instance via QLockFile in ~/.focusos.
-  core/                 Backend logic — QObjects exposed to QML as properties.
-    RoutineManager.*    The heart. QAbstractListModel of routines; starts/stops
-                        sessions, drives the platform lockdown, owns timer +
-                        always-allowed-apps state. Largest file.
-    Timer.*             FocusTimer — countdown for a routine session.
-    NotesStore.*        Per-routine scratch notes, archived per day.
-    MusicEngine.*       Ambient music playback (Qt Multimedia).
-    StatsStore.*        Focus-minute history / daily stats.
-    SystemStatus.*      Battery, clock, etc. for the info panel.
-    InspirationStore.*  Quotes/wallpaper assets shown in the shell.
-    TOTPEngine.*        TOTP secret + enrollment URI + QR code. Gates unlock
-                        and session recovery. Covered by tests/totp_tests.cpp.
-    Updater.*           In-app git-pull-and-rebuild updater with a 30-min crash
-                        probation + auto-revert. Orchestrates packaging/linux
-                        shell scripts. Linux-only model. (See header comment.)
+  main.cpp                Backend selection, signal wiring, single-instance guard.
+  blocker/                Browser policy serialization and native-host mode.
+  core/                   QObject services exposed to QML.
   platform/
-    PlatformBackend.h   Abstract interface every backend implements. App control,
-                        network policy, sleep inhibition, watchdog, session
-                        recovery. ADD A VIRTUAL HERE before calling it through
-                        the base pointer.
-    macos/MacBackend.*  macOS implementation (lighter lockdown).
-    linux/LinuxBackend.* Linux/KDE implementation (full lockdown).
-    linux/NetGate.*     Builds/applies/drops a firewall ruleset for the
-                        allowed-hosts network policy.
-  shell/
-    ShellWindow.*       QQuickView subclass; the single top-level window that
-                        hosts all QML and receives the core objects as context.
-    *.qml               UI. Main.qml is the root; UnlockModal, MissionView,
-                        ActivitiesPanel, InfoPanel, NotesDrawer, AmbientLayer,
-                        ProgressOverlay are the panels/overlays.
-assets/                 Bundled fonts, ambient music, QML theme.js. Compiled
-                        into the binary via qt_add_qml_module RESOURCES.
-resources/              (currently empty)
-tests/totp_tests.cpp    Qt Test unit tests for TOTPEngine.
-packaging/linux/        Install/update/revert/watchdog/session shell scripts +
-                        KDE config (kwinrc, kglobalshortcutsrc) + .desktop file.
-                        This is the privileged-free, no-sudo lockdown machinery.
-build/                  CMake build tree (generated; not source of truth).
+    PlatformBackend.h     The OS boundary. Add virtuals here before core calls.
+    linux/                KWin, nftables, app control, watchdog, recovery.
+    macos/                macOS implementation for the softer shell.
+  shell/                  ShellWindow and QML UI files.
+resources/
+  Cold Turkey/            Pristine upstream extension snapshot.
+  focusos-blocker/        FocusOS extension fork and native host dev files.
+scripts/                  Blocker packaging, update, policy, diagnostics.
+packaging/linux/          SDDM session, watchdog, updater, restore scripts, KDE config.
+tests/                    Qt Test coverage.
+build/                    Generated CMake tree; not source of truth.
 ```
 
-## Architecture notes
+## Core Responsibilities
 
-- **C++ owns logic, QML owns presentation.** Core objects are instantiated in
-  `main.cpp`, connected via signals there, and exposed to QML through
-  `ShellWindow`. To surface new data to the UI, add a `Q_PROPERTY`/`Q_INVOKABLE`
-  on the relevant core class, not logic in QML.
-- **Platform abstraction:** all OS-specific behavior goes through
-  `PlatformBackend`. `RoutineManager` and `main.cpp` only ever hold a
-  `PlatformBackend*`. Keep platform `#ifdef`s out of core/ — put them behind the
-  backend interface.
-- **State on disk:** `~/.focusos/` holds the instance lock, the active-session
-  checkpoint (`active.json`), and updater state. On Linux a respawn watchdog
-  relaunches FocusOS while a checkpoint is armed, so cleanup must be
-  crash-safe and idempotent (see the crash handler in `main.cpp` and
-  `LinuxBackend::releaseDisplaySleepInhibitors`).
-- **Single window:** FocusOS deliberately runs as one process / one window.
-  Avoid spawning auxiliary QQuickViews or extra processes.
+- `RoutineManager` is the center of routine editing, engagement, timer state,
+  app launch coordination, lockdown, stats handoff, and active-session recovery.
+- `PlatformBackend` is the only interface core code should use for OS-specific
+  behavior. Keep platform `#ifdef`s out of core logic when a backend virtual is
+  the cleaner boundary.
+- `ShellWindow` hosts one `QQuickView`. FocusOS should stay a single-window app.
+- `TOTPEngine` owns enrollment URI, QR code generation, and six-digit code
+  verification. `tests/totp_tests.cpp` covers this path.
+- `Updater` orchestrates the Linux no-sudo update/revert scripts.
+- `src/blocker` and `resources/focusos-blocker` work together: the app writes
+  signed policy, and the extension enforces browser navigation allowlists.
+
+## Runtime State
+
+FocusOS writes user state under `~/.focusos/`:
+
+- `routines.json` - routine definitions.
+- `config.json` - settings shared across panels.
+- `stats.json` - completed, interrupted, unlocked, and active session records.
+- `active.json` - armed-routine checkpoint watched by the Linux watchdog.
+- `totp.enrolled` and TOTP secret files - unlock enrollment state.
+- `inspiration/` and `music/` - user-provided ambient media.
+- `blocker/` - browser blocker policy, logs, CRX dist files, and heartbeat.
+
+Treat writes to these files as crash-sensitive. The Linux watchdog may relaunch
+the shell while a routine is armed.
+
+## Editing Guidelines
+
+- Keep code changes scoped to the subsystem you are touching.
+- Do not move platform behavior into QML.
+- Add `Q_PROPERTY` or `Q_INVOKABLE` on a core object when QML needs new data or
+  actions.
+- Preserve unknown JSON keys in user config files unless a migration explicitly
+  owns them.
+- Any method called through `PlatformBackend*` must be declared on
+  `PlatformBackend.h` even if only one platform implements real behavior.
+- After touching browser blocking, read [docs/browser-blocker.md](docs/browser-blocker.md)
+  and test native-host delivery, not just C++ compilation.
+- After touching permanent install or recovery, read [INSTALL.md](INSTALL.md)
+  and the scripts in `packaging/linux/`.
+
+## Useful Commands
+
+```bash
+rg --files
+rg "Q_PROPERTY|Q_INVOKABLE" src
+cmake --build build
+ctest --test-dir build --output-on-failure
+scripts/blocker-doctor.sh
+```

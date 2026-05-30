@@ -6,6 +6,12 @@ project(FocusOS
     LANGUAGES CXX
 )
 
+# The macOS backend isolates Apple framework calls in an Objective-C++ shim
+# (MacBackendNative.mm). Enable the OBJCXX language so CMake compiles it.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -65,6 +71,18 @@ if(APPLE)
     list(APPEND FOCUSOS_SOURCES
         src/platform/macos/MacBackend.cpp
         src/platform/macos/MacBackend.h
+        src/platform/macos/MacBackendNative.h
+        src/platform/macos/MacBackendNative.mm
+    )
+    # MacBackendNative.mm is written with ARC ownership semantics (no manual
+    # retain/release, `alloc init` without a balancing release, `__block`
+    # object captures expected to be retained). Without -fobjc-arc it compiles
+    # under MRC, where a captured NSError* is not retained and gets deallocated
+    # when the run-loop's autorelease pool drains — leaving a dangling pointer
+    # that crashes when the error message is later read. Compile it under ARC.
+    set_source_files_properties(
+        src/platform/macos/MacBackendNative.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
     )
 elseif(UNIX)
     list(APPEND FOCUSOS_SOURCES
@@ -113,6 +131,37 @@ target_link_libraries(focusos PRIVATE
     Qt6::QuickControls2
     Qt6::Widgets
 )
+
+if(APPLE)
+    # Apple frameworks backing the native macOS shim:
+    #   AppKit            — NSApplicationPresentationOptions kiosk mode, NSWorkspace
+    #   Foundation        — NSString/NSArray bridging, NSRunLoop pumping
+    #   IOKit             — IOPMAssertionCreateWithName display-sleep inhibition
+    #   NetworkExtension  — NEFilterManager content-filter network policy
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
+    find_library(NETWORK_EXTENSION_FRAMEWORK NetworkExtension REQUIRED)
+
+    target_link_libraries(focusos PRIVATE
+        ${APPKIT_FRAMEWORK}
+        ${FOUNDATION_FRAMEWORK}
+        ${IOKIT_FRAMEWORK}
+        ${NETWORK_EXTENSION_FRAMEWORK}
+    )
+
+    # EndpointSecurity backs the AUTH_EXEC process blocker. It is only usable in
+    # a signed build carrying com.apple.developer.endpoint-security.client, but
+    # we link + compile it whenever the SDK ships the framework so the code path
+    # exists; MacBackendNative.mm degrades to a clear error when it's absent.
+    find_library(ENDPOINT_SECURITY_FRAMEWORK EndpointSecurity)
+    if(ENDPOINT_SECURITY_FRAMEWORK)
+        target_link_libraries(focusos PRIVATE ${ENDPOINT_SECURITY_FRAMEWORK})
+        target_compile_definitions(focusos PRIVATE FOCUSOS_HAS_ENDPOINT_SECURITY=1)
+    else()
+        message(STATUS "EndpointSecurity framework not found — AUTH_EXEC process blocking disabled in this build")
+    endif()
+endif()
 
 enable_testing()
 

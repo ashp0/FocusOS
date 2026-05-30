@@ -14,13 +14,10 @@
 #     the min-time floor) the watchdog exits on its own.
 #
 #   --kiosk — used as KWin's `--exit-with-session` command in the permanent
-#     install. Brings `focusos` up as the session shell and keeps it alive
-#     across crashes WHILE A ROUTINE IS ARMED (~/.focusos/active.json). If
-#     FocusOS exits while idle (no routine), the watchdog releases the session
-#     so the user drops back to the login manager and can pick Plasma — the
-#     deliberate "fall back to Plasma" recovery path. During boot/startup (before
-#     FocusOS has ever come up) it keeps relaunching so a crash loop doesn't
-#     strand the user on a black screen.
+#     install. Brings `focusos` up as the session shell and keeps it alive for
+#     the whole login session, idle or armed. This is strict kiosk posture:
+#     quitting or crashing the shell never drops through to a desktop or session
+#     selector.
 #
 # Single-instance via flock on ~/.focusos/watchdog.lock — a second invocation
 # (e.g. FocusOS arming the watchdog again on resume) is a no-op.
@@ -85,35 +82,11 @@ spawn_focus() {
 
 log "watchdog start mode=$MODE pid=$$"
 
-# Tracks whether we've ever confirmed FocusOS actually running. Until we have,
-# a "not running" reading means it's still starting (or crash-looping at boot),
-# so we keep (re)launching. Once it's been up, a later disappearance while idle
-# is treated as a deliberate exit and we release the session.
-SEEN_RUNNING=0
-
 while true; do
     if [[ "$MODE" == "kiosk" ]]; then
-        if focus_running; then
-            SEEN_RUNNING=1
-        elif [[ "$SEEN_RUNNING" -eq 0 ]]; then
-            # Initial boot / startup window — bring FocusOS up and give it a
-            # moment to appear before judging it again.
+        if ! focus_running; then
             spawn_focus
             sleep 3
-        elif [[ -f "$ACTIVE_FILE" ]]; then
-            # A routine is armed — protect it across a crash/kill. Grace beat so
-            # we don't race a legitimate end that removes the checkpoint just
-            # before the process exits.
-            sleep 1
-            if [[ -f "$ACTIVE_FILE" ]] && ! focus_running; then
-                spawn_focus
-            fi
-        else
-            # FocusOS was up, is now gone, and no routine is armed: treat it as a
-            # deliberate exit and release the session so the login manager (and
-            # Plasma) is reachable.
-            log "kiosk: idle exit — releasing session to login manager"
-            break
         fi
     else
         if [[ ! -f "$ACTIVE_FILE" ]]; then

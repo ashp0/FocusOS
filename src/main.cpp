@@ -45,9 +45,9 @@ static void focusosFatalSignalHandler(int signum)
         // helper keeps holding the lock, and they pile up across crashes,
         // blocking idle/sleep indefinitely.
         g_crashCleanupBackend->releaseDisplaySleepInhibitors();
-        // Restore the desktop shell on the way down — otherwise the user is
-        // staring at a black screen with no launcher after the abort.
-        g_crashCleanupBackend->launchDesktopShell(nullptr);
+        // Do not launch plasmashell as a crash fallback in kiosk mode. The
+        // external watchdog is responsible for respawning FocusOS; opening a
+        // desktop shell here would create an escape surface during a lock.
     }
     std::signal(signum, SIG_DFL);
     std::raise(signum);

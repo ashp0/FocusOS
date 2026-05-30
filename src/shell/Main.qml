@@ -28,8 +28,8 @@ Item {
             event.accepted = true
             return
         }
-        if (notesDrawer.open) {
-            notesDrawer.open = false
+        if (!root.sidebarCollapsed && info.activeTab === 1) {
+            root.sidebarCollapsed = true
             event.accepted = true
             root.forceActiveFocus()
             return
@@ -43,9 +43,10 @@ Item {
             event.accepted = true
             return
         }
-        // Cmd+N — toggle notes drawer
+        // Cmd+N — open notes tab
         if ((event.modifiers & Qt.MetaModifier) && event.key === Qt.Key_N) {
-            notesDrawer.open = !notesDrawer.open
+            root.sidebarCollapsed = false
+            info.activeTab = 1
             event.accepted = true
             return
         }
@@ -56,7 +57,7 @@ Item {
             return
         }
         // Space — pause / resume active routine
-        if (event.key === Qt.Key_Space && routineManager.active && !notesDrawer.open && !unlockModal.modalOpen) {
+        if (event.key === Qt.Key_Space && routineManager.active && !unlockModal.modalOpen) {
             routineManager.togglePause()
             event.accepted = true
             return
@@ -176,7 +177,10 @@ Item {
             headerFont: root.headerFont
             bodyFont: root.bodyFont
             visible: !root.sidebarCollapsed
-            onToggleNotes: notesDrawer.open = !notesDrawer.open
+            onToggleNotes: {
+                root.sidebarCollapsed = false
+                info.activeTab = 1
+            }
             onCollapseSidebar: root.sidebarCollapsed = true
         }
     }
@@ -190,18 +194,6 @@ Item {
         showStars: true
         showDust: false
         starOpacityScale: 0.35
-    }
-
-    NotesDrawer {
-        id: notesDrawer
-        width: Math.min(360, Math.max(300, root.width * 0.26))
-        height: root.height
-        headerFont: root.headerFont
-        bodyFont: root.bodyFont
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        rootWidth: root.width
-        z: 20
     }
 
     UnlockModal {

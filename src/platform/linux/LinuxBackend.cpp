@@ -426,6 +426,42 @@ ParsedAppEntry parseAppEntry(const QString &rawEntry)
     return parsed;
 }
 
+QStringList processNamesForCommandLines(const QStringList &entries)
+{
+    QStringList names;
+    for (const QString &entry : entries) {
+        const ParsedAppEntry parsed = parseAppEntry(entry);
+        if (parsed.kiosk || parsed.path.isEmpty()) {
+            continue;
+        }
+
+        const QFileInfo info(parsed.path);
+        if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0) {
+            const QStringList parts = desktopExecParts(parsed.path);
+            if (!parts.isEmpty()) {
+                names.append(QFileInfo(parts.first()).fileName());
+            }
+            continue;
+        }
+
+        const QString name = QFileInfo(parsed.path).fileName();
+        if (!name.isEmpty()) {
+            names.append(name);
+        }
+
+        if (name == QStringLiteral("x-terminal-emulator")) {
+            names << QStringLiteral("konsole")
+                  << QStringLiteral("kgx")
+                  << QStringLiteral("gnome-terminal")
+                  << QStringLiteral("foot")
+                  << QStringLiteral("alacritty")
+                  << QStringLiteral("xterm");
+        }
+    }
+    names.removeDuplicates();
+    return names;
+}
+
 } // namespace
 
 LinuxBackend::LinuxBackend()
@@ -452,7 +488,7 @@ QString LinuxBackend::name() const
 
 void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
 {
-    Q_UNUSED(appPaths)
+    m_sessionAllowedProcessNames = processNamesForCommandLines(appPaths);
 
     QProcess::execute(
         QStringLiteral("pkill"),
@@ -655,6 +691,7 @@ void LinuxBackend::terminateApps(const QStringList &appPaths)
     }
 
     restoreShellPlacement();
+    m_sessionAllowedProcessNames.clear();
 }
 
 bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
@@ -883,6 +920,13 @@ void LinuxBackend::tickLockdownWatchdog()
         QStringLiteral("yakuake"),
         QStringLiteral("guake"),
         QStringLiteral("tilda"),
+        QStringLiteral("x-terminal-emulator"),
+        QStringLiteral("konsole"),
+        QStringLiteral("kgx"),
+        QStringLiteral("gnome-terminal"),
+        QStringLiteral("foot"),
+        QStringLiteral("alacritty"),
+        QStringLiteral("xterm"),
         // System trays / panels / docks that could surface app shortcuts
         QStringLiteral("waybar"),
         QStringLiteral("polybar"),
@@ -926,11 +970,13 @@ void LinuxBackend::tickLockdownWatchdog()
     // Every name below comes from the hard-coded `outlawed` list (plain
     // [a-z-] literals); user-supplied always-allowed names are only ever used to
     // *exclude* entries, so nothing untrusted is interpolated into the script.
-    const QStringList alwaysAllowed = alwaysAllowedProcessNames();
+    QStringList allowedProcesses = alwaysAllowedProcessNames();
+    allowedProcesses.append(m_sessionAllowedProcessNames);
+    allowedProcesses.removeDuplicates();
     QStringList commands;
     commands.reserve(outlawed.size());
     for (const QString &name : outlawed) {
-        if (alwaysAllowed.contains(name)) {
+        if (allowedProcesses.contains(name)) {
             continue;
         }
         if (name.size() <= 15) {
