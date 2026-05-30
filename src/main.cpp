@@ -1,4 +1,5 @@
 #include "core/InspirationStore.h"
+#include "core/MediaKeys.h"
 #include "core/MusicEngine.h"
 #include "core/NotesStore.h"
 #include "core/RoutineManager.h"
@@ -129,6 +130,11 @@ int main(int argc, char *argv[])
     SystemStatus systemStatus;
     InspirationStore inspirationStore;
     Updater updater;
+
+    // Claim the volume/brightness media keys session-wide so they work over a
+    // focused routine app, not just inside the FocusOS shell. No-op on builds
+    // without KF6GlobalAccel (e.g. macOS).
+    MediaKeys mediaKeys(&systemStatus);
 
     QObject::connect(&routineManager, &RoutineManager::activeChanged, &musicEngine, [&routineManager, &musicEngine] {
         musicEngine.setRoutineEngaged(routineManager.active());

@@ -78,6 +78,18 @@ Item {
             event.accepted = true
             return
         }
+        // Media brightness keys (handled globally by MediaKeys when another app
+        // is focused; this covers the case where FocusOS itself is on top).
+        if (event.key === Qt.Key_MonBrightnessUp) {
+            systemStatus.adjustBrightness(5)
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_MonBrightnessDown) {
+            systemStatus.adjustBrightness(-5)
+            event.accepted = true
+            return
+        }
     }
 
     FontLoader {

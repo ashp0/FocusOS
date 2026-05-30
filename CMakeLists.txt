@@ -50,6 +50,8 @@ set(FOCUSOS_SOURCES
     src/core/MusicEngine.h
     src/core/InspirationStore.cpp
     src/core/InspirationStore.h
+    src/core/MediaKeys.cpp
+    src/core/MediaKeys.h
     src/core/RoutineManager.cpp
     src/core/RoutineManager.h
     src/core/StatsStore.cpp
@@ -93,6 +95,14 @@ elseif(UNIX)
     )
 endif()
 
+# KF6GlobalAccel lets FocusOS claim the volume/brightness media keys session-
+# wide (see src/core/MediaKeys.cpp). It is optional: without it the keys still
+# work while FocusOS itself is focused, just not over a routine app. Only worth
+# probing on Linux (KWin/Wayland); the macOS build never needs it.
+if(UNIX AND NOT APPLE)
+    find_package(KF6GlobalAccel QUIET)
+endif()
+
 qt_add_executable(focusos
     MACOSX_BUNDLE
     ${FOCUSOS_SOURCES}
@@ -131,6 +141,14 @@ target_link_libraries(focusos PRIVATE
     Qt6::QuickControls2
     Qt6::Widgets
 )
+
+if(KF6GlobalAccel_FOUND)
+    target_link_libraries(focusos PRIVATE KF6::GlobalAccel)
+    target_compile_definitions(focusos PRIVATE FOCUSOS_HAS_KGLOBALACCEL=1)
+    message(STATUS "KF6GlobalAccel found — global volume/brightness media keys enabled")
+else()
+    message(STATUS "KF6GlobalAccel not found — media keys limited to when FocusOS is focused")
+endif()
 
 if(APPLE)
     # Apple frameworks backing the native macOS shim:

@@ -2,6 +2,7 @@
 
 #include "core/RoutineManager.h"
 
+#include <QAudioDevice>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDialog>
@@ -11,6 +12,8 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLoggingCategory>
+#include <QMediaDevices>
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QResource>
@@ -18,6 +21,8 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
+
+Q_LOGGING_CATEGORY(lcMusic, "focusos.music")
 
 namespace {
 
@@ -103,7 +108,40 @@ MusicEngine::MusicEngine(QObject *parent)
     m_audioOutput.setVolume(0.0);
     m_fadeAnimation.setEasingCurve(QEasingCurve::InOutQuad);
 
+    // Audio diagnostics. On Linux the music engine "silently fails" when the
+    // Qt Multimedia backend can't be loaded or has no usable output device —
+    // every other part of FocusOS keeps working, so the symptom is just
+    // silence with no clue why. Surface the backend, the output device, and any
+    // playback error so a broken setup is diagnosable from the log instead of
+    // guessable. Set QT_LOGGING_RULES="focusos.music.debug=true" to see the
+    // startup lines; warnings are always emitted.
+    const QByteArray backend = qgetenv("QT_MEDIA_BACKEND");
+    const QAudioDevice outputDevice = m_audioOutput.device();
+    qCDebug(lcMusic, "media backend: %s | default output device: %s",
+            backend.isEmpty() ? "(platform default)" : backend.constData(),
+            outputDevice.isNull() ? "(none — no audio device available!)"
+                                  : qPrintable(outputDevice.description()));
+    if (outputDevice.isNull() || QMediaDevices::audioOutputs().isEmpty()) {
+        qCWarning(lcMusic, "no audio output device detected — ambient music will be silent "
+                           "(is PipeWire/PulseAudio running in this session?)");
+    }
+
+    connect(&m_player, &QMediaPlayer::errorOccurred, this,
+            [](QMediaPlayer::Error error, const QString &errorString) {
+        if (error != QMediaPlayer::NoError) {
+            // Most common on a Linux box where qt6-multimedia is installed but its
+            // decoder/backend plugin (FFmpeg or GStreamer) is missing: the file is
+            // found but never decodes, so playback stays silent.
+            qCWarning(lcMusic, "playback error %d: %s", static_cast<int>(error),
+                      qPrintable(errorString));
+        }
+    });
+
     connect(&m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::InvalidMedia) {
+            qCWarning(lcMusic, "invalid media (cannot decode '%s') — missing audio codec/backend?",
+                      qPrintable(m_player.source().toString()));
+        }
         if (status == QMediaPlayer::EndOfMedia && !m_playbackQueue.isEmpty()) {
             advanceSource();
         }

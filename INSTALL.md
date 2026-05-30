@@ -13,19 +13,27 @@ installing it as a strict Linux login session.
 - Linux strict mode: SDDM, KWin Wayland, nftables, xdg-utils, PulseAudio
   command-line tools or PipeWire compatibility, and a Chromium-family browser if
   the browser blocker is used.
+- Ambient music needs a Qt Multimedia **backend** plugin (FFmpeg or GStreamer).
+  Installing `qt6-multimedia` alone without its decoder backend leaves FocusOS
+  silent while the rest of the session has audio — see the per-distro packages
+  below.
+- Optional but recommended on Linux: `brightnessctl` (lets FocusOS change screen
+  brightness and the brightness keys without root) and KF6 GlobalAccel headers
+  (lets the volume/brightness media keys work over a focused routine app, not
+  just inside the FocusOS shell).
 
 ## Linux Dependencies
 
 Arch:
 
 ```bash
-sudo pacman -S --needed base-devel cmake ninja ccache qt6-base qt6-declarative qt6-multimedia qt6-wayland qt6-tools kwin nftables sddm xdg-utils wireplumber libpulse
+sudo pacman -S --needed base-devel cmake ninja ccache qt6-base qt6-declarative qt6-multimedia qt6-wayland qt6-tools kwin nftables sddm xdg-utils wireplumber libpulse ffmpeg gst-plugins-good kglobalaccel brightnessctl
 ```
 
 Fedora KDE:
 
 ```bash
-sudo dnf install cmake ninja-build ccache gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtwayland qt6-qttools kwin-wayland plasma-workspace-wayland nftables sddm xdg-utils wireplumber pulseaudio-utils
+sudo dnf install cmake ninja-build ccache gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtwayland qt6-qttools kwin-wayland plasma-workspace-wayland nftables sddm xdg-utils wireplumber pulseaudio-utils ffmpeg-libs gstreamer1-plugins-good kf6-kglobalaccel-devel brightnessctl
 ```
 
 Ubuntu package names vary by release. Use Qt 6.7+ from the distro, KDE/Qt PPA,
@@ -33,7 +41,7 @@ or the Qt online installer, then install the base tools:
 
 ```bash
 sudo apt update
-sudo apt install build-essential cmake ninja-build ccache nftables sddm xdg-utils wireplumber pulseaudio-utils
+sudo apt install build-essential cmake ninja-build ccache nftables sddm xdg-utils wireplumber pulseaudio-utils gstreamer1.0-plugins-good libkf6globalaccel-dev brightnessctl
 ```
 
 ## Build And Test

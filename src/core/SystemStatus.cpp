@@ -262,6 +262,24 @@ void writeMuteToggle()
 void writeBrightness(int percent)
 {
     const int clamped = clampedPercent(percent);
+
+    // Prefer brightnessctl: it ships a udev rule (and/or setuid helper) that
+    // grants write access to the backlight without root, which is why the bare
+    // sysfs write below silently fails for a normal user — /sys/class/backlight/
+    // */brightness is root-owned. brightnessctl is detached so dragging the
+    // slider never blocks the UI thread.
+    const QString brightnessctl = QStandardPaths::findExecutable(QStringLiteral("brightnessctl"));
+    if (!brightnessctl.isEmpty()) {
+        // "-n" keeps a 1% floor so the screen never goes fully black.
+        const int floored = qMax(1, clamped);
+        if (QProcess::startDetached(brightnessctl,
+                                    {QStringLiteral("set"), QStringLiteral("%1%").arg(floored)})) {
+            return;
+        }
+    }
+
+    // Fallback: direct sysfs write. Only succeeds when the user is in the
+    // "video" group and a udev rule has made the file group-writable.
     const BacklightDevice device = readBacklightDevice();
     if (device.valid) {
         QFile brightnessFile(device.path + QStringLiteral("/brightness"));
