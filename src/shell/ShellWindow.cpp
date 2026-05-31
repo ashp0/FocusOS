@@ -8,6 +8,7 @@
 #include "core/SystemStatus.h"
 #include "core/TOTPEngine.h"
 #include "core/Updater.h"
+#include "core/IdleMonitor.h"
 
 #include <QGuiApplication>
 #include <QProcess>
@@ -24,7 +25,8 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
                          StatsStore *statsStore,
                          SystemStatus *systemStatus,
                          InspirationStore *inspirationStore,
-                         Updater *updater)
+                         Updater *updater,
+                         IdleMonitor *idleMonitor)
 {
     setColor(QColor(QStringLiteral("#050508")));
     setResizeMode(QQuickView::SizeRootObjectToView);
@@ -40,6 +42,7 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
     rootContext()->setContextProperty(QStringLiteral("systemStatus"), systemStatus);
     rootContext()->setContextProperty(QStringLiteral("inspirationStore"), inspirationStore);
     rootContext()->setContextProperty(QStringLiteral("updater"), updater);
+    rootContext()->setContextProperty(QStringLiteral("idleMonitor"), idleMonitor);
 
     loadFromModule(QStringLiteral("FocusOS"), QStringLiteral("Main"));
 
@@ -74,7 +77,11 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 
 #if defined(Q_OS_LINUX)
     connect(routineManager, &RoutineManager::activeChanged, this, [this, routineManager] {
-        if (routineManager->active() && routineManager->activeRoutineHasLaunchTargets()) {
+        if (routineManager->openEnded()) {
+            // Open-ended continuation IS the FocusOS ambient screen — keep the
+            // shell in front rather than minimizing behind the routine apps.
+            showFocusShell();
+        } else if (routineManager->active() && routineManager->activeRoutineHasLaunchTargets()) {
             QTimer::singleShot(350, this, &ShellWindow::minimizeFocusShell);
         } else if (!routineManager->active() && !routineManager->sessionPromptVisible()) {
             showFocusShell();

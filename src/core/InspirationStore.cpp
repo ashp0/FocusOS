@@ -2,9 +2,11 @@
 
 #include "core/RoutineManager.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSettings>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -43,6 +45,16 @@ InspirationStore::InspirationStore(QObject *parent)
     QDir().mkpath(m_directory);
     ensureReadme();
 
+    // Resume the persisted fade cycle. Seed it on the first ever run so launch
+    // one starts fully visible; thereafter we only rewrite it on an explicit
+    // reset (task start / logout), which is how relaunch-after-crash stays dark.
+    QSettings settings;
+    m_fadeStartMs = settings.value(QStringLiteral("inspiration/fadeStartMs"), 0).toLongLong();
+    if (m_fadeStartMs <= 0) {
+        m_fadeStartMs = QDateTime::currentMSecsSinceEpoch();
+        settings.setValue(QStringLiteral("inspiration/fadeStartMs"), m_fadeStartMs);
+    }
+
     m_scanTimer.setSingleShot(true);
     m_scanTimer.setInterval(250);
     connect(&m_scanTimer, &QTimer::timeout, this, &InspirationStore::scan);
@@ -60,6 +72,19 @@ QVariantList InspirationStore::assets() const
 QString InspirationStore::directory() const
 {
     return m_directory;
+}
+
+qlonglong InspirationStore::fadeStartMs() const
+{
+    return m_fadeStartMs;
+}
+
+void InspirationStore::resetFadeCycle()
+{
+    m_fadeStartMs = QDateTime::currentMSecsSinceEpoch();
+    QSettings settings;
+    settings.setValue(QStringLiteral("inspiration/fadeStartMs"), m_fadeStartMs);
+    emit fadeStartMsChanged();
 }
 
 void InspirationStore::scheduleScan()
@@ -110,5 +135,6 @@ void InspirationStore::ensureReadme() const
     }
 
     readme.write("Drop images or videos here to let FocusOS fold them into the ambient background.\n");
-    readme.write("Media loops continuously. It starts visible at launch, then fades toward a barely noticeable prompt over 30 minutes.\n");
+    readme.write("Media loops continuously. It starts visible, then fades toward a barely noticeable prompt over 30 minutes.\n");
+    readme.write("The fade restarts when you begin a task or return to the login screen, and resumes where it left off after a relaunch.\n");
 }

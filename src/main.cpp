@@ -1,4 +1,5 @@
 #include "core/InspirationStore.h"
+#include "core/IdleMonitor.h"
 #include "core/MediaKeys.h"
 #include "core/MusicEngine.h"
 #include "core/NotesStore.h"
@@ -25,8 +26,14 @@
 #include <QStandardPaths>
 
 #if defined(Q_OS_LINUX)
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusObjectPath>
+#include <QDBusReply>
+
 #include <csignal>
 #include <cstdlib>
+#include <unistd.h>
 
 // Last-ditch cleanup so a crash doesn't strand the user behind an nftables
 // allowlist (which is what bricked the wifi after the engage-time KWin DBus
@@ -130,6 +137,7 @@ int main(int argc, char *argv[])
     SystemStatus systemStatus;
     InspirationStore inspirationStore;
     Updater updater;
+    IdleMonitor idleMonitor;
 
     // Claim the volume/brightness media keys session-wide so they work over a
     // focused routine app, not just inside the FocusOS shell. No-op on builds
@@ -156,6 +164,48 @@ int main(int argc, char *argv[])
             notesStore.onRoutineEngaged(routineManager.activeRoutineId(), routineManager.activeRoutineName());
         }
     });
+    // Any user input re-arms the unlock panel's 30-minute inactivity auto-lock.
+    QObject::connect(&idleMonitor, &IdleMonitor::activity,
+                     &routineManager, &RoutineManager::notifyActivity);
+
+#if defined(Q_OS_LINUX)
+    // Power-key → screen lock (Task 6). logind is configured (90-focusos-logind
+    // .conf) so HandlePowerKey=lock: instead of powering the machine off, the
+    // key makes logind emit the session's "Lock" signal. Wire that straight to
+    // RoutineManager so it blanks the screen (and "Unlock" to restore). This is
+    // best-effort: if the session object can't be resolved nothing is wired and
+    // the in-app LOCK SCREEN button still works.
+    {
+        QDBusConnection systemBus = QDBusConnection::systemBus();
+        QDBusInterface logindManager(QStringLiteral("org.freedesktop.login1"),
+                                     QStringLiteral("/org/freedesktop/login1"),
+                                     QStringLiteral("org.freedesktop.login1.Manager"),
+                                     systemBus);
+        QString sessionPath;
+        QDBusReply<QDBusObjectPath> byPid =
+            logindManager.call(QStringLiteral("GetSessionByPID"), static_cast<quint32>(::getpid()));
+        if (byPid.isValid()) {
+            sessionPath = byPid.value().path();
+        } else {
+            const QByteArray sessionId = qgetenv("XDG_SESSION_ID");
+            if (!sessionId.isEmpty()) {
+                QDBusReply<QDBusObjectPath> bySid =
+                    logindManager.call(QStringLiteral("GetSession"), QString::fromLocal8Bit(sessionId));
+                if (bySid.isValid()) {
+                    sessionPath = bySid.value().path();
+                }
+            }
+        }
+        if (!sessionPath.isEmpty()) {
+            systemBus.connect(QStringLiteral("org.freedesktop.login1"), sessionPath,
+                              QStringLiteral("org.freedesktop.login1.Session"),
+                              QStringLiteral("Lock"), &routineManager, SLOT(lockScreen()));
+            systemBus.connect(QStringLiteral("org.freedesktop.login1"), sessionPath,
+                              QStringLiteral("org.freedesktop.login1.Session"),
+                              QStringLiteral("Unlock"), &routineManager, SLOT(unlockScreen()));
+        }
+    }
+#endif
 
     ShellWindow window(&routineManager,
                        &notesStore,
@@ -164,7 +214,8 @@ int main(int argc, char *argv[])
                        &statsStore,
                        &systemStatus,
                        &inspirationStore,
-                       &updater);
+                       &updater,
+                       &idleMonitor);
     window.showFocusShell();
 
     return app.exec();

@@ -57,6 +57,64 @@ Item {
         return notesStore.timelineSummaryForDate(timelineDate)
     }
 
+    // ---- Month calendar (TIMELINE tab) ----
+    // calendarMonth is 0-based to match the JS Date API.
+    property int calendarYear: (new Date()).getFullYear()
+    property int calendarMonth: (new Date()).getMonth()
+
+    function isoForYmd(year, month, day) {
+        return year + "-" + Theme.pad2(month + 1) + "-" + Theme.pad2(day)
+    }
+
+    function calendarMonthLabel() {
+        const months = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+                        "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
+        return months[calendarMonth] + " " + calendarYear
+    }
+
+    function shiftCalendarMonth(delta) {
+        const date = new Date(calendarYear, calendarMonth + delta, 1)
+        calendarYear = date.getFullYear()
+        calendarMonth = date.getMonth()
+    }
+
+    // Build the month grid: leading blanks to align the 1st under its weekday,
+    // then one cell per day with the per-day summary so days with focus time get
+    // a marker. Depends on notesRevision so it refreshes as sessions land.
+    function calendarCells() {
+        const revision = notesRevision
+        const cells = []
+        const firstWeekday = new Date(calendarYear, calendarMonth, 1).getDay() // 0=Sun
+        const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate()
+        for (let i = 0; i < firstWeekday; ++i) {
+            cells.push({ "blank": true })
+        }
+        for (let day = 1; day <= daysInMonth; ++day) {
+            const iso = isoForYmd(calendarYear, calendarMonth, day)
+            const summary = notesStore.timelineSummaryForDate(iso)
+            cells.push({
+                "blank": false,
+                "day": day,
+                "iso": iso,
+                "focusMinutes": Number(summary.focusMinutes || 0),
+                "sessions": Number(summary.sessions || 0),
+                "isToday": iso === todayIsoDate(),
+                "isSelected": iso === timelineDate
+            })
+        }
+        return cells
+    }
+
+    // Keep the calendar showing the month of whatever day is selected (e.g. when
+    // the day arrows cross a month boundary, or TODAY is pressed).
+    onTimelineDateChanged: {
+        const parts = timelineDate.split("-")
+        if (parts.length === 3) {
+            calendarYear = Number(parts[0])
+            calendarMonth = Number(parts[1]) - 1
+        }
+    }
+
     function tabTitle() {
         if (activeTab === 1) return "MISSION NOTES"
         if (activeTab === 2) return "DEBRIEF TIMELINE"
@@ -469,12 +527,17 @@ Item {
                     font.pixelSize: 11
                 }
 
+                // Read-only target readout. The daily-focus-goal editor now
+                // lives behind the admin unlock (Settings ▸ APPEARANCE) so the
+                // main screen stays uncluttered and config is gated.
                 Text {
                     anchors.right: parent.right
                     anchors.rightMargin: 14
                     anchors.top: parent.top
                     anchors.topMargin: 10
-                    text: "TARGET " + root.formatMinutes(statsStore.dailyTargetMinutes)
+                    text: statsStore.dailyTargetMinutes > 0
+                          ? "TARGET " + root.formatMinutes(statsStore.dailyTargetMinutes)
+                          : "NO TARGET"
                     color: Theme.goldDim
                     font.family: root.headerFont
                     font.pixelSize: 11
@@ -550,7 +613,7 @@ Item {
                     text: {
                         const progress = Math.round(Math.min(1, statsStore.todayTargetProgress) * 100)
                         if (statsStore.todayTargetProgress >= 1) return "■ DAILY TARGET REACHED"
-                        if (statsStore.dailyTargetMinutes <= 0) return "(no target set — edit stats.json to set one)"
+                        if (statsStore.dailyTargetMinutes <= 0) return "(no target set — use + to set a daily goal)"
                         return progress + "%  ■  " + root.formatMinutes(Math.max(0, statsStore.dailyTargetMinutes - statsStore.todayFocusMinutes)) + " left to hit target"
                     }
                     color: statsStore.todayTargetProgress >= 1 ? Theme.gold : Theme.textDim
@@ -1371,6 +1434,169 @@ Item {
                             color: Theme.textGhost
                             font.family: root.bodyFont
                             font.pixelSize: 9
+                        }
+                    }
+                }
+            }
+
+            // ---- Month calendar ----
+            // A real month grid above the daily debrief. Click any day to load
+            // its details below; days with recorded focus get a marker dot.
+            Rectangle {
+                id: calendarCard
+                width: parent.width
+                visible: root.activeTab === 2
+                height: calendarColumn.implicitHeight + 24
+                color: "#dd0d0d18"
+                border.width: 1
+                border.color: Theme.goldDim
+
+                Column {
+                    id: calendarColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 12
+                    spacing: 10
+
+                    Row {
+                        width: parent.width
+                        height: 32
+                        spacing: 8
+
+                        Rectangle {
+                            width: 32
+                            height: 30
+                            color: prevMonthMouse.containsMouse ? Theme.steel : Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.goldDim
+                            Text {
+                                anchors.centerIn: parent
+                                text: "‹"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                id: prevMonthMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.shiftCalendarMonth(-1)
+                            }
+                        }
+
+                        Rectangle {
+                            width: Math.max(120, parent.width - 88)
+                            height: 30
+                            color: Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.gold
+                            Text {
+                                anchors.centerIn: parent
+                                text: root.calendarMonthLabel()
+                                color: Theme.gold
+                                elide: Text.ElideRight
+                                font.family: root.headerFont
+                                font.pixelSize: 11
+                                font.letterSpacing: 0
+                            }
+                        }
+
+                        Rectangle {
+                            width: 32
+                            height: 30
+                            color: nextMonthMouse.containsMouse ? Theme.steel : Theme.voidColor
+                            border.width: 1
+                            border.color: Theme.goldDim
+                            Text {
+                                anchors.centerIn: parent
+                                text: "›"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 18
+                            }
+                            MouseArea {
+                                id: nextMonthMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.shiftCalendarMonth(1)
+                            }
+                        }
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: 4
+                        Repeater {
+                            model: ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
+                            delegate: Item {
+                                required property string modelData
+                                width: Math.floor((calendarColumn.width - 24) / 7)
+                                height: 16
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                    color: Theme.goldDim
+                                    font.family: root.headerFont
+                                    font.pixelSize: 9
+                                    font.letterSpacing: 0
+                                }
+                            }
+                        }
+                    }
+
+                    Grid {
+                        id: calendarGrid
+                        width: parent.width
+                        columns: 7
+                        rowSpacing: 4
+                        columnSpacing: 4
+
+                        Repeater {
+                            model: root.calendarCells()
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: Math.floor((calendarGrid.width - 24) / 7)
+                                height: 34
+                                color: modelData.blank ? "transparent"
+                                       : modelData.isSelected ? Theme.crimson
+                                       : (dayMouse.containsMouse ? Theme.steel : Theme.voidColor)
+                                border.width: modelData.blank ? 0 : 1
+                                border.color: modelData.isToday ? Theme.gold : Theme.goldDim
+
+                                Text {
+                                    visible: !modelData.blank
+                                    anchors.centerIn: parent
+                                    text: modelData.blank ? "" : modelData.day
+                                    color: modelData.isSelected ? Theme.gold
+                                           : modelData.focusMinutes > 0 ? Theme.textPrimary : Theme.textDim
+                                    font.family: root.bodyFont
+                                    font.pixelSize: 12
+                                    font.letterSpacing: 0
+                                }
+
+                                Rectangle {
+                                    visible: !modelData.blank && modelData.focusMinutes > 0
+                                    width: 4
+                                    height: 4
+                                    radius: 2
+                                    color: modelData.isSelected ? Theme.gold : Theme.crimsonHot
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 3
+                                }
+
+                                MouseArea {
+                                    id: dayMouse
+                                    anchors.fill: parent
+                                    enabled: !modelData.blank
+                                    hoverEnabled: true
+                                    cursorShape: modelData.blank ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                    onClicked: root.timelineDate = modelData.iso
+                                }
+                            }
                         }
                     }
                 }

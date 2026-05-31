@@ -28,6 +28,10 @@ LIB_DIR="/usr/local/lib/focusos"
 STASH_DIR="$LIB_DIR/stashed-sessions"
 WAYLAND_SESSIONS="/usr/share/wayland-sessions"
 X_SESSIONS="/usr/share/xsessions"
+# Some distros also ship session entries under /usr/local/share; stash those too
+# so the greeter is left with FocusOS as the only possible choice.
+LOCAL_WAYLAND_SESSIONS="/usr/local/share/wayland-sessions"
+LOCAL_X_SESSIONS="/usr/local/share/xsessions"
 SDDM_CONF_DIR="/etc/sddm.conf.d"
 LOGIND_CONF_DIR="/etc/systemd/logind.conf.d"
 SUDOERS_FILE="/etc/sudoers.d/focusos"
@@ -72,7 +76,11 @@ chmod 0755 "$SESSION_BIN"
 # 4. Stash all other sessions, then install the FocusOS session entry
 echo "── stashing other login sessions ────────────────────────"
 install -d "$STASH_DIR/wayland" "$STASH_DIR/xsessions"
-for pair in "$WAYLAND_SESSIONS:$STASH_DIR/wayland" "$X_SESSIONS:$STASH_DIR/xsessions"; do
+for pair in \
+    "$WAYLAND_SESSIONS:$STASH_DIR/wayland" \
+    "$X_SESSIONS:$STASH_DIR/xsessions" \
+    "$LOCAL_WAYLAND_SESSIONS:$STASH_DIR/wayland" \
+    "$LOCAL_X_SESSIONS:$STASH_DIR/xsessions"; do
     src="${pair%%:*}"
     dst="${pair##*:}"
     [[ -d "$src" ]] || continue
@@ -94,16 +102,20 @@ echo "── installing FocusOS session entry ───────────�
 install -d "$WAYLAND_SESSIONS"
 install -m 0644 "$SCRIPT_DIR/focusos.desktop" "$WAYLAND_SESSIONS/focusos.desktop"
 
-# 5. Pin SDDM to FocusOS when autologin is used; with other sessions stashed,
-# the greeter has no alternate desktop to offer.
-echo "── pinning SDDM session ─────────────────────────────────"
+# 5. Pin SDDM to FocusOS and force-hide the session selector. With every other
+# wayland-session AND xsession stashed (step 4, including the /usr/local/share
+# variants), the greeter has exactly one session to offer — so the session
+# chooser does not render at all and Wayland is the only display server.
+echo "── pinning SDDM session (Wayland-only, no selector) ─────"
 install -d "$SDDM_CONF_DIR"
 cat > "$SDDM_CONF_DIR/10-focusos.conf" <<EOF
 [Autologin]
 Session=focusos.desktop
 
 [General]
+# Wayland-only: the greeter never offers an X11/other-compositor option.
 DisplayServer=wayland
+GreeterEnvironment=QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 EOF
 
 # 6. Install logind + getty lockdown
@@ -133,4 +145,5 @@ if command -v nft >/dev/null 2>&1; then
 fi
 
 echo "── install complete ─────────────────────────────────────"
-echo "FocusOS is now the only selectable SDDM session. Reboot to enter kiosk mode."
+echo "FocusOS is the only SDDM session (Wayland-only; the session selector is"
+echo "hidden because no other session entries remain). Reboot to enter kiosk mode."

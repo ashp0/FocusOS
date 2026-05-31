@@ -20,6 +20,9 @@ public:
     bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) override;
     bool openUrls(const QStringList &urls, QString *errorMessage = nullptr) override;
     void terminateApps(const QStringList &appPaths) override;
+    void quitBackgroundApps(const QStringList &allowedCommandLines) override;
+    void lockScreen() override;
+    void unlockScreen() override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void dropNetworkPolicy() override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;
@@ -31,6 +34,8 @@ public:
     void setAlwaysAllowedApps(const QStringList &commandLines) override;
     void startWatchdog(const QString &binaryPath) override;
     bool restoreLoginSessions(QString *errorMessage = nullptr) override;
+    bool signOutSupported() const override { return true; }
+    bool signOut(QString *errorMessage = nullptr) override;
     void setDisplaySleepInhibited(bool inhibited) override;
     void releaseDisplaySleepInhibitors() override;
 

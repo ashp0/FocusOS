@@ -22,6 +22,7 @@ endif()
 
 find_package(Qt6 6.7 REQUIRED COMPONENTS
     Core
+    DBus
     Gui
     Multimedia
     Network
@@ -50,6 +51,8 @@ set(FOCUSOS_SOURCES
     src/core/MusicEngine.h
     src/core/InspirationStore.cpp
     src/core/InspirationStore.h
+    src/core/IdleMonitor.cpp
+    src/core/IdleMonitor.h
     src/core/MediaKeys.cpp
     src/core/MediaKeys.h
     src/core/RoutineManager.cpp
@@ -118,6 +121,8 @@ qt_add_qml_module(focusos
         src/shell/ActivitiesPanel.qml
         src/shell/InfoPanel.qml
         src/shell/AmbientLayer.qml
+        src/shell/StarField.qml
+        src/shell/IdleScreen.qml
         src/shell/MissionView.qml
         src/shell/NotesDrawer.qml
         src/shell/UnlockModal.qml
@@ -133,6 +138,7 @@ qt_add_qml_module(focusos
 
 target_link_libraries(focusos PRIVATE
     Qt6::Core
+    Qt6::DBus
     Qt6::Gui
     Qt6::Multimedia
     Qt6::Network

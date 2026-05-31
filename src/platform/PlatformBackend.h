@@ -13,6 +13,16 @@ public:
     virtual bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) = 0;
     virtual bool openUrls(const QStringList &urls, QString *errorMessage = nullptr) = 0;
     virtual void terminateApps(const QStringList &appPaths) = 0;
+    // Strict enforcement (Task 1): quit the user's other running GUI apps when a
+    // routine begins, so nothing but the routine/always-allowed surfaces remain.
+    // allowedCommandLines = the routine's apps + the always-allowed list; the
+    // backend additionally keeps a hardcoded set of session-critical processes
+    // (compositor, portal, audio, dbus, focusos). No-op where unsupported.
+    virtual void quitBackgroundApps(const QStringList &allowedCommandLines) { Q_UNUSED(allowedCommandLines); }
+    // Screen lock (Task 6): turn the panel off / blank it. unlockScreen()
+    // restores it. No-op where unsupported (the QML black overlay still shows).
+    virtual void lockScreen() {}
+    virtual void unlockScreen() {}
     virtual bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) = 0;
     virtual void dropNetworkPolicy() = 0;
     virtual bool openSystemTerminal(QString *errorMessage = nullptr) = 0;
@@ -48,6 +58,20 @@ public:
     {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Session recovery is not supported on this platform");
+        }
+        return false;
+    }
+
+    // Whether this platform can log the user out of their account / session.
+    virtual bool signOutSupported() const { return false; }
+    // Log the user out: end the login session and drop back to the display
+    // manager (SDDM). In the permanent kiosk install a plain process quit gets
+    // respawned by the watchdog, so this must terminate the whole session.
+    // Returns false (with errorMessage) when unsupported or it fails.
+    virtual bool signOut(QString *errorMessage = nullptr)
+    {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Sign out is not supported on this platform");
         }
         return false;
     }

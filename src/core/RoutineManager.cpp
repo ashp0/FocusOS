@@ -138,6 +138,17 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     m_accessTimer.setInterval(1000);
     connect(&m_accessTimer, &QTimer::timeout, this, &RoutineManager::tickOtherAccess);
 
+    // Unlock-panel inactivity auto-lock: 30 minutes with no input revokes
+    // access and re-locks settings (finishOtherAccess re-locks the modal).
+    m_inactivityTimer.setSingleShot(true);
+    m_inactivityTimer.setInterval(30 * 60 * 1000);
+    connect(&m_inactivityTimer, &QTimer::timeout, this, [this] {
+        if (accessGranted()) {
+            finishOtherAccess();
+            setStatusMessage(QStringLiteral("ACCESS LOCKED — 30 MIN INACTIVITY"));
+        }
+    });
+
     // Deferred so ShellWindow's signal connections (activeChanged, etc.) are
     // wired before a resumed routine fires them. Resumes a locked routine left
     // behind by a kill/crash via the active.json checkpoint.
@@ -187,6 +198,8 @@ QVariant RoutineManager::data(const QModelIndex &index, int role) const
         return routine.minTimeMinutes;
     case NetworkLockRole:
         return routine.networkLock;
+    case FullAccessRole:
+        return routine.fullAccess;
     case BreakFrequencyMinutesRole:
         return routine.breakFrequencyMinutes;
     case BreakDurationMinutesRole:
@@ -219,6 +232,7 @@ QHash<int, QByteArray> RoutineManager::roleNames() const
         {TimeLimitMinutesRole, "timeLimitMinutes"},
         {MinTimeMinutesRole, "minTimeMinutes"},
         {NetworkLockRole, "networkLock"},
+        {FullAccessRole, "fullAccess"},
         {BreakFrequencyMinutesRole, "breakFrequencyMinutes"},
         {BreakDurationMinutesRole, "breakDurationMinutes"},
         {IsActiveRole, "isActive"},
@@ -246,6 +260,11 @@ QString RoutineManager::activeRoutineName() const
 
 int RoutineManager::activeRoutineTotalSeconds() const
 {
+    // Open-ended continuation has no fixed total — report 0 so any
+    // progress/percentage math collapses to zero (the UI hides the countdown).
+    if (m_openEnded) {
+        return 0;
+    }
     const int routineIndex = indexOfRoutine(m_activeRoutineId);
     return routineIndex >= 0 ? m_routines.at(routineIndex).timeLimitMinutes * 60 : 0;
 }
@@ -270,12 +289,49 @@ int RoutineManager::activeRoutineBreakDurationMinutes() const
 
 int RoutineManager::remainingSeconds() const
 {
+    if (m_openEnded) {
+        return 0;
+    }
     return m_routineTimer.remainingSeconds();
 }
 
 int RoutineManager::elapsedSeconds() const
 {
     return qMax(0, activeRoutineTotalSeconds() - m_routineTimer.remainingSeconds());
+}
+
+bool RoutineManager::openEnded() const
+{
+    return m_openEnded;
+}
+
+bool RoutineManager::screenLocked() const
+{
+    return m_screenLocked;
+}
+
+void RoutineManager::lockScreen()
+{
+    if (m_backend) {
+        // Best-effort: physically turn the panel off where the platform can.
+        m_backend->lockScreen();
+    }
+    if (!m_screenLocked) {
+        m_screenLocked = true;
+        emit screenLockedChanged();
+    }
+}
+
+void RoutineManager::unlockScreen()
+{
+    if (!m_screenLocked) {
+        return;
+    }
+    m_screenLocked = false;
+    if (m_backend) {
+        m_backend->unlockScreen();
+    }
+    emit screenLockedChanged();
 }
 
 bool RoutineManager::accessGranted() const
@@ -467,6 +523,22 @@ void RoutineManager::endActiveRoutine()
     if (!active()) {
         return;
     }
+
+    // Open-ended momentum (Task 5): no min-time floor, no extra record (the
+    // session was logged at expiry). Just stand down to the console.
+    if (m_openEnded) {
+        m_openEnded = false;
+        m_activeRoutineId.clear();
+        m_activeStartedAt = {};
+        if (m_backend) {
+            m_backend->restoreShellPlacement();
+        }
+        updateDisplaySleepInhibit();
+        emit activeChanged();
+        emitRowsChanged();
+        return;
+    }
+
     const int routineIndex = indexOfRoutine(m_activeRoutineId);
     if (routineIndex < 0) {
         return;
@@ -525,6 +597,16 @@ void RoutineManager::closeOtherAccess()
 void RoutineManager::launchDesktopShell()
 {
     if (!m_backend || !m_backend->desktopShellSupported() || !accessGranted()) {
+        return;
+    }
+    // Single-instance guard: if we've already brought the desktop shell (KDE
+    // Plasma) up this session, don't launch it again — just get FocusOS out of
+    // the way so the existing session comes forward. This prevents a rapid
+    // second "Access Desktop" (before plasmashell shows up in pgrep) from
+    // racing a duplicate Plasma launch. The backend has its own processRunning
+    // guard too, but this avoids even attempting the relaunch.
+    if (m_desktopShellRunning) {
+        emit desktopAccessRequested();
         return;
     }
     QString error;
@@ -607,9 +689,13 @@ void RoutineManager::engage(const QString &routineId)
     }
 
     const Routine &routine = m_routines.at(routineIndex);
+    // Full-internet-access routines deliberately skip the outbound allowlist.
+    // The TOTP gate that authorizes them is enforced in QML before engage() is
+    // ever called (see ActivitiesPanel / Main fullAccessPrompt).
+    const bool applyNetworkLock = routine.networkLock && !routine.fullAccess;
     QString error;
-    if (!startRoutine(routine, routine.networkLock, &error)) {
-        if (routine.networkLock && error.startsWith(QStringLiteral("network:"), Qt::CaseInsensitive)) {
+    if (!startRoutine(routine, applyNetworkLock, &error)) {
+        if (applyNetworkLock && error.startsWith(QStringLiteral("network:"), Qt::CaseInsensitive)) {
             setNetworkLockPrompt(routine, error.mid(QStringLiteral("network:").size()).trimmed());
             return;
         }
@@ -642,7 +728,10 @@ void RoutineManager::unlockOtherAccess()
         // TOTP unlock past the min-time floor counts as a legitimate end —
         // retire the checkpoint so the respawn watchdog releases.
         clearActiveSession();
-        const int routineIndex = indexOfRoutine(m_activeRoutineId);
+        // Open-ended momentum was already recorded at expiry; don't write a
+        // phantom "unlocked" record for it (its timer reads remaining=0).
+        const int routineIndex = m_openEnded ? -1 : indexOfRoutine(m_activeRoutineId);
+        m_openEnded = false;
         if (routineIndex >= 0) {
             const Routine &routine = m_routines.at(routineIndex);
             const int elapsedSeconds = qMax(0, routine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
@@ -667,6 +756,8 @@ void RoutineManager::unlockOtherAccess()
     }
 
     m_accessRemainingSeconds = qMax(1, m_otherAccessMinutes) * 60;
+    // Arm the inactivity auto-lock; notifyActivity() re-starts it on input.
+    m_inactivityTimer.start();
     // The terminal used to pop here, but on Linux it stole focus from the
     // admin modal and made the user think the ROUTINES tab disappeared. On
     // Linux the user opens the terminal via the Access Desktop button now.
@@ -680,9 +771,65 @@ void RoutineManager::unlockOtherAccess()
     emitRowsChanged();
 }
 
+void RoutineManager::notifyActivity()
+{
+    // Only the unlock panel's auto-lock cares about activity; re-arm it on input
+    // while access is granted. (Idle when locked is harmless — nothing to lock.)
+    if (accessGranted()) {
+        m_inactivityTimer.start();
+    }
+}
+
+bool RoutineManager::signOutSupported() const
+{
+    return m_backend && m_backend->signOutSupported();
+}
+
+void RoutineManager::signOut()
+{
+    // Tear down any routine state first so the respawn watchdog doesn't fight
+    // the logout: drop the network policy and retire the active checkpoint.
+    if (m_backend) {
+        m_backend->dropNetworkPolicy();
+    }
+    clearActiveSession();
+    m_inactivityTimer.stop();
+    m_accessTimer.stop();
+
+    if (!m_backend) {
+        return;
+    }
+    QString error;
+    if (!m_backend->signOut(&error) && !error.isEmpty()) {
+        setStatusMessage(error);
+    }
+}
+
 void RoutineManager::continueFinishedSession()
 {
+    // Task 5 — "Continue" after the timer expires keeps the momentum: re-enter
+    // an open-ended active state (no countdown) instead of dropping back to the
+    // routine list. The routine's apps are left running; streak/stats already
+    // carry over (the completed session was recorded at expiry). END EARLY
+    // leaves this state.
+    const QString routineId = m_finishedRoutineId;
     clearFinishedSessionPrompt();
+
+    if (routineId.isEmpty() || active() || accessGranted()) {
+        return;
+    }
+    if (indexOfRoutine(routineId) < 0) {
+        return;
+    }
+
+    m_openEnded = true;
+    m_activeRoutineId = routineId;
+    m_activeStartedAt = QDateTime::currentDateTimeUtc();
+    // No checkpoint / respawn watchdog: open-ended momentum is not a strict
+    // routine, so a crash simply returns to the console rather than re-locking.
+    updateDisplaySleepInhibit();
+    emit activeChanged();
+    emitRowsChanged();
 }
 
 void RoutineManager::quitFinishedSession()
@@ -707,6 +854,7 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
+        object.insert(QStringLiteral("full_access"), routine.fullAccess);
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
@@ -765,6 +913,7 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("time_limit_minutes"), qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60)));
         routine.insert(QStringLiteral("min_time_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0)));
         routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
+        routine.insert(QStringLiteral("full_access"), object.value(QStringLiteral("full_access"), false).toBool());
         routine.insert(QStringLiteral("break_frequency_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0)));
         routine.insert(QStringLiteral("break_duration_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0)));
         routine.insert(QStringLiteral("keep_display_awake"), object.value(QStringLiteral("keep_display_awake"), true).toBool());
@@ -836,6 +985,7 @@ bool RoutineManager::persistRoutines() const
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
+        object.insert(QStringLiteral("full_access"), routine.fullAccess);
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
@@ -950,6 +1100,46 @@ QString RoutineManager::pickApplication()
         return {};
     }
     return path;
+#else
+    return {};
+#endif
+}
+
+QString RoutineManager::pickFile()
+{
+    // A generic file picker for the "Open File" workflow. The selected path is
+    // added to a routine like any app entry; when the routine engages the backend
+    // hands the file to its default application (PDF reader, image viewer, office
+    // suite, video player, …) rather than trying to exec it. Any file type is
+    // allowed — no executable check — which keeps the routine list versatile.
+    const QString documentFilter =
+        QStringLiteral("Books & documents (*.pdf *.epub *.mobi *.azw3 *.djvu *.fb2 *.cbz *.cbr *.chm)");
+#if defined(Q_OS_MACOS)
+    return QFileDialog::getOpenFileName(
+        nullptr,
+        QStringLiteral("Open File"),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QStringLiteral("All files (*);;") + documentFilter);
+#elif defined(Q_OS_LINUX)
+    const QString documentsDir =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString startDir = QFileInfo::exists(documentsDir) ? documentsDir : QDir::homePath();
+
+    QFileDialog dialog(nullptr, QStringLiteral("Open File"), startDir);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    dialog.setFilter(dialog.filter() | QDir::Hidden);
+    dialog.setNameFilters({ QStringLiteral("All files (*)"), documentFilter });
+    dialog.setSidebarUrls({
+        QUrl::fromLocalFile(QDir::homePath()),
+        QUrl::fromLocalFile(startDir),
+    });
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return {};
+    }
+    const QStringList selected = dialog.selectedFiles();
+    return selected.isEmpty() ? QString() : selected.first();
 #else
     return {};
 #endif
@@ -1070,6 +1260,7 @@ void RoutineManager::loadRoutines()
         routine.timeLimitMinutes = qMax(1, object.value(QStringLiteral("time_limit_minutes")).toInt(60));
         routine.minTimeMinutes = qMax(0, object.value(QStringLiteral("min_time_minutes")).toInt(0));
         routine.networkLock = object.value(QStringLiteral("network_lock")).toBool(true);
+        routine.fullAccess = object.value(QStringLiteral("full_access")).toBool(false);
         routine.breakFrequencyMinutes = qMax(0, object.value(QStringLiteral("break_frequency_minutes")).toInt(0));
         routine.breakDurationMinutes = qMax(0, object.value(QStringLiteral("break_duration_minutes")).toInt(0));
         routine.keepDisplayAwake = object.value(QStringLiteral("keep_display_awake")).toBool(true);
@@ -1291,6 +1482,7 @@ void RoutineManager::tickOtherAccess()
 void RoutineManager::finishOtherAccess()
 {
     m_accessTimer.stop();
+    m_inactivityTimer.stop();
     m_accessRemainingSeconds = 0;
     if (m_backend) {
         // terminateUnrestrictedApps also terminates the desktop shell on Linux.
@@ -1451,6 +1643,7 @@ void RoutineManager::clearNetworkLockPrompt()
 void RoutineManager::setFinishedSessionPrompt(const Routine &routine, int minutes, const QString &result)
 {
     m_sessionPromptVisible = true;
+    m_finishedRoutineId = routine.id;
     m_finishedSessionName = routine.name;
     m_finishedSessionMinutes = qMax(0, minutes);
     m_finishedSessionResult = result;

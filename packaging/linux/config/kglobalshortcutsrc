@@ -3,9 +3,11 @@
 # The session script points XDG_CONFIG_HOME at packaging/linux/config so KWin
 # and KGlobalAccel read THIS file instead of the user's. The intent:
 #
-#   * KEEP window switching — Alt+Tab / Alt+Shift+Tab (Walk Through Windows) —
-#     because FocusOS has no dock and it's the only legitimate way to move
-#     between the allowed routine windows.
+#   * STRIP the window switcher — Alt+Tab / Alt+Shift+Tab (Walk Through
+#     Windows). Strict enforcement (Task 1): the user must not be able to switch
+#     to another app via the command/alt-tab switcher. Routine apps are
+#     full-screened / tiled, and on engage every other GUI app is closed, so
+#     there is nothing legitimate left to switch to anyway.
 #   * STRIP everything that surfaces a launcher, spotlight, overview, activity
 #     switcher, or "run command" prompt, so the user can't pull up an arbitrary
 #     app. The lockdown watchdog kills these processes too; disabling the
@@ -30,11 +32,13 @@ show dashboard=none,none,Show Desktop
 stop current activity=none,none,Stop Current Activity
 
 [kwin]
-# --- KEPT: window switching among open (allowed) windows ---
-Walk Through Windows=Alt+Tab,Alt+Tab,Walk Through Windows
-Walk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Tab,Walk Through Windows (Reverse)
-Walk Through Windows of Current Application=Alt+`,Alt+`,Walk Through Windows of Current Application
-Walk Through Windows of Current Application (Reverse)=Alt+~,Alt+~,Walk Through Windows of Current Application (Reverse)
+# --- STRIPPED: the window switcher (Task 1) — no command/alt-tab app switching ---
+Walk Through Windows=none,none,Walk Through Windows
+Walk Through Windows (Reverse)=none,none,Walk Through Windows (Reverse)
+Walk Through Windows of Current Application=none,none,Walk Through Windows of Current Application
+Walk Through Windows of Current Application (Reverse)=none,none,Walk Through Windows of Current Application (Reverse)
+Walk Through Windows Alternative=none,none,Walk Through Windows Alternative
+Walk Through Windows Alternative (Reverse)=none,none,Walk Through Windows Alternative (Reverse)
 # --- STRIPPED: overview / grid / expose escape surfaces ---
 Overview=none,none,Toggle Overview
 Cycle Overview=none,none,Cycle through Overview and Grid View

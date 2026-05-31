@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import "qrc:/qt/qml/FocusOS/assets/qml/theme.js" as Theme
 
 Item {
@@ -164,6 +165,9 @@ Item {
                 unlockModal.activeTab = 0
             }
             onShowSidebar: root.sidebarCollapsed = false
+            onEngageRequested: function(routineId, fullAccess) {
+                engagePrep.begin(routineId, fullAccess)
+            }
 
             Behavior on width {
                 NumberAnimation { duration: 240; easing.type: Easing.InOutQuad }
@@ -214,6 +218,251 @@ Item {
         headerFont: root.headerFont
         bodyFont: root.bodyFont
         z: 30
+    }
+
+    // Idle / screensaver: pitch-black starfield over everything after a stretch
+    // of no input (IdleMonitor, 5 min). The first interaction wakes the shell.
+    IdleScreen {
+        anchors.fill: parent
+        z: 1000
+        visible: idleMonitor.idle
+    }
+
+    // Engage preparation (Task 1 + Task 4). For a full-access routine it first
+    // requires a 6-digit TOTP code; then, for every routine, it shows a short
+    // "closing other apps" warning so unsaved work can be saved before the
+    // strict background-app sweep runs inside engage().
+    Item {
+        id: engagePrep
+        anchors.fill: parent
+        z: 39
+        visible: phase !== "idle"
+        property string phase: "idle"   // "idle" | "code" | "warn"
+        property string routineId: ""
+        property bool fullAccess: false
+        property int secondsLeft: 5
+
+        function begin(id, fa) {
+            routineId = id
+            fullAccess = fa
+            codeInput.text = ""
+            errorLabel.text = ""
+            if (fa) {
+                phase = "code"
+                codeInput.forceActiveFocus()
+            } else {
+                startWarn()
+            }
+        }
+        function startWarn() {
+            secondsLeft = 5
+            phase = "warn"
+            warnTimer.restart()
+        }
+        function doEngage() {
+            warnTimer.stop()
+            phase = "idle"
+            routineManager.engage(routineId)
+            root.forceActiveFocus()
+        }
+        function cancel() {
+            warnTimer.stop()
+            phase = "idle"
+            codeInput.text = ""
+            root.forceActiveFocus()
+        }
+
+        Timer {
+            id: warnTimer
+            interval: 1000
+            repeat: true
+            onTriggered: {
+                engagePrep.secondsLeft -= 1
+                if (engagePrep.secondsLeft <= 0) {
+                    engagePrep.doEngage()
+                }
+            }
+        }
+
+        Rectangle { anchors.fill: parent; color: "#ee050508" }
+        MouseArea { anchors.fill: parent; hoverEnabled: true }
+
+        Rectangle {
+            width: Math.min(600, parent.width - 64)
+            height: 300
+            anchors.centerIn: parent
+            color: Theme.iron
+            border.width: 1
+            border.color: engagePrep.fullAccess ? Theme.crimsonHot : Theme.gold
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 48
+                color: engagePrep.fullAccess ? Theme.crimson : Theme.steel
+
+                Text {
+                    anchors.centerIn: parent
+                    text: engagePrep.phase === "code" ? "FULL-ACCESS AUTHORIZATION" : "STAND BY FOR ENGAGE"
+                    color: Theme.gold
+                    font.family: root.headerFont
+                    font.pixelSize: 16
+                    font.letterSpacing: 0
+                }
+            }
+
+            // ── CODE phase (full-access routines only) ──
+            Column {
+                visible: engagePrep.phase === "code"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 64
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                spacing: 14
+
+                Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: "THIS ROUTINE OPENS FULL INTERNET ACCESS. ENTER YOUR 6-DIGIT CODE TO AUTHORIZE."
+                    color: Theme.goldDim
+                    font.family: root.bodyFont
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                }
+
+                TextField {
+                    id: codeInput
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 210
+                    height: 50
+                    maximumLength: 6
+                    horizontalAlignment: TextInput.AlignHCenter
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    color: Theme.textPrimary
+                    selectedTextColor: Theme.voidColor
+                    selectionColor: Theme.gold
+                    placeholderText: "000000"
+                    placeholderTextColor: Theme.textGhost
+                    font.family: root.headerFont
+                    font.pixelSize: 24
+                    font.letterSpacing: 0
+                    validator: RegularExpressionValidator { regularExpression: /[0-9]{0,6}/ }
+                    background: Rectangle {
+                        color: Theme.steel
+                        border.width: 1
+                        border.color: errorLabel.text.length > 0 ? Theme.crimsonHot : (codeInput.activeFocus ? Theme.gold : Theme.goldDim)
+                    }
+                    onTextChanged: {
+                        errorLabel.text = ""
+                        if (text.length === 6) {
+                            if (totpEngine.validate(text)) {
+                                text = ""
+                                engagePrep.startWarn()
+                            } else {
+                                errorLabel.text = "AUTHORIZATION FAILED"
+                                text = ""
+                            }
+                        }
+                    }
+                    Keys.onEscapePressed: function(event) { engagePrep.cancel(); event.accepted = true }
+                }
+
+                Text {
+                    id: errorLabel
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.crimsonHot
+                    font.family: root.headerFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                }
+            }
+
+            // ── WARN phase (all routines) ──
+            Column {
+                visible: engagePrep.phase === "warn"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 68
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                spacing: 12
+
+                Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: "CLOSING ALL OTHER APPLICATIONS — SAVE ANY UNSAVED WORK NOW."
+                    color: Theme.goldDim
+                    font.family: root.bodyFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: engagePrep.secondsLeft
+                    color: Theme.gold
+                    font.family: root.headerFont
+                    font.pixelSize: 48
+                    font.letterSpacing: 0
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 14
+
+                    Rectangle {
+                        width: 150
+                        height: 38
+                        color: cancelPrepMouse.containsMouse ? Theme.steel : Theme.iron
+                        border.width: 1
+                        border.color: cancelPrepMouse.containsMouse ? Theme.gold : Theme.goldDim
+                        Text { anchors.centerIn: parent; text: "CANCEL"; color: Theme.gold; font.family: root.headerFont; font.pixelSize: 13; font.letterSpacing: 0 }
+                        MouseArea { id: cancelPrepMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: engagePrep.cancel() }
+                    }
+
+                    Rectangle {
+                        width: 150
+                        height: 38
+                        color: engageNowMouse.containsMouse ? Theme.crimsonHot : Theme.crimson
+                        border.width: 1
+                        border.color: engageNowMouse.containsMouse ? Theme.gold : Theme.goldDim
+                        Text { anchors.centerIn: parent; text: "ENGAGE NOW"; color: Theme.gold; font.family: root.headerFont; font.pixelSize: 13; font.letterSpacing: 0 }
+                        MouseArea { id: engageNowMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: engagePrep.doEngage() }
+                    }
+                }
+            }
+        }
+    }
+
+    // Screen lock (Task 6): pitch-black overlay over everything; a click or any
+    // key restores the screen (and DPMS-on via the backend).
+    Item {
+        id: lockOverlay
+        anchors.fill: parent
+        z: 1100
+        visible: routineManager.screenLocked
+        focus: routineManager.screenLocked
+        onVisibleChanged: if (visible) forceActiveFocus()
+
+        Rectangle { anchors.fill: parent; color: "#000000" }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.BlankCursor
+            onClicked: routineManager.unlockScreen()
+        }
+
+        Keys.onPressed: function(event) {
+            routineManager.unlockScreen()
+            event.accepted = true
+        }
     }
 
     Item {

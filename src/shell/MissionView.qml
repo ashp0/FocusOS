@@ -7,6 +7,9 @@ Item {
 
     property string headerFont
     property string bodyFont
+    // Open-ended continuation (Task 5): the timer has expired and the user
+    // chose to keep going. No countdown — just ambient forward motion.
+    property bool openEnded: routineManager.openEnded
     signal endRequested()
 
     function pad(value) {
@@ -129,16 +132,18 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: statusText.implicitWidth + 28
                 height: 22
-                color: routineManager.paused ? "#33d0c068" : "#33c0392b"
+                color: root.openEnded ? "#33e8a020" : (routineManager.paused ? "#33d0c068" : "#33c0392b")
                 border.width: 1
-                border.color: routineManager.paused ? Theme.gold : Theme.crimsonHot
+                border.color: root.openEnded ? Theme.gold : (routineManager.paused ? Theme.gold : Theme.crimsonHot)
                 radius: 2
 
                 Text {
                     id: statusText
                     anchors.centerIn: parent
-                    text: routineManager.paused ? "▮▮ MISSION PAUSED" : "● MISSION ACTIVE"
-                    color: routineManager.paused ? Theme.gold : Theme.crimsonHot
+                    text: root.openEnded
+                          ? "∞ MOMENTUM SUSTAINED"
+                          : (routineManager.paused ? "▮▮ MISSION PAUSED" : "● MISSION ACTIVE")
+                    color: root.openEnded ? Theme.gold : (routineManager.paused ? Theme.gold : Theme.crimsonHot)
                     font.family: root.headerFont
                     font.pixelSize: 11
                     font.letterSpacing: 0
@@ -178,6 +183,7 @@ Item {
 
         // Big T-MINUS countdown
         Item {
+            visible: !root.openEnded
             width: parent.width
             height: countdownText.implicitHeight + tminusLabel.implicitHeight + 8
 
@@ -209,8 +215,86 @@ Item {
 
         Item { width: parent.width; height: 8 }
 
+        // ────────── Open-ended momentum (no countdown) ──────────
+        // Ambient forward-motion: a drifting band of light implies indefinite
+        // progress without showing any time. Visible only in continuation mode.
+        Item {
+            visible: root.openEnded
+            width: parent.width
+            height: 96
+
+            Text {
+                id: momentumLabel
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                text: "OPEN-ENDED FLIGHT"
+                color: Theme.goldDim
+                font.family: root.headerFont
+                font.pixelSize: 13
+                font.letterSpacing: 6
+            }
+
+            // Drifting flow band — a soft highlight that sweeps left→right
+            // forever, the visual stand-in for "still moving forward".
+            Rectangle {
+                id: flowTrack
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 20
+                anchors.rightMargin: 20
+                anchors.top: momentumLabel.bottom
+                anchors.topMargin: 22
+                height: 2
+                color: Theme.textGhost
+                clip: true
+
+                Rectangle {
+                    id: flowComet
+                    width: Math.max(60, flowTrack.width * 0.18)
+                    height: parent.height
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: "transparent" }
+                        GradientStop { position: 0.5; color: Theme.gold }
+                        GradientStop { position: 1.0; color: "transparent" }
+                    }
+
+                    SequentialAnimation on x {
+                        running: root.openEnded
+                        loops: Animation.Infinite
+                        NumberAnimation {
+                            from: -flowComet.width
+                            to: flowTrack.width
+                            duration: 2600
+                            easing.type: Easing.InOutSine
+                        }
+                    }
+                }
+            }
+
+            // Travelling chevron beneath the band for a second motion cue.
+            Text {
+                anchors.top: flowTrack.bottom
+                anchors.topMargin: 16
+                text: "▶ ▶ ▶"
+                color: Theme.goldDim
+                font.family: root.headerFont
+                font.pixelSize: 16
+                font.letterSpacing: 8
+                x: 20
+
+                SequentialAnimation on opacity {
+                    running: root.openEnded
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.25; duration: 1400; easing.type: Easing.InOutQuad }
+                    NumberAnimation { to: 0.8; duration: 1400; easing.type: Easing.InOutQuad }
+                }
+            }
+        }
+
         // ────────── Trajectory bar (with ticks + spacecraft marker) ──────────
         Item {
+            visible: !root.openEnded
             width: parent.width
             height: 46
 
@@ -301,6 +385,7 @@ Item {
 
         // Elapsed + percent
         Item {
+            visible: !root.openEnded
             width: parent.width
             height: 36
 
@@ -336,7 +421,7 @@ Item {
         }
 
         Rectangle {
-            visible: root.breakStatusText().length > 0
+            visible: !root.openEnded && root.breakStatusText().length > 0
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.min(parent.width, breakText.implicitWidth + 34)
             height: 28
@@ -363,6 +448,7 @@ Item {
             spacing: 14
 
             Rectangle {
+                visible: !root.openEnded
                 width: 160
                 height: 40
                 color: pauseHover.containsMouse ? Theme.steel : "#33141420"
