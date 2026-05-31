@@ -23,7 +23,9 @@ Item {
     property real starOpacityScale: 1
     property int imageHoldMs: 10000
     property int activeAssetType: 0    // 0=image, 1=video
-    property double fadeStartTime: Date.now()
+    // Bound to the persisted cycle anchor: resumes after a relaunch, and updates
+    // whenever resetFadeCycle() rewrites it (task start / logout).
+    property double fadeStartTime: inspirationStore.fadeStartMs
 
     // Stop burning CPU/GPU on the starfield when nothing can be seen: the app
     // is unfocused/minimized (e.g. another app has focus during a routine) or
@@ -44,14 +46,11 @@ Item {
     }
 
     function resetFade() {
-        fadeStartTime = Date.now()
-        fadeProgress = 0
+        // Persist a fresh start time; fadeStartTime is bound to it and updates,
+        // then recompute progress immediately so the media snaps back to full.
+        inspirationStore.resetFadeCycle()
+        tickFade()
         fadeTicker.restart()
-    }
-
-    function dimForSession() {
-        fadeProgress = 1
-        fadeTicker.stop()
     }
 
     function tickFade() {
@@ -71,9 +70,10 @@ Item {
     Connections {
         target: routineManager
         function onActiveChanged() {
+            // Starting a task resets the media to fully visible and restarts the
+            // 30-minute fade. Ending a task leaves the cycle running; it next
+            // resets on the following task start or on logout / return to login.
             if (routineManager.active) {
-                root.dimForSession()
-            } else {
                 root.resetFade()
             }
         }
