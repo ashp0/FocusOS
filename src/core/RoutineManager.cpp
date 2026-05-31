@@ -198,6 +198,8 @@ QVariant RoutineManager::data(const QModelIndex &index, int role) const
         return routine.minTimeMinutes;
     case NetworkLockRole:
         return routine.networkLock;
+    case FullAccessRole:
+        return routine.fullAccess;
     case BreakFrequencyMinutesRole:
         return routine.breakFrequencyMinutes;
     case BreakDurationMinutesRole:
@@ -230,6 +232,7 @@ QHash<int, QByteArray> RoutineManager::roleNames() const
         {TimeLimitMinutesRole, "timeLimitMinutes"},
         {MinTimeMinutesRole, "minTimeMinutes"},
         {NetworkLockRole, "networkLock"},
+        {FullAccessRole, "fullAccess"},
         {BreakFrequencyMinutesRole, "breakFrequencyMinutes"},
         {BreakDurationMinutesRole, "breakDurationMinutes"},
         {IsActiveRole, "isActive"},
@@ -257,6 +260,11 @@ QString RoutineManager::activeRoutineName() const
 
 int RoutineManager::activeRoutineTotalSeconds() const
 {
+    // Open-ended continuation has no fixed total — report 0 so any
+    // progress/percentage math collapses to zero (the UI hides the countdown).
+    if (m_openEnded) {
+        return 0;
+    }
     const int routineIndex = indexOfRoutine(m_activeRoutineId);
     return routineIndex >= 0 ? m_routines.at(routineIndex).timeLimitMinutes * 60 : 0;
 }
@@ -281,12 +289,49 @@ int RoutineManager::activeRoutineBreakDurationMinutes() const
 
 int RoutineManager::remainingSeconds() const
 {
+    if (m_openEnded) {
+        return 0;
+    }
     return m_routineTimer.remainingSeconds();
 }
 
 int RoutineManager::elapsedSeconds() const
 {
     return qMax(0, activeRoutineTotalSeconds() - m_routineTimer.remainingSeconds());
+}
+
+bool RoutineManager::openEnded() const
+{
+    return m_openEnded;
+}
+
+bool RoutineManager::screenLocked() const
+{
+    return m_screenLocked;
+}
+
+void RoutineManager::lockScreen()
+{
+    if (m_backend) {
+        // Best-effort: physically turn the panel off where the platform can.
+        m_backend->lockScreen();
+    }
+    if (!m_screenLocked) {
+        m_screenLocked = true;
+        emit screenLockedChanged();
+    }
+}
+
+void RoutineManager::unlockScreen()
+{
+    if (!m_screenLocked) {
+        return;
+    }
+    m_screenLocked = false;
+    if (m_backend) {
+        m_backend->unlockScreen();
+    }
+    emit screenLockedChanged();
 }
 
 bool RoutineManager::accessGranted() const
@@ -478,6 +523,22 @@ void RoutineManager::endActiveRoutine()
     if (!active()) {
         return;
     }
+
+    // Open-ended momentum (Task 5): no min-time floor, no extra record (the
+    // session was logged at expiry). Just stand down to the console.
+    if (m_openEnded) {
+        m_openEnded = false;
+        m_activeRoutineId.clear();
+        m_activeStartedAt = {};
+        if (m_backend) {
+            m_backend->restoreShellPlacement();
+        }
+        updateDisplaySleepInhibit();
+        emit activeChanged();
+        emitRowsChanged();
+        return;
+    }
+
     const int routineIndex = indexOfRoutine(m_activeRoutineId);
     if (routineIndex < 0) {
         return;
@@ -628,9 +689,13 @@ void RoutineManager::engage(const QString &routineId)
     }
 
     const Routine &routine = m_routines.at(routineIndex);
+    // Full-internet-access routines deliberately skip the outbound allowlist.
+    // The TOTP gate that authorizes them is enforced in QML before engage() is
+    // ever called (see ActivitiesPanel / Main fullAccessPrompt).
+    const bool applyNetworkLock = routine.networkLock && !routine.fullAccess;
     QString error;
-    if (!startRoutine(routine, routine.networkLock, &error)) {
-        if (routine.networkLock && error.startsWith(QStringLiteral("network:"), Qt::CaseInsensitive)) {
+    if (!startRoutine(routine, applyNetworkLock, &error)) {
+        if (applyNetworkLock && error.startsWith(QStringLiteral("network:"), Qt::CaseInsensitive)) {
             setNetworkLockPrompt(routine, error.mid(QStringLiteral("network:").size()).trimmed());
             return;
         }
@@ -663,7 +728,10 @@ void RoutineManager::unlockOtherAccess()
         // TOTP unlock past the min-time floor counts as a legitimate end —
         // retire the checkpoint so the respawn watchdog releases.
         clearActiveSession();
-        const int routineIndex = indexOfRoutine(m_activeRoutineId);
+        // Open-ended momentum was already recorded at expiry; don't write a
+        // phantom "unlocked" record for it (its timer reads remaining=0).
+        const int routineIndex = m_openEnded ? -1 : indexOfRoutine(m_activeRoutineId);
+        m_openEnded = false;
         if (routineIndex >= 0) {
             const Routine &routine = m_routines.at(routineIndex);
             const int elapsedSeconds = qMax(0, routine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
@@ -739,7 +807,29 @@ void RoutineManager::signOut()
 
 void RoutineManager::continueFinishedSession()
 {
+    // Task 5 — "Continue" after the timer expires keeps the momentum: re-enter
+    // an open-ended active state (no countdown) instead of dropping back to the
+    // routine list. The routine's apps are left running; streak/stats already
+    // carry over (the completed session was recorded at expiry). END EARLY
+    // leaves this state.
+    const QString routineId = m_finishedRoutineId;
     clearFinishedSessionPrompt();
+
+    if (routineId.isEmpty() || active() || accessGranted()) {
+        return;
+    }
+    if (indexOfRoutine(routineId) < 0) {
+        return;
+    }
+
+    m_openEnded = true;
+    m_activeRoutineId = routineId;
+    m_activeStartedAt = QDateTime::currentDateTimeUtc();
+    // No checkpoint / respawn watchdog: open-ended momentum is not a strict
+    // routine, so a crash simply returns to the console rather than re-locking.
+    updateDisplaySleepInhibit();
+    emit activeChanged();
+    emitRowsChanged();
 }
 
 void RoutineManager::quitFinishedSession()
@@ -764,6 +854,7 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
+        object.insert(QStringLiteral("full_access"), routine.fullAccess);
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
@@ -822,6 +913,7 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("time_limit_minutes"), qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60)));
         routine.insert(QStringLiteral("min_time_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0)));
         routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
+        routine.insert(QStringLiteral("full_access"), object.value(QStringLiteral("full_access"), false).toBool());
         routine.insert(QStringLiteral("break_frequency_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0)));
         routine.insert(QStringLiteral("break_duration_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0)));
         routine.insert(QStringLiteral("keep_display_awake"), object.value(QStringLiteral("keep_display_awake"), true).toBool());
@@ -893,6 +985,7 @@ bool RoutineManager::persistRoutines() const
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
+        object.insert(QStringLiteral("full_access"), routine.fullAccess);
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
@@ -1167,6 +1260,7 @@ void RoutineManager::loadRoutines()
         routine.timeLimitMinutes = qMax(1, object.value(QStringLiteral("time_limit_minutes")).toInt(60));
         routine.minTimeMinutes = qMax(0, object.value(QStringLiteral("min_time_minutes")).toInt(0));
         routine.networkLock = object.value(QStringLiteral("network_lock")).toBool(true);
+        routine.fullAccess = object.value(QStringLiteral("full_access")).toBool(false);
         routine.breakFrequencyMinutes = qMax(0, object.value(QStringLiteral("break_frequency_minutes")).toInt(0));
         routine.breakDurationMinutes = qMax(0, object.value(QStringLiteral("break_duration_minutes")).toInt(0));
         routine.keepDisplayAwake = object.value(QStringLiteral("keep_display_awake")).toBool(true);
@@ -1549,6 +1643,7 @@ void RoutineManager::clearNetworkLockPrompt()
 void RoutineManager::setFinishedSessionPrompt(const Routine &routine, int minutes, const QString &result)
 {
     m_sessionPromptVisible = true;
+    m_finishedRoutineId = routine.id;
     m_finishedSessionName = routine.name;
     m_finishedSessionMinutes = qMax(0, minutes);
     m_finishedSessionResult = result;

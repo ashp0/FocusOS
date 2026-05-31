@@ -22,6 +22,11 @@ struct Routine
     int breakFrequencyMinutes = 0;
     int breakDurationMinutes = 0;
     bool keepDisplayAwake = true;
+    // Researcher escape hatch: when set, the routine runs with NO outbound
+    // network restrictions (full internet). Because that is high-risk, engaging
+    // such a routine always requires a valid TOTP code first (enforced in QML
+    // before engage() is called).
+    bool fullAccess = false;
 };
 
 class RoutineManager final : public QAbstractListModel
@@ -36,6 +41,12 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(int activeRoutineBreakDurationMinutes READ activeRoutineBreakDurationMinutes NOTIFY activeChanged)
     Q_PROPERTY(int remainingSeconds READ remainingSeconds NOTIFY remainingSecondsChanged)
     Q_PROPERTY(int elapsedSeconds READ elapsedSeconds NOTIFY remainingSecondsChanged)
+    // Open-ended continuation: after a routine's timer expires the user can
+    // "Continue" into an indefinite, no-countdown momentum state (Task 5).
+    Q_PROPERTY(bool openEnded READ openEnded NOTIFY activeChanged)
+    // In-app screen lock (Task 6): a pitch-black overlay + display-off; any
+    // input dismisses it.
+    Q_PROPERTY(bool screenLocked READ screenLocked NOTIFY screenLockedChanged)
     Q_PROPERTY(bool accessGranted READ accessGranted NOTIFY accessChanged)
     Q_PROPERTY(int accessRemainingSeconds READ accessRemainingSeconds NOTIFY accessChanged)
     Q_PROPERTY(QString accessStatus READ accessStatus NOTIFY accessChanged)
@@ -69,6 +80,7 @@ public:
         TimeLimitMinutesRole,
         MinTimeMinutesRole,
         NetworkLockRole,
+        FullAccessRole,
         BreakFrequencyMinutesRole,
         BreakDurationMinutesRole,
         IsActiveRole,
@@ -93,6 +105,8 @@ public:
     int activeRoutineBreakDurationMinutes() const;
     int remainingSeconds() const;
     int elapsedSeconds() const;
+    bool openEnded() const;
+    bool screenLocked() const;
     bool accessGranted() const;
     int accessRemainingSeconds() const;
     QString accessStatus() const;
@@ -150,6 +164,14 @@ public:
 
     static QString dataDirectory();
 
+public slots:
+    // Task 6 — turn the screen off / show a black lock overlay. Any input
+    // calls unlockScreen() to restore. Declared as slots (not just Q_INVOKABLE)
+    // so the logind power-key "Lock" DBus signal can be wired straight to them
+    // (see main.cpp on Linux). Slots are still callable from QML.
+    void lockScreen();
+    void unlockScreen();
+
 signals:
     void activeChanged();
     void remainingSecondsChanged();
@@ -165,6 +187,7 @@ signals:
     void alwaysAllowedAppsChanged();
     void overlayProgressEnabledChanged();
     void displayStaysAwakeChanged();
+    void screenLockedChanged();
     void desktopAccessRequested();
     void routineSessionFinished(const QString &routineId,
                                 const QString &routineName,
@@ -214,6 +237,12 @@ private:
     QTimer m_inactivityTimer;
     QString m_activeRoutineId;
     QDateTime m_activeStartedAt;
+    // Open-ended continuation state (Task 5): active() stays true with no
+    // countdown timer running. Holds the id of the routine being continued.
+    bool m_openEnded = false;
+    QString m_finishedRoutineId;
+    // In-app screen lock (Task 6).
+    bool m_screenLocked = false;
     int m_accessRemainingSeconds = 0;
     int m_otherAccessMinutes = 30;
     bool m_sessionPromptVisible = false;

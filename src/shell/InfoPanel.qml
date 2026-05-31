@@ -527,75 +527,20 @@ Item {
                     font.pixelSize: 11
                 }
 
-                // Inline target editor — adjust the daily focus goal in 15-minute
-                // steps without hand-editing stats.json. The setter persists and
-                // clamps to 0..24h on the C++ side.
-                Row {
+                // Read-only target readout. The daily-focus-goal editor now
+                // lives behind the admin unlock (Settings ▸ APPEARANCE) so the
+                // main screen stays uncluttered and config is gated.
+                Text {
                     anchors.right: parent.right
                     anchors.rightMargin: 14
                     anchors.top: parent.top
-                    anchors.topMargin: 6
-                    spacing: 6
-
-                    Rectangle {
-                        width: 22
-                        height: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: targetMinusHover.containsMouse ? Theme.steel : "#33141420"
-                        border.width: 1
-                        border.color: targetMinusHover.containsMouse ? Theme.gold : Theme.goldDim
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "−"
-                            color: targetMinusHover.containsMouse ? Theme.gold : Theme.goldDim
-                            font.family: root.headerFont
-                            font.pixelSize: 14
-                        }
-
-                        MouseArea {
-                            id: targetMinusHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: statsStore.dailyTargetMinutes = Math.max(0, statsStore.dailyTargetMinutes - 15)
-                        }
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 78
-                        horizontalAlignment: Text.AlignHCenter
-                        text: "TARGET " + root.formatMinutes(statsStore.dailyTargetMinutes)
-                        color: Theme.goldDim
-                        font.family: root.headerFont
-                        font.pixelSize: 11
-                    }
-
-                    Rectangle {
-                        width: 22
-                        height: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: targetPlusHover.containsMouse ? Theme.steel : "#33141420"
-                        border.width: 1
-                        border.color: targetPlusHover.containsMouse ? Theme.gold : Theme.goldDim
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "+"
-                            color: targetPlusHover.containsMouse ? Theme.gold : Theme.goldDim
-                            font.family: root.headerFont
-                            font.pixelSize: 14
-                        }
-
-                        MouseArea {
-                            id: targetPlusHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: statsStore.dailyTargetMinutes = Math.min(24 * 60, statsStore.dailyTargetMinutes + 15)
-                        }
-                    }
+                    anchors.topMargin: 10
+                    text: statsStore.dailyTargetMinutes > 0
+                          ? "TARGET " + root.formatMinutes(statsStore.dailyTargetMinutes)
+                          : "NO TARGET"
+                    color: Theme.goldDim
+                    font.family: root.headerFont
+                    font.pixelSize: 11
                 }
 
                 Text {

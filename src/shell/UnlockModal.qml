@@ -62,6 +62,7 @@ Item {
             "time_limit_minutes": Math.max(1, Number(routine.time_limit_minutes || 60)),
             "min_time_minutes": Math.max(0, Number(routine.min_time_minutes || 0)),
             "network_lock": routine.network_lock === undefined ? true : Boolean(routine.network_lock),
+            "full_access": Boolean(routine.full_access),
             "break_frequency_minutes": Math.max(0, Number(routine.break_frequency_minutes || 0)),
             "break_duration_minutes": Math.max(0, Number(routine.break_duration_minutes || 0)),
             "keep_display_awake": routine.keep_display_awake === undefined ? true : Boolean(routine.keep_display_awake)
@@ -147,6 +148,7 @@ Item {
             "time_limit_minutes": 60,
             "min_time_minutes": 0,
             "network_lock": true,
+            "full_access": false,
             "break_frequency_minutes": 0,
             "break_duration_minutes": 0,
             "keep_display_awake": true
@@ -611,6 +613,38 @@ Item {
                 font.family: root.headerFont
                 font.pixelSize: 16
                 font.letterSpacing: 0
+            }
+
+            // LOCK SCREEN (Task 6) — top-left of the Settings title bar, only
+            // after the code unlock. Blanks the display; any input restores it.
+            Rectangle {
+                visible: root.adminUnlocked
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(120, lockScreenLabel.implicitWidth + 22)
+                height: 30
+                color: lockScreenMouse.containsMouse ? Theme.crimsonHot : Theme.crimson
+                border.width: 1
+                border.color: lockScreenMouse.containsMouse ? Theme.gold : Theme.goldDim
+
+                Text {
+                    id: lockScreenLabel
+                    anchors.centerIn: parent
+                    text: "⏻ LOCK SCREEN"
+                    color: Theme.gold
+                    font.family: root.headerFont
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                }
+
+                MouseArea {
+                    id: lockScreenMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: routineManager.lockScreen()
+                }
             }
 
             Rectangle {
@@ -1266,6 +1300,39 @@ Item {
                                                 }
                                             }
 
+                                            // FULL INTERNET ACCESS (Task 4): researcher mode. When on,
+                                            // the routine runs with no outbound allowlist — and engaging
+                                            // it always demands a 6-digit code first (enforced in Main's
+                                            // engage-prep overlay).
+                                            Rectangle {
+                                                Layout.preferredWidth: 196
+                                                Layout.preferredHeight: 34
+                                                color: Boolean(routineCard.modelData.full_access) ? "#2a1010" : Theme.voidColor
+                                                border.width: 1
+                                                border.color: Boolean(routineCard.modelData.full_access) ? Theme.crimsonHot : Theme.goldDim
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: Boolean(routineCard.modelData.full_access) ? "● FULL INTERNET (CODE)" : "FULL INTERNET ACCESS"
+                                                    color: Boolean(routineCard.modelData.full_access) ? Theme.crimsonHot : Theme.textDim
+                                                    elide: Text.ElideRight
+                                                    font.family: root.headerFont
+                                                    font.pixelSize: 10
+                                                    font.letterSpacing: 0
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        const drafts = root.cloneDrafts()
+                                                        drafts[routineCard.index].full_access = !Boolean(routineCard.modelData.full_access)
+                                                        root.routineDrafts = drafts
+                                                    }
+                                                }
+                                            }
+
                                             Item { Layout.fillWidth: true }
 
                                             AdminButton {
@@ -1784,6 +1851,52 @@ Item {
                         detail: "Always-on-top countdown border, visible across every space during a routine"
                         checked: routineManager.overlayProgressEnabled
                         onToggled: routineManager.overlayProgressEnabled = !routineManager.overlayProgressEnabled
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                    }
+
+                    // Daily focus target — moved here from the main InfoPanel so
+                    // configuration stays gated behind the TOTP unlock. Setter
+                    // persists + clamps 0..24h on the StatsStore side.
+                    Text {
+                        Layout.fillWidth: true
+                        text: "DAILY FOCUS TARGET"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        AdminSpinner {
+                            value: statsStore.dailyTargetMinutes
+                            from: 0
+                            to: 24 * 60
+                            stepSize: 15
+                            onValueModified: function(nextValue) {
+                                statsStore.dailyTargetMinutes = nextValue
+                            }
+                        }
+
+                        Text {
+                            text: statsStore.dailyTargetMinutes > 0
+                                  ? "minutes  ■  " + (Math.floor(statsStore.dailyTargetMinutes / 60)) + "H " + (statsStore.dailyTargetMinutes % 60) + "M / DAY"
+                                  : "minutes  ■  NO DAILY GOAL SET"
+                            color: Theme.textDim
+                            font.family: root.bodyFont
+                            font.pixelSize: 12
+                            font.letterSpacing: 0
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
 
                     Item { Layout.fillHeight: true }

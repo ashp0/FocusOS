@@ -3,13 +3,13 @@
 # Read via XDG_CONFIG_HOME (set by the session script). Disables the
 # screen-edge / hot-corner actions and the overview/desktop-grid effects that
 # would otherwise let the user summon a launcher or app picker by shoving the
-# pointer into a corner. Window switching (Alt+Tab) is governed by
-# kglobalshortcutsrc and stays enabled.
+# pointer into a corner. The Alt+Tab window switcher is now DISABLED outright
+# (Task 1) via kglobalshortcutsrc — strict enforcement means no app switching.
 
 [TabBox]
-# Alt+Tab walks through all open windows. Since only allowed apps are ever
-# launched (others are killed by the lockdown watchdog), this is window
-# switching restricted to the routine surface by construction.
+# The Walk-Through-Windows shortcuts are unbound in kglobalshortcutsrc, so this
+# switcher is unreachable. Settings kept minimal for when it is invoked
+# programmatically (it shouldn't be during a locked session).
 ShowDesktopMode=0
 SwitchingMode=0
 LayoutName=org.kde.breeze.desktop

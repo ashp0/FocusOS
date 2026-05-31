@@ -22,6 +22,7 @@ endif()
 
 find_package(Qt6 6.7 REQUIRED COMPONENTS
     Core
+    DBus
     Gui
     Multimedia
     Network
@@ -137,6 +138,7 @@ qt_add_qml_module(focusos
 
 target_link_libraries(focusos PRIVATE
     Qt6::Core
+    Qt6::DBus
     Qt6::Gui
     Qt6::Multimedia
     Qt6::Network

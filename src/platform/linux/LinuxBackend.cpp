@@ -73,10 +73,12 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
 
+#include <csignal>
 #include <unistd.h>
 
 namespace {
@@ -549,6 +551,12 @@ void LinuxBackend::prepareRoutineSession(const QStringList &appPaths)
 
     terminateDesktopShell();
 
+    // Strict enforcement (Task 1): close the user's other running GUI apps so a
+    // routine starts from a clean surface — nothing but the routine's own apps
+    // and the always-allowed list. The QML side gives the user a short warning
+    // before this fires so unsaved work can be saved.
+    quitBackgroundApps(appPaths);
+
     // Everything runs on the user's current desktop now — FocusOS no longer
     // spins up a separate "Focus" virtual desktop or pins routine windows to
     // it. The user full-screens / tiles routine apps themselves, so a second
@@ -747,6 +755,137 @@ void LinuxBackend::terminateApps(const QStringList &appPaths)
 
     restoreShellPlacement();
     m_sessionAllowedProcessNames.clear();
+}
+
+void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
+{
+    // Walk /proc and SIGTERM every GUI app the current user is running that
+    // isn't part of the routine. "GUI app" = a process of ours whose environ
+    // carries WAYLAND_DISPLAY / DISPLAY — that filters out the daemons and
+    // session plumbing, so we only close visible apps. We deliberately use
+    // SIGTERM (not SIGKILL) so apps can run their own save-on-quit handlers.
+    //
+    // Two layers of safety keep this from logging the user out:
+    //   1. A hardcoded keep-set of session-critical processes (compositor,
+    //      portal, audio, dbus, FocusOS itself, the session/watchdog scripts).
+    //   2. The routine's apps + the always-allowed list, by process basename.
+    QSet<QString> keep = {
+        // FocusOS + its session scaffolding
+        QStringLiteral("focusos"),
+        QStringLiteral("focusos-session"),
+        QStringLiteral("focusos-watchdog.sh"),
+        QStringLiteral("bash"), QStringLiteral("sh"), QStringLiteral("zsh"),
+        // Compositor + display server
+        QStringLiteral("kwin_wayland"), QStringLiteral("kwin_wayland_wrapper"),
+        QStringLiteral("kwin"), QStringLiteral("Xwayland"), QStringLiteral("xwayland"),
+        // Desktop portals (file pickers, screenshots — routine apps need them)
+        QStringLiteral("xdg-desktop-portal"),
+        QStringLiteral("xdg-desktop-portal-kde"),
+        QStringLiteral("xdg-desktop-portal-gtk"),
+        QStringLiteral("xdg-desktop-por"), // /proc comm is truncated to 15 chars
+        QStringLiteral("xdg-document-portal"), QStringLiteral("xdg-permission-store"),
+        // Audio stack
+        QStringLiteral("pipewire"), QStringLiteral("pipewire-pulse"),
+        QStringLiteral("wireplumber"), QStringLiteral("pulseaudio"),
+        // Bus + login session
+        QStringLiteral("dbus-daemon"), QStringLiteral("dbus-broker"),
+        QStringLiteral("dbus-run-session"),
+        QStringLiteral("systemd"), QStringLiteral("systemd-logind"),
+        // KDE global-shortcut / kded helpers FocusOS relies on for media keys
+        QStringLiteral("kglobalaccel5"), QStringLiteral("kglobalaccel6"),
+        QStringLiteral("kded5"), QStringLiteral("kded6"),
+        QStringLiteral("polkit-kde-authentication-agent-1"), QStringLiteral("polkitd"),
+        // Misc session agents that hold credentials / mounts
+        QStringLiteral("gvfsd"), QStringLiteral("gvfsd-fuse"),
+        QStringLiteral("ssh-agent"), QStringLiteral("gpg-agent")
+    };
+
+    // Add the routine + always-allowed apps by process basename so we never
+    // terminate something the user explicitly permitted.
+    const auto addAllowed = [&keep](const QStringList &names) {
+        for (const QString &name : names) {
+            if (!name.isEmpty()) {
+                keep.insert(name);
+                // comm is capped at 15 chars — match the truncated form too.
+                keep.insert(name.left(15));
+            }
+        }
+    };
+    addAllowed(processNamesForCommandLines(allowedCommandLines));
+    addAllowed(m_sessionAllowedProcessNames);
+    addAllowed(alwaysAllowedProcessNames());
+
+    const uid_t myUid = ::getuid();
+    const qint64 myPid = QCoreApplication::applicationPid();
+
+    QDir procDir(QStringLiteral("/proc"));
+    const QStringList entries = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &entry : entries) {
+        bool isPid = false;
+        const qint64 pid = entry.toLongLong(&isPid);
+        if (!isPid || pid <= 1 || pid == myPid) {
+            continue;
+        }
+
+        const QString base = QStringLiteral("/proc/") + entry;
+
+        // Only touch our own processes.
+        if (QFileInfo(base).ownerId() != myUid) {
+            continue;
+        }
+
+        // Resolve the executable name (prefer the exe symlink; comm is
+        // truncated and can be rewritten by the process).
+        QString name = QFileInfo(QFile::symLinkTarget(base + QStringLiteral("/exe"))).fileName();
+        if (name.isEmpty()) {
+            QFile commFile(base + QStringLiteral("/comm"));
+            if (commFile.open(QIODevice::ReadOnly)) {
+                name = QString::fromUtf8(commFile.readAll()).trimmed();
+            }
+        }
+        if (name.isEmpty() || keep.contains(name)) {
+            continue;
+        }
+
+        // GUI heuristic: a graphical client has WAYLAND_DISPLAY or DISPLAY in
+        // its environment. Pure daemons usually don't — leaving them alone is
+        // the safe default.
+        QFile environFile(base + QStringLiteral("/environ"));
+        if (!environFile.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QByteArray environ = environFile.readAll();
+        const bool graphical = environ.contains("WAYLAND_DISPLAY=") ||
+                               environ.contains("DISPLAY=");
+        if (!graphical) {
+            continue;
+        }
+
+        ::kill(static_cast<pid_t>(pid), SIGTERM);
+    }
+}
+
+void LinuxBackend::lockScreen()
+{
+    // Best-effort physical blank. The QML black overlay covers the rest, so any
+    // single one of these succeeding is enough; failures are harmless.
+    //
+    // 1) loginctl lock-session — emits the login1 "Lock" signal (also what the
+    //    power key triggers via 90-focusos-logind.conf).
+    QProcess::startDetached(QStringLiteral("loginctl"), {QStringLiteral("lock-session")});
+    // 2) DPMS off via kscreen-doctor (KDE) when available.
+    const QString kscreen = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
+    if (!kscreen.isEmpty()) {
+        QProcess::startDetached(kscreen, {QStringLiteral("--dpms"), QStringLiteral("off")});
+    }
+}
+
+void LinuxBackend::unlockScreen()
+{
+    const QString kscreen = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
+    if (!kscreen.isEmpty()) {
+        QProcess::startDetached(kscreen, {QStringLiteral("--dpms"), QStringLiteral("on")});
+    }
 }
 
 bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)

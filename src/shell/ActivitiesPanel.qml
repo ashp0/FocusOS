@@ -13,6 +13,10 @@ Item {
     signal unlockRequested()
     signal editRoutinesRequested()
     signal showSidebar()
+    // Routed to Main's engage-prep overlay: it gates full-access routines behind
+    // a TOTP code (Task 4) and shows the "closing other apps" warning (Task 1)
+    // before actually calling routineManager.engage().
+    signal engageRequested(string routineId, bool fullAccess)
 
     function formatSecondsClock(seconds) {
         const value = Math.max(0, Number(seconds || 0))
@@ -514,6 +518,7 @@ Item {
             required property bool isActive
             required property string buttonLabel
             required property bool buttonEnabled
+            required property bool fullAccess
 
             property bool editing: false
             property string editText: description
@@ -810,7 +815,7 @@ Item {
                                 hoverEnabled: !routineManager.networkLockPromptVisible
                                 enabled: delegateRoot.buttonEnabled
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: routineManager.engage(delegateRoot.routineId)
+                                onClicked: root.engageRequested(delegateRoot.routineId, delegateRoot.fullAccess)
                             }
                         }
                     }

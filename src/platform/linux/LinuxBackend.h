@@ -20,6 +20,9 @@ public:
     bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) override;
     bool openUrls(const QStringList &urls, QString *errorMessage = nullptr) override;
     void terminateApps(const QStringList &appPaths) override;
+    void quitBackgroundApps(const QStringList &allowedCommandLines) override;
+    void lockScreen() override;
+    void unlockScreen() override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void dropNetworkPolicy() override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;
