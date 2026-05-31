@@ -77,6 +77,8 @@
 #include <QStandardPaths>
 #include <QUrl>
 
+#include <unistd.h>
+
 namespace {
 
 QString expandedPath(const QString &path)
@@ -312,6 +314,53 @@ bool launchKioskBrowser(const QString &url, qint64 *pidOut = nullptr, QString *e
     return ok;
 }
 
+// Document file types that get a dedicated viewer in launchFile(). For these we
+// prefer a concrete reader (more reliable in the bare kiosk session than the
+// xdg-open portal path); all other file types just go straight to xdg-open.
+bool isDocumentSuffix(const QString &suffix)
+{
+    static const QStringList documentSuffixes {
+        QStringLiteral("pdf"),  QStringLiteral("epub"), QStringLiteral("mobi"),
+        QStringLiteral("azw3"), QStringLiteral("djvu"), QStringLiteral("fb2"),
+        QStringLiteral("cbz"),  QStringLiteral("cbr"),  QStringLiteral("chm")
+    };
+    return documentSuffixes.contains(suffix.toLower());
+}
+
+// Open an arbitrary data file in its default application. For known document
+// types (PDF / ebook) we prefer a concrete viewer so the file lands in a real
+// window even in the bare kiosk session (where xdg-open's portal path can be
+// flaky); everything else (images, office docs, video, …) is handed to xdg-open
+// so it opens in whatever the user has set as default.
+bool launchFile(const QString &path, const QStringList &extraArgs, qint64 *pidOut = nullptr)
+{
+    if (isDocumentSuffix(QFileInfo(path).suffix())) {
+        const QString reader = firstExecutable({
+            QStringLiteral("okular"),
+            QStringLiteral("ebook-viewer"),   // Calibre's reader — handles epub/mobi/azw3
+            QStringLiteral("evince"),
+            QStringLiteral("atril"),
+            QStringLiteral("zathura"),
+            QStringLiteral("qpdfview"),
+            QStringLiteral("xreader"),
+            QStringLiteral("mupdf"),
+            QStringLiteral("xpdf")
+        });
+        if (!reader.isEmpty()) {
+            QStringList parts;
+            parts << reader << path;
+            parts.append(extraArgs);
+            return launchCommand(parts, pidOut);
+        }
+    }
+
+    const QString xdgOpen = QStandardPaths::findExecutable(QStringLiteral("xdg-open"));
+    if (!xdgOpen.isEmpty()) {
+        return launchCommand({xdgOpen, path}, pidOut);
+    }
+    return false;
+}
+
 bool startDetachedWithKdeEnvironment(const QString &program, const QStringList &arguments = {})
 {
     QProcess process;
@@ -545,6 +594,12 @@ bool LinuxBackend::launchApps(const QStringList &appPaths, QString *errorMessage
         qint64 pid = 0;
         if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0) {
             launched = launchDesktopFile(parsed.path, parsed.args, &pid);
+        } else if (info.isFile() && !info.isExecutable()) {
+            // A data file the user added via "Open File" (PDF, ebook, image,
+            // office doc, video…). Hand it to its default application instead of
+            // trying to exec the file itself. Bare command names like
+            // "flatpak run …" don't exist as files, so they fall through to exec.
+            launched = launchFile(parsed.path, parsed.args, &pid);
         } else {
             QStringList parts;
             parts << parsed.path;
@@ -1296,6 +1351,44 @@ bool LinuxBackend::restoreLoginSessions(QString *errorMessage)
         return false;
     }
     return true;
+}
+
+bool LinuxBackend::signOut(QString *errorMessage)
+{
+    // Drop any network policy first so a failed/partial sign-out doesn't strand
+    // the machine behind nftables.
+    dropNetworkPolicy();
+
+    // A plain qApp->quit() is NOT enough in the permanent install: the kiosk
+    // watchdog (focusos-watchdog.sh --kiosk) respawns focusos on any exit. To
+    // actually return to the SDDM login we must terminate the whole login
+    // session via logind — that takes down kwin_wayland (which is started with
+    // --exit-with-session), the watchdog, and FocusOS together.
+    const QString loginctl = QStandardPaths::findExecutable(QStringLiteral("loginctl"));
+    if (!loginctl.isEmpty()) {
+        const QString sessionId = qEnvironmentVariable("XDG_SESSION_ID");
+        if (!sessionId.isEmpty() &&
+            QProcess::startDetached(loginctl, {QStringLiteral("terminate-session"), sessionId})) {
+            return true;
+        }
+        // No session id (or it failed): terminate every session this user owns.
+        if (QProcess::startDetached(loginctl,
+                                    {QStringLiteral("terminate-user"),
+                                     QString::number(static_cast<uint>(::getuid()))})) {
+            return true;
+        }
+    }
+
+    // Last resort: drop the compositor. kwin_wayland is launched with
+    // --exit-with-session, so killing it ends the login session too.
+    if (QProcess::startDetached(QStringLiteral("pkill"), {QStringLiteral("-x"), QStringLiteral("kwin_wayland")})) {
+        return true;
+    }
+
+    if (errorMessage) {
+        *errorMessage = QStringLiteral("Unable to sign out — loginctl unavailable.");
+    }
+    return false;
 }
 
 QString LinuxBackend::watchdogScriptPath() const

@@ -1101,15 +1101,36 @@ Item {
                                             }
                                         }
 
-                                        AdminButton {
-                                            Layout.preferredWidth: 164
-                                            Layout.preferredHeight: 34
-                                            label: "+ SELECT APP FILE"
-                                            danger: false
-                                            onClicked: {
-                                                const path = routineManager.pickApplication()
-                                                root.addApp(routineCard.index, path)
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            AdminButton {
+                                                Layout.preferredWidth: 164
+                                                Layout.preferredHeight: 34
+                                                label: "+ SELECT APP FILE"
+                                                danger: false
+                                                onClicked: {
+                                                    const path = routineManager.pickApplication()
+                                                    root.addApp(routineCard.index, path)
+                                                }
                                             }
+
+                                            // Open-file workflow: add any file (PDF, ebook, image,
+                                            // office doc, video…) that opens in its default app when
+                                            // the routine engages.
+                                            AdminButton {
+                                                Layout.preferredWidth: 164
+                                                Layout.preferredHeight: 34
+                                                label: "+ OPEN FILE"
+                                                danger: false
+                                                onClicked: {
+                                                    const path = routineManager.pickFile()
+                                                    root.addApp(routineCard.index, path)
+                                                }
+                                            }
+
+                                            Item { Layout.fillWidth: true }
                                         }
 
                                         RowLayout {
@@ -1966,6 +1987,65 @@ Item {
                             label: "⏏ RESTORE OTHER SESSIONS"
                             danger: true
                             onClicked: routineManager.restoreLoginSessions()
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                        visible: routineManager.signOutSupported()
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.signOutSupported()
+                        text: "ACCOUNT"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.signOutSupported()
+                        text: "Logs out of your account and returns to the login screen. The inspiration fade cycle restarts on your next login."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: routineManager.signOutSupported()
+                        spacing: 10
+
+                        AdminTextField {
+                            id: signOutConfirmField
+                            Layout.preferredWidth: 128
+                            Layout.preferredHeight: 34
+                            placeholderText: "SIGN OUT"
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 150
+                            Layout.preferredHeight: 34
+                            label: "⏻ SIGN OUT"
+                            danger: true
+                            actionEnabled: signOutConfirmField.text === "SIGN OUT"
+                            onClicked: {
+                                // Returning to the login screen restarts the fade
+                                // cycle (Task 1); persist a fresh start now so the
+                                // next login comes up fully visible.
+                                inspirationStore.resetFadeCycle()
+                                routineManager.signOut()
+                            }
                         }
 
                         Item { Layout.fillWidth: true }

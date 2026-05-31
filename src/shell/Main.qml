@@ -216,6 +216,14 @@ Item {
         z: 30
     }
 
+    // Idle / screensaver: pitch-black starfield over everything after a stretch
+    // of no input (IdleMonitor, 5 min). The first interaction wakes the shell.
+    IdleScreen {
+        anchors.fill: parent
+        z: 1000
+        visible: idleMonitor.idle
+    }
+
     Item {
         id: sessionPrompt
         anchors.fill: parent

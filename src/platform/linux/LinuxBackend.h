@@ -31,6 +31,8 @@ public:
     void setAlwaysAllowedApps(const QStringList &commandLines) override;
     void startWatchdog(const QString &binaryPath) override;
     bool restoreLoginSessions(QString *errorMessage = nullptr) override;
+    bool signOutSupported() const override { return true; }
+    bool signOut(QString *errorMessage = nullptr) override;
     void setDisplaySleepInhibited(bool inhibited) override;
     void releaseDisplaySleepInhibitors() override;
 

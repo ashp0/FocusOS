@@ -51,4 +51,18 @@ public:
         }
         return false;
     }
+
+    // Whether this platform can log the user out of their account / session.
+    virtual bool signOutSupported() const { return false; }
+    // Log the user out: end the login session and drop back to the display
+    // manager (SDDM). In the permanent kiosk install a plain process quit gets
+    // respawned by the watchdog, so this must terminate the whole session.
+    // Returns false (with errorMessage) when unsupported or it fails.
+    virtual bool signOut(QString *errorMessage = nullptr)
+    {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Sign out is not supported on this platform");
+        }
+        return false;
+    }
 };

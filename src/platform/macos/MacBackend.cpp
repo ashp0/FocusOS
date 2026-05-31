@@ -480,6 +480,20 @@ bool MacBackend::launchApps(const QStringList &appPaths, QString *errorMessage)
             continue;
         }
 
+        // A data file added via "Open File" (PDF, image, office doc, video…):
+        // hand it to its default application via `open` rather than exec'ing it.
+        const QFileInfo entryInfo(entry.path);
+        if (entryInfo.isFile() && !entryInfo.isExecutable()) {
+            if (!QProcess::startDetached(QStringLiteral("/usr/bin/open"),
+                                         {entryInfo.absoluteFilePath()})) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Unable to open %1").arg(entry.path);
+                }
+                return false;
+            }
+            continue;
+        }
+
         qint64 pid = 0;
         QString launchError;
         if (!launchCommand(entry.path, entry.args, &pid, &launchError)) {

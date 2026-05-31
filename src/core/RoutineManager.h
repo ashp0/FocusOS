@@ -133,6 +133,15 @@ public:
     Q_INVOKABLE bool saveRoutines(const QVariantList &routines);
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
     Q_INVOKABLE QString pickApplication();
+    Q_INVOKABLE QString pickFile();
+    // Reset the unlock-panel inactivity countdown. Wired to IdleMonitor's
+    // activity() signal: any user input while access is granted re-arms the
+    // 30-minute auto-lock (see ctor).
+    Q_INVOKABLE void notifyActivity();
+    Q_INVOKABLE bool signOutSupported() const;
+    // Log the user out of their account / session (returns to the login
+    // screen). Admin-gated by the caller (settings access).
+    Q_INVOKABLE void signOut();
     Q_INVOKABLE QString applicationDisplayName(const QString &path) const;
     Q_INVOKABLE bool addAlwaysAllowedApp(const QString &commandLine);
     Q_INVOKABLE void removeAlwaysAllowedApp(int index);
@@ -198,6 +207,11 @@ private:
     QVector<Routine> m_routines;
     FocusTimer m_routineTimer;
     QTimer m_accessTimer;
+    // Single-shot 30-minute inactivity watchdog for the unlock panel. Re-armed
+    // by notifyActivity() on every input while access is granted; on timeout it
+    // revokes access (re-locking settings) so a walked-away unlocked panel
+    // doesn't stay open.
+    QTimer m_inactivityTimer;
     QString m_activeRoutineId;
     QDateTime m_activeStartedAt;
     int m_accessRemainingSeconds = 0;

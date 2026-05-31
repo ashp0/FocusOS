@@ -1,4 +1,5 @@
 #include "core/InspirationStore.h"
+#include "core/IdleMonitor.h"
 #include "core/MediaKeys.h"
 #include "core/MusicEngine.h"
 #include "core/NotesStore.h"
@@ -130,6 +131,7 @@ int main(int argc, char *argv[])
     SystemStatus systemStatus;
     InspirationStore inspirationStore;
     Updater updater;
+    IdleMonitor idleMonitor;
 
     // Claim the volume/brightness media keys session-wide so they work over a
     // focused routine app, not just inside the FocusOS shell. No-op on builds
@@ -156,6 +158,9 @@ int main(int argc, char *argv[])
             notesStore.onRoutineEngaged(routineManager.activeRoutineId(), routineManager.activeRoutineName());
         }
     });
+    // Any user input re-arms the unlock panel's 30-minute inactivity auto-lock.
+    QObject::connect(&idleMonitor, &IdleMonitor::activity,
+                     &routineManager, &RoutineManager::notifyActivity);
 
     ShellWindow window(&routineManager,
                        &notesStore,
@@ -164,7 +169,8 @@ int main(int argc, char *argv[])
                        &statsStore,
                        &systemStatus,
                        &inspirationStore,
-                       &updater);
+                       &updater,
+                       &idleMonitor);
     window.showFocusShell();
 
     return app.exec();

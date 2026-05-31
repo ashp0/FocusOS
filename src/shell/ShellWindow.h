@@ -10,6 +10,7 @@ class StatsStore;
 class SystemStatus;
 class TOTPEngine;
 class Updater;
+class IdleMonitor;
 
 class ShellWindow final : public QQuickView
 {
@@ -23,7 +24,8 @@ public:
                 StatsStore *statsStore,
                 SystemStatus *systemStatus,
                 InspirationStore *inspirationStore,
-                Updater *updater);
+                Updater *updater,
+                IdleMonitor *idleMonitor);
 
     void showFocusShell();
 

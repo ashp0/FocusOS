@@ -138,6 +138,17 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     m_accessTimer.setInterval(1000);
     connect(&m_accessTimer, &QTimer::timeout, this, &RoutineManager::tickOtherAccess);
 
+    // Unlock-panel inactivity auto-lock: 30 minutes with no input revokes
+    // access and re-locks settings (finishOtherAccess re-locks the modal).
+    m_inactivityTimer.setSingleShot(true);
+    m_inactivityTimer.setInterval(30 * 60 * 1000);
+    connect(&m_inactivityTimer, &QTimer::timeout, this, [this] {
+        if (accessGranted()) {
+            finishOtherAccess();
+            setStatusMessage(QStringLiteral("ACCESS LOCKED — 30 MIN INACTIVITY"));
+        }
+    });
+
     // Deferred so ShellWindow's signal connections (activeChanged, etc.) are
     // wired before a resumed routine fires them. Resumes a locked routine left
     // behind by a kill/crash via the active.json checkpoint.
@@ -527,6 +538,16 @@ void RoutineManager::launchDesktopShell()
     if (!m_backend || !m_backend->desktopShellSupported() || !accessGranted()) {
         return;
     }
+    // Single-instance guard: if we've already brought the desktop shell (KDE
+    // Plasma) up this session, don't launch it again — just get FocusOS out of
+    // the way so the existing session comes forward. This prevents a rapid
+    // second "Access Desktop" (before plasmashell shows up in pgrep) from
+    // racing a duplicate Plasma launch. The backend has its own processRunning
+    // guard too, but this avoids even attempting the relaunch.
+    if (m_desktopShellRunning) {
+        emit desktopAccessRequested();
+        return;
+    }
     QString error;
     if (m_backend->launchDesktopShell(&error)) {
         m_desktopShellRunning = true;
@@ -667,6 +688,8 @@ void RoutineManager::unlockOtherAccess()
     }
 
     m_accessRemainingSeconds = qMax(1, m_otherAccessMinutes) * 60;
+    // Arm the inactivity auto-lock; notifyActivity() re-starts it on input.
+    m_inactivityTimer.start();
     // The terminal used to pop here, but on Linux it stole focus from the
     // admin modal and made the user think the ROUTINES tab disappeared. On
     // Linux the user opens the terminal via the Access Desktop button now.
@@ -678,6 +701,40 @@ void RoutineManager::unlockOtherAccess()
     m_accessTimer.start();
     emit accessChanged();
     emitRowsChanged();
+}
+
+void RoutineManager::notifyActivity()
+{
+    // Only the unlock panel's auto-lock cares about activity; re-arm it on input
+    // while access is granted. (Idle when locked is harmless — nothing to lock.)
+    if (accessGranted()) {
+        m_inactivityTimer.start();
+    }
+}
+
+bool RoutineManager::signOutSupported() const
+{
+    return m_backend && m_backend->signOutSupported();
+}
+
+void RoutineManager::signOut()
+{
+    // Tear down any routine state first so the respawn watchdog doesn't fight
+    // the logout: drop the network policy and retire the active checkpoint.
+    if (m_backend) {
+        m_backend->dropNetworkPolicy();
+    }
+    clearActiveSession();
+    m_inactivityTimer.stop();
+    m_accessTimer.stop();
+
+    if (!m_backend) {
+        return;
+    }
+    QString error;
+    if (!m_backend->signOut(&error) && !error.isEmpty()) {
+        setStatusMessage(error);
+    }
 }
 
 void RoutineManager::continueFinishedSession()
@@ -950,6 +1007,46 @@ QString RoutineManager::pickApplication()
         return {};
     }
     return path;
+#else
+    return {};
+#endif
+}
+
+QString RoutineManager::pickFile()
+{
+    // A generic file picker for the "Open File" workflow. The selected path is
+    // added to a routine like any app entry; when the routine engages the backend
+    // hands the file to its default application (PDF reader, image viewer, office
+    // suite, video player, …) rather than trying to exec it. Any file type is
+    // allowed — no executable check — which keeps the routine list versatile.
+    const QString documentFilter =
+        QStringLiteral("Books & documents (*.pdf *.epub *.mobi *.azw3 *.djvu *.fb2 *.cbz *.cbr *.chm)");
+#if defined(Q_OS_MACOS)
+    return QFileDialog::getOpenFileName(
+        nullptr,
+        QStringLiteral("Open File"),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QStringLiteral("All files (*);;") + documentFilter);
+#elif defined(Q_OS_LINUX)
+    const QString documentsDir =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString startDir = QFileInfo::exists(documentsDir) ? documentsDir : QDir::homePath();
+
+    QFileDialog dialog(nullptr, QStringLiteral("Open File"), startDir);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    dialog.setFilter(dialog.filter() | QDir::Hidden);
+    dialog.setNameFilters({ QStringLiteral("All files (*)"), documentFilter });
+    dialog.setSidebarUrls({
+        QUrl::fromLocalFile(QDir::homePath()),
+        QUrl::fromLocalFile(startDir),
+    });
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return {};
+    }
+    const QStringList selected = dialog.selectedFiles();
+    return selected.isEmpty() ? QString() : selected.first();
 #else
     return {};
 #endif
@@ -1291,6 +1388,7 @@ void RoutineManager::tickOtherAccess()
 void RoutineManager::finishOtherAccess()
 {
     m_accessTimer.stop();
+    m_inactivityTimer.stop();
     m_accessRemainingSeconds = 0;
     if (m_backend) {
         // terminateUnrestrictedApps also terminates the desktop shell on Linux.
