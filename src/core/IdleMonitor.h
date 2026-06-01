@@ -66,8 +66,6 @@ private:
     void goDeepIdle();
     // Clear both idle stages (and stop the deep timer); emits the changes.
     void clearIdleState();
-    bool focusOsIsActive() const;
-    void onApplicationStateChanged(Qt::ApplicationState state);
 
     bool m_idle = false;
     bool m_deepIdle = false;

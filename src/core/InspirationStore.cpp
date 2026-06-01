@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcessEnvironment>
 #include <QSettings>
 #include <QUrl>
 #include <QVariantMap>
@@ -53,6 +54,26 @@ InspirationStore::InspirationStore(QObject *parent)
     if (m_fadeStartMs <= 0) {
         m_fadeStartMs = QDateTime::currentMSecsSinceEpoch();
         settings.setValue(QStringLiteral("inspiration/fadeStartMs"), m_fadeStartMs);
+    }
+
+    // A genuine fresh login should always start with the media fully visible,
+    // otherwise a stale persisted cycle (last used hours ago, fade complete)
+    // leaves the wallpaper at its near-invisible floor on launch. We still want a
+    // mid-session watchdog respawn to resume where it left off, so distinguish
+    // the two with a per-login marker in $XDG_RUNTIME_DIR (the kernel wipes that
+    // dir on logout — same scope main() uses to run startup items once per login).
+    const QString runtimeDir =
+        QProcessEnvironment::systemEnvironment().value(QStringLiteral("XDG_RUNTIME_DIR"));
+    if (!runtimeDir.isEmpty()) {
+        const QString marker = runtimeDir + QStringLiteral("/focusos-fade-login");
+        if (!QFileInfo::exists(marker)) {
+            m_fadeStartMs = QDateTime::currentMSecsSinceEpoch();
+            settings.setValue(QStringLiteral("inspiration/fadeStartMs"), m_fadeStartMs);
+            QFile markerFile(marker);
+            if (markerFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                markerFile.close();
+            }
+        }
     }
 
     m_scanTimer.setSingleShot(true);

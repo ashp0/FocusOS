@@ -24,6 +24,11 @@ struct Routine
     bool accessDesktop = false;
     bool accessDocuments = false;
     bool accessDownloads = false;
+    // Master switch for mid-session file access style. Off (default): the only
+    // way to reach a file during the routine is the standard native "open file"
+    // picker. On: the in-app folder browser ("browse computer") is offered too,
+    // jailed to the accessDesktop/Documents/Downloads opt-ins + accessFolder.
+    bool browsable = false;
     int timeLimitMinutes = 0;
     int minTimeMinutes = 0;
     bool networkLock = true;
@@ -47,6 +52,9 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(QString activeRoutineDescription READ activeRoutineDescription NOTIFY activeChanged)
     Q_PROPERTY(int activeRoutineBreakFrequencyMinutes READ activeRoutineBreakFrequencyMinutes NOTIFY activeChanged)
     Q_PROPERTY(int activeRoutineBreakDurationMinutes READ activeRoutineBreakDurationMinutes NOTIFY activeChanged)
+    // Whether the active routine offers the in-app folder browser ("browse
+    // computer") in addition to the standard native open-file picker.
+    Q_PROPERTY(bool activeRoutineBrowsable READ activeRoutineBrowsable NOTIFY activeChanged)
     Q_PROPERTY(int remainingSeconds READ remainingSeconds NOTIFY remainingSecondsChanged)
     Q_PROPERTY(int elapsedSeconds READ elapsedSeconds NOTIFY remainingSecondsChanged)
     // Open-ended continuation: after a routine's timer expires the user can
@@ -115,6 +123,7 @@ public:
     QString activeRoutineDescription() const;
     int activeRoutineBreakFrequencyMinutes() const;
     int activeRoutineBreakDurationMinutes() const;
+    bool activeRoutineBrowsable() const;
     int remainingSeconds() const;
     int elapsedSeconds() const;
     bool openEnded() const;

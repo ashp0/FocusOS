@@ -290,6 +290,12 @@ int RoutineManager::activeRoutineBreakDurationMinutes() const
     return routineIndex >= 0 ? m_routines.at(routineIndex).breakDurationMinutes : 0;
 }
 
+bool RoutineManager::activeRoutineBrowsable() const
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    return routineIndex >= 0 ? m_routines.at(routineIndex).browsable : false;
+}
+
 int RoutineManager::remainingSeconds() const
 {
     if (m_openEnded) {
@@ -315,13 +321,22 @@ bool RoutineManager::screenLocked() const
 
 void RoutineManager::lockScreen()
 {
+    // Idempotent: bail if we're already locked. Critical because backend
+    // lockScreen() runs `loginctl lock-session`, which makes logind emit the
+    // session's "Lock" signal — and that signal is wired straight back to this
+    // slot (see main.cpp). Without this guard the echo re-enters here, re-issues
+    // lock-session + `kscreen-doctor --dpms off`, and the panel cycles on/off
+    // forever (it never stays lit long enough to accept the unlock input).
+    if (m_screenLocked) {
+        return;
+    }
+    // Flip state first so the re-entrant Lock-signal call short-circuits above
+    // before it can touch the backend again.
+    m_screenLocked = true;
+    emit screenLockedChanged();
     if (m_backend) {
         // Best-effort: physically turn the panel off where the platform can.
         m_backend->lockScreen();
-    }
-    if (!m_screenLocked) {
-        m_screenLocked = true;
-        emit screenLockedChanged();
     }
 }
 
@@ -918,6 +933,7 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("access_desktop"), routine.accessDesktop);
         object.insert(QStringLiteral("access_documents"), routine.accessDocuments);
         object.insert(QStringLiteral("access_downloads"), routine.accessDownloads);
+        object.insert(QStringLiteral("browsable"), routine.browsable);
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
@@ -964,6 +980,7 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         const bool accessDesktop = object.value(QStringLiteral("access_desktop")).toBool();
         const bool accessDocuments = object.value(QStringLiteral("access_documents")).toBool();
         const bool accessDownloads = object.value(QStringLiteral("access_downloads")).toBool();
+        const bool browsable = object.value(QStringLiteral("browsable")).toBool();
 
         QJsonArray appArray;
         for (const QString &app : apps) {
@@ -985,6 +1002,7 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("access_desktop"), accessDesktop);
         routine.insert(QStringLiteral("access_documents"), accessDocuments);
         routine.insert(QStringLiteral("access_downloads"), accessDownloads);
+        routine.insert(QStringLiteral("browsable"), browsable);
         routine.insert(QStringLiteral("time_limit_minutes"), qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60)));
         routine.insert(QStringLiteral("min_time_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0)));
         routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
@@ -1530,6 +1548,7 @@ void RoutineManager::loadRoutines()
         routine.accessDesktop = object.value(QStringLiteral("access_desktop")).toBool();
         routine.accessDocuments = object.value(QStringLiteral("access_documents")).toBool();
         routine.accessDownloads = object.value(QStringLiteral("access_downloads")).toBool();
+        routine.browsable = object.value(QStringLiteral("browsable")).toBool();
         routine.timeLimitMinutes = qMax(1, object.value(QStringLiteral("time_limit_minutes")).toInt(60));
         routine.minTimeMinutes = qMax(0, object.value(QStringLiteral("min_time_minutes")).toInt(0));
         routine.networkLock = object.value(QStringLiteral("network_lock")).toBool(true);

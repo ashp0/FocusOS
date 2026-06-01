@@ -19,42 +19,19 @@ IdleMonitor::IdleMonitor(QObject *parent)
         qApp->installEventFilter(this);
     }
 
-    // Idle is application-wide but scoped to FocusOS having the focus: input to
-    // ANY FocusOS window (the shell, the Settings modal, the overlay) counts as
-    // activity, but we never go idle while the user is focused in a *different*
-    // application's window — they may be working there, not idle. When FocusOS
-    // regains focus the idle countdown restarts (and an idle pause resumes).
-    connect(qApp, &QGuiApplication::applicationStateChanged,
-            this, &IdleMonitor::onApplicationStateChanged);
-    if (focusOsIsActive()) {
-        m_timer.start();
-    }
-}
-
-bool IdleMonitor::focusOsIsActive() const
-{
-    // No QGuiApplication (e.g. headless test harness) → treat as active so the
-    // countdown still runs.
-    return !qApp || QGuiApplication::applicationState() == Qt::ApplicationActive;
-}
-
-void IdleMonitor::onApplicationStateChanged(Qt::ApplicationState state)
-{
-    if (state == Qt::ApplicationActive) {
-        // Focus is back within FocusOS. Clear any idle state, restart the
-        // countdown, and resume an idle-paused routine ("focus back in our
-        // window" is the resume trigger from Task 4).
-        clearIdleState();
-        if (!m_suppressed) {
-            m_timer.start();
-        }
-        emit resumeHint();
-    } else {
-        // The user moved to another application — they are not "idle" in the
-        // screensaver sense, so suppress the idle screen and stop the countdown.
-        clearIdleState();
-        m_timer.stop();
-    }
+    // Idle is application-wide: input to ANY FocusOS window (the shell, the
+    // Settings modal, the overlay) counts as activity via the event filter. We
+    // used to additionally gate the whole thing on FocusOS being the focused
+    // application (QGuiApplication::applicationState == Active), to avoid blanking
+    // while the user worked in another window. But on the bare kwin_wayland
+    // session the shell often never registers as "active" (the same unreliability
+    // the AmbientLayer wallpaper hit), so that gate left the screensaver dead: the
+    // countdown never started and goIdle()/goDeepIdle() always early-returned.
+    // On the home screen FocusOS owns the screen anyway, and while a routine is
+    // engaged idle detection is suppressed outright — so the focus gate bought us
+    // nothing real while breaking idle entirely. Drop it and run purely off input
+    // events + the suppression flag.
+    m_timer.start();
 }
 
 void IdleMonitor::setTimeoutMs(int ms)
@@ -94,7 +71,7 @@ void IdleMonitor::setSuppressed(bool suppressed)
         // starfield never appears and display-sleep-on-idle never fires.
         m_timer.stop();
         clearIdleState();
-    } else if (focusOsIsActive()) {
+    } else {
         // Routine ended: resume normal idle detection on the home screen.
         m_timer.start();
     }
@@ -154,9 +131,8 @@ void IdleMonitor::clearIdleState()
 void IdleMonitor::goIdle()
 {
     // Never go idle while suppressed (a routine is engaged): a focused, idle
-    // user is working, not away. Also only ever show idle when FocusOS itself is
-    // the focused application.
-    if (m_suppressed || !focusOsIsActive()) {
+    // user is working, not away.
+    if (m_suppressed) {
         return;
     }
     if (!m_idle) {
@@ -169,7 +145,7 @@ void IdleMonitor::goIdle()
 
 void IdleMonitor::goDeepIdle()
 {
-    if (m_suppressed || !focusOsIsActive() || !m_idle) {
+    if (m_suppressed || !m_idle) {
         return;
     }
     if (!m_deepIdle) {

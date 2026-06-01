@@ -67,6 +67,7 @@ Item {
             "access_desktop": Boolean(routine.access_desktop),
             "access_documents": Boolean(routine.access_documents),
             "access_downloads": Boolean(routine.access_downloads),
+            "browsable": Boolean(routine.browsable),
             "time_limit_minutes": Math.max(1, Number(routine.time_limit_minutes || 60)),
             "min_time_minutes": Math.max(0, Number(routine.min_time_minutes || 0)),
             "network_lock": routine.network_lock === undefined ? true : Boolean(routine.network_lock),
@@ -159,6 +160,7 @@ Item {
             "access_desktop": false,
             "access_documents": false,
             "access_downloads": false,
+            "browsable": false,
             "time_limit_minutes": 60,
             "min_time_minutes": 0,
             "network_lock": true,
@@ -1267,15 +1269,61 @@ Item {
                                             Item { Layout.fillWidth: true }
                                         }
 
-                                        // File access: which folders this routine may browse mid-session
-                                        // via the file browser (📁 FILES). The standard folders are
-                                        // opt-in; the custom access folder below is always browsable.
+                                        // Mid-session file access. Off by default: the routine offers
+                                        // only the standard native "open file" picker. Turn BROWSE MENU
+                                        // on to also expose the in-app folder browser ("browse computer")
+                                        // in the bottom bar, jailed to the folders chosen below + the
+                                        // optional access folder.
                                         RowLayout {
                                             Layout.fillWidth: true
                                             spacing: 10
 
                                             Text {
-                                                text: "BROWSABLE"
+                                                text: "BROWSE MENU"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            Rectangle {
+                                                id: browseToggle
+                                                property bool chosen: Boolean(routineCard.modelData.browsable)
+                                                Layout.preferredWidth: 124
+                                                Layout.preferredHeight: 34
+                                                color: chosen ? "#1f1a12" : Theme.voidColor
+                                                border.width: 1
+                                                border.color: chosen ? Theme.gold : Theme.goldDim
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: browseToggle.chosen ? "● ON" : "OFF"
+                                                    color: browseToggle.chosen ? Theme.gold : Theme.textDim
+                                                    font.family: root.headerFont
+                                                    font.pixelSize: 10
+                                                    font.letterSpacing: 0
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.updateRoutineField(routineCard.index, "browsable", !browseToggle.chosen)
+                                                }
+                                            }
+
+                                            Item { Layout.fillWidth: true }
+                                        }
+
+                                        // Which standard folders the in-app browser may reach (only
+                                        // relevant when BROWSE MENU is on). The access folder below is
+                                        // always reachable when set.
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            Text {
+                                                text: "↳ FOLDERS"
                                                 color: Theme.goldDim
                                                 font.family: root.headerFont
                                                 font.pixelSize: 12
@@ -2104,10 +2152,23 @@ Item {
                 }
 
                 // ─── SYSTEM tab ────────────────────────────────────────
-                ColumnLayout {
-                    id: systemTab
+                // The SYSTEM tab stacks many sections (update, probation, build
+                // log, session recovery, account, startup script) — more than fits
+                // the modal height. Wrap it in a Flickable so the lower sections,
+                // including the startup-script editor and its SAVE button, can be
+                // scrolled into view.
+                Flickable {
+                    id: systemTabFlick
                     visible: root.activeTab === 5
                     anchors.fill: parent
+                    clip: true
+                    contentWidth: width
+                    contentHeight: systemTab.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+
+                ColumnLayout {
+                    id: systemTab
+                    width: systemTabFlick.width
                     spacing: 12
 
                     function formatProbation(seconds) {
@@ -2231,7 +2292,7 @@ Item {
                     // Build log
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.preferredHeight: 200
                         visible: updater.supported && updater.log.length > 0
                         color: Theme.voidColor
                         border.width: 1
@@ -2433,7 +2494,10 @@ Item {
                         }
                     }
 
-                    Item { Layout.fillHeight: true }
+                    // Bottom padding so the SAVE button clears the modal edge
+                    // when scrolled fully down.
+                    Item { Layout.preferredHeight: 8 }
+                }
                 }
 	            }
 	        }

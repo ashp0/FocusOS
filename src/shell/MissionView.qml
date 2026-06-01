@@ -565,37 +565,10 @@ Item {
                 }
             }
 
-            // Quick-open a single known document without navigating folders — the
-            // fast path that doesn't make you double-click through the browser.
-            // The file manager is killed during a routine, so this native picker
-            // (executables / .desktop refused) is the only direct way to reach a
-            // reference file the user didn't pre-load. Folder browsing lives in the
-            // "📁 FILES" button in the bottom bar.
-            Rectangle {
-                width: 168
-                height: 40
-                color: openDocHover.containsMouse ? Theme.steel : "#33141420"
-                border.width: 1
-                border.color: openDocHover.containsMouse ? Theme.gold : Theme.goldDim
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "📄 OPEN DOC"
-                    color: openDocHover.containsMouse ? Theme.gold : Theme.goldDim
-                    font.family: root.headerFont
-                    font.pixelSize: 13
-                    font.letterSpacing: 0
-                }
-
-                MouseArea {
-                    id: openDocHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: routineManager.openDocumentInSession()
-                }
-            }
-
+            // File access during a routine lives in the bottom bar, not here:
+            // by default the standard native "open file" picker, or — when the
+            // routine has its BROWSE MENU toggle on — the in-app folder browser
+            // ("browse computer"). See ActivitiesPanel's bottom-right button.
             Rectangle {
                 width: 160
                 height: 40

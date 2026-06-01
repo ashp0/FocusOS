@@ -1003,11 +1003,13 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
 
-                // In-app file browser — the mid-session way to reach a document.
-                // Sits beside Settings; jailed to the routine's allowed folders.
+                // Mid-session file access. By default this is the standard native
+                // "open file" picker (📄 OPEN FILE). Routines with their BROWSE
+                // MENU toggle on instead get the in-app folder browser (📁 BROWSE
+                // COMPUTER), jailed to the routine's allowed folders.
                 Rectangle {
                     visible: routineManager.active
-                    width: 96
+                    width: routineManager.activeRoutineBrowsable ? 156 : 110
                     height: 28
                     color: filesMouse.containsMouse ? Theme.steel : "transparent"
                     border.width: 1
@@ -1015,7 +1017,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "📁 FILES"
+                        text: routineManager.activeRoutineBrowsable ? "📁 BROWSE COMPUTER" : "📄 OPEN FILE"
                         color: filesMouse.containsMouse ? Theme.goldDim : Theme.textDim
                         elide: Text.ElideRight
                         font.family: root.headerFont
@@ -1028,7 +1030,13 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.openFilesRequested()
+                        onClicked: {
+                            if (routineManager.activeRoutineBrowsable) {
+                                root.openFilesRequested()
+                            } else {
+                                routineManager.openDocumentInSession()
+                            }
+                        }
                     }
                 }
 

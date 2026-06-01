@@ -556,8 +556,9 @@ void MusicEngine::seekToInterestingOffset()
     }
 
     const qint64 durationMs = m_player.duration();
-    const qint64 nineMinutesMs = 9LL * 60 * 1000;
-    if (durationMs < nineMinutesMs) {
+    const qint64 tenMinutesMs = 10LL * 60 * 1000;
+    if (durationMs <= tenMinutesMs) {
+        // Short enough to play from the top.
         m_seekedThisSource = true;
         return;
     }
