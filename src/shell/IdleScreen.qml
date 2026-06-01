@@ -19,6 +19,11 @@ Item {
     StarField {
         anchors.fill: parent
         visible: !idleMonitor.deepIdle
+        // The screensaver must animate even when the bare-session shell doesn't
+        // report itself as the active application (a routine isn't engaged here,
+        // so FocusOS owns the screen anyway). Without this the field froze on the
+        // iMac. It still stops at deep idle via `visible` above.
+        ignoreApplicationActive: true
     }
 
     MouseArea {

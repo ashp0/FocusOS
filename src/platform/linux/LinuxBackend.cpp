@@ -798,6 +798,15 @@ void LinuxBackend::terminateApps(const QStringList &appPaths)
     m_sessionAllowedProcessNames.clear();
 }
 
+void LinuxBackend::endRoutineLockdown()
+{
+    // Stand down the launcher-killing sweep without touching the routine's apps
+    // (they stay open for the finish prompt / admin desktop). The extension
+    // presence watchdog keeps running on its own if a network lock is still live.
+    stopLockdownWatchdog();
+    m_sessionAllowedProcessNames.clear();
+}
+
 void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
 {
     // Walk /proc and SIGTERM every GUI app the current user is running that

@@ -627,7 +627,7 @@ Item {
     Rectangle {
         id: modal
         width: root.adminUnlocked ? Math.min(1040, parent.width - 72) : Math.min(520, parent.width - 48)
-        height: root.adminUnlocked ? Math.min(760, parent.height - 72) : (totpEngine.firstLaunch ? Math.min(680, parent.height - 48) : 322)
+        height: root.adminUnlocked ? Math.min(760, parent.height - 72) : (totpEngine.firstLaunch ? Math.min(680, parent.height - 48) : (totpEngine.secretMissing ? Math.min(460, parent.height - 48) : 322))
         anchors.centerIn: parent
         color: Theme.iron
         border.width: 1
@@ -760,7 +760,114 @@ Item {
             anchors.bottom: parent.bottom
             anchors.margins: 22
 
+            // ── Recovery: enrolled but the secret file is missing/corrupt ──
+            // Without this the normal code field below would reject every code
+            // (there's no secret to check against) and the user would be locked
+            // out. Let them paste the secret they saved (password manager /
+            // printed QR) plus a current code to re-adopt it.
             ColumnLayout {
+                visible: totpEngine.secretMissing
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 14
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "══ ■ SECRET RECOVERY ■ ══"
+                    color: Theme.goldDim
+                    horizontalAlignment: Text.AlignHCenter
+                    font.family: root.headerFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "THE STORED 2FA SECRET IS MISSING OR CORRUPT. PASTE THE SETUP KEY YOU SAVED, THEN ENTER A CURRENT 6-DIGIT CODE TO RESTORE ACCESS."
+                    color: Theme.textDim
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    font.family: root.bodyFont
+                    font.pixelSize: 11
+                    font.letterSpacing: 0
+                }
+
+                TextField {
+                    id: recoverySecretField
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 48
+                    color: Theme.textPrimary
+                    selectedTextColor: Theme.voidColor
+                    selectionColor: Theme.gold
+                    placeholderText: "SETUP KEY (BASE32)"
+                    placeholderTextColor: Theme.textGhost
+                    font.family: root.bodyFont
+                    font.pixelSize: 14
+                    font.letterSpacing: 0
+                    background: Rectangle {
+                        color: Theme.steel
+                        border.width: 1
+                        border.color: recoverySecretField.activeFocus ? Theme.gold : Theme.goldDim
+                    }
+                    onTextChanged: root.errorText = ""
+                }
+
+                TextField {
+                    id: recoveryCodeField
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 210
+                    Layout.preferredHeight: 52
+                    maximumLength: 6
+                    horizontalAlignment: TextInput.AlignHCenter
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    color: Theme.textPrimary
+                    selectedTextColor: Theme.voidColor
+                    selectionColor: Theme.gold
+                    placeholderText: "000000"
+                    placeholderTextColor: Theme.textGhost
+                    font.family: root.headerFont
+                    font.pixelSize: 24
+                    font.letterSpacing: 0
+                    validator: RegularExpressionValidator { regularExpression: /[0-9]{0,6}/ }
+                    background: Rectangle {
+                        color: Theme.steel
+                        border.width: 1
+                        border.color: root.errorText.length > 0 ? Theme.crimsonHot : (recoveryCodeField.activeFocus ? Theme.gold : Theme.goldDim)
+                    }
+                    onTextChanged: {
+                        root.errorText = ""
+                        if (text.length === 6) {
+                            if (totpEngine.restoreSecret(recoverySecretField.text, text)) {
+                                recoverySecretField.text = ""
+                                text = ""
+                                routineManager.unlockOtherAccess()
+                                root.adminUnlocked = true
+                                root.loadRoutineDrafts()
+                                root.startupScriptDraft = systemStatus.readStartupScript()
+                                root.startupSaveStatus = ""
+                                root.activeTab = 0
+                            } else {
+                                root.errorText = "RECOVERY FAILED — CHECK KEY AND CODE"
+                                text = ""
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: root.errorText
+                    color: Theme.crimsonHot
+                    horizontalAlignment: Text.AlignHCenter
+                    font.family: root.headerFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                }
+            }
+
+            ColumnLayout {
+                visible: !totpEngine.secretMissing
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter

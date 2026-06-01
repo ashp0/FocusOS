@@ -121,7 +121,12 @@ Item {
     AmbientLayer {
         anchors.fill: parent
         z: 0
-        showMedia: !routineManager.active
+        // Suppressed during a routine (a distraction) and once the idle
+        // screensaver takes over — otherwise the inspiration MediaPlayer keeps
+        // decoding video behind the opaque black IdleScreen, burning CPU/GPU on
+        // what is meant to be a power-saving screensaver. showMedia:false tears
+        // the player down (see AmbientLayer).
+        showMedia: !routineManager.active && !idleMonitor.idle
     }
 
     Rectangle {

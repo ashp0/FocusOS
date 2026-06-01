@@ -13,6 +13,12 @@ public:
     virtual bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) = 0;
     virtual bool openUrls(const QStringList &urls, QString *errorMessage = nullptr) = 0;
     virtual void terminateApps(const QStringList &appPaths) = 0;
+    // Stop the routine lockdown watchdog (the launcher / spotlight kill sweep)
+    // WITHOUT terminating the routine's own apps. Called when a routine ends or
+    // admin (TOTP) access is granted, so launchers and the "Access Desktop"
+    // path work again — otherwise the sweep keeps pkill'ing plasmashell the
+    // instant it comes up. No-op where unsupported.
+    virtual void endRoutineLockdown() {}
     // Strict enforcement (Task 1): quit the user's other running GUI apps when a
     // routine begins, so nothing but the routine/always-allowed surfaces remain.
     // allowedCommandLines = the routine's apps + the always-allowed list; the

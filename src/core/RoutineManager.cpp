@@ -647,6 +647,9 @@ void RoutineManager::endActiveRoutine()
         m_activeRoutineId.clear();
         m_activeStartedAt = {};
         if (m_backend) {
+            // Open-ended momentum carried the lockdown sweep over from the
+            // original routine; stand it down now so launchers work at home.
+            m_backend->endRoutineLockdown();
             m_backend->restoreShellPlacement();
         }
         updateDisplaySleepInhibit();
@@ -676,6 +679,9 @@ void RoutineManager::endActiveRoutine()
 
     if (m_backend) {
         m_backend->dropNetworkPolicy();
+        // Stand down the launcher-killing sweep — the routine is over and the
+        // finish prompt is a FocusOS-owned screen.
+        m_backend->endRoutineLockdown();
         // Bring the user back to FocusOS's home workspace so the completion
         // prompt isn't sitting on top of the Focus apps the user just left.
         m_backend->restoreShellPlacement();
@@ -838,6 +844,10 @@ void RoutineManager::unlockOtherAccess()
 
     if (m_backend) {
         m_backend->dropNetworkPolicy();
+        // Admin access is full control: stop the launcher-killing sweep so the
+        // "Access Desktop" path (plasmashell/krunner/terminal) isn't pkilled the
+        // instant it comes up.
+        m_backend->endRoutineLockdown();
     }
 
     if (active()) {
@@ -1806,6 +1816,7 @@ void RoutineManager::onRoutineExpired()
 
     if (m_backend) {
         m_backend->dropNetworkPolicy();
+        m_backend->endRoutineLockdown();
         m_backend->restoreShellPlacement();
     }
     // Natural expiry is a legitimate end — drop the checkpoint.

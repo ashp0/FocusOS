@@ -49,10 +49,19 @@ Item {
     // 60 while halving render cost on the idle screen.
     property real frameInterval: 1.0 / 30.0
 
+    // Drop the Qt.application.active term from the animation gate when set. On the
+    // bare kwin_wayland session the shell often never registers as "active" (the
+    // same unreliability that made IdleMonitor stop gating on applicationState —
+    // see IdleMonitor.cpp), which froze the idle-screen starfield: iTime never
+    // advanced, so the screensaver showed static stars on black. The idle screen
+    // sets this true so it animates whenever it is visible; the home backdrop
+    // leaves it false to keep pausing when FocusOS genuinely loses focus.
+    property bool ignoreApplicationActive: false
+
     // Stop rendering when the app is unfocused/minimised, this layer is hidden
     // or transparent — so the screensaver burns nothing behind a focused routine
     // app or once the panel has been put to sleep.
-    property bool animationActive: Qt.application.active &&
+    property bool animationActive: (root.ignoreApplicationActive || Qt.application.active) &&
                                    root.visible &&
                                    root.opacity > 0.01 &&
                                    (Window.window ? Window.window.visibility !== Window.Minimized

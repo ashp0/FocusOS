@@ -486,12 +486,29 @@ void TOTPEngine::ensureSecret()
         m_secret = QString::fromUtf8(file.readAll()).trimmed();
     }
 
+    const bool enrolled = QFileInfo::exists(enrollmentPath());
+
     if (m_secret.isEmpty()) {
+        if (enrolled) {
+            // Already paired, but the secret file is gone/empty/truncated.
+            // Minting a fresh secret here would brick the user out of admin for
+            // good — their authenticator still holds the OLD secret, and the
+            // permanent install masks the TTYs, so there'd be no way back in
+            // short of external boot media. Surface a recovery state instead and
+            // let restoreSecret() take the secret the user saved elsewhere.
+            m_secretMissing = true;
+            m_firstLaunch = false;
+            m_enrollmentUri.clear();
+            emit secretChanged();
+            return;
+        }
+        // Genuine first run: generate and enter the enrollment (QR) flow.
         m_secret = generateSecret();
         persistSecret();
     }
 
-    m_firstLaunch = !QFileInfo::exists(enrollmentPath());
+    m_secretMissing = false;
+    m_firstLaunch = !enrolled;
 
     const QString issuer = QStringLiteral("FocusOS");
     const QString label = QStringLiteral("FocusOS");
@@ -500,6 +517,60 @@ void TOTPEngine::ensureSecret()
              m_secret,
              QString::fromLatin1(QUrl::toPercentEncoding(issuer)));
     emit secretChanged();
+}
+
+bool TOTPEngine::secretMissing() const
+{
+    return m_secretMissing;
+}
+
+bool TOTPEngine::restoreSecret(const QString &base32Secret, const QString &code)
+{
+    // base32Decode already ignores spaces / non-alphabet characters, so a pasted
+    // grouped secret ("ABCD EFGH …") decodes cleanly. Require a sane key length.
+    const QByteArray key = base32Decode(base32Secret);
+    if (key.size() < 10) {
+        return false;
+    }
+    const QString canonical = base32Encode(key);
+
+    // Only adopt the secret if the user's current code validates against it —
+    // a typo'd paste must not silently overwrite into a new lockout.
+    const QString normalizedCode = code.trimmed();
+    if (normalizedCode.size() != 6) {
+        return false;
+    }
+    const quint64 currentStep = static_cast<quint64>(QDateTime::currentSecsSinceEpoch() / 30);
+    bool match = false;
+    for (qint64 drift = -1; drift <= 1 && !match; ++drift) {
+        const quint64 step = static_cast<quint64>(static_cast<qint64>(currentStep) + drift);
+        if (generateCode(canonical, step) == normalizedCode) {
+            match = true;
+        }
+    }
+    if (!match) {
+        return false;
+    }
+
+    m_secret = canonical;
+    persistSecret();
+    QSaveFile enrolledFile(enrollmentPath());
+    if (enrolledFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        enrolledFile.write("enrolled\n");
+        enrolledFile.commit();
+    }
+    m_secretMissing = false;
+    m_firstLaunch = false;
+
+    const QString issuer = QStringLiteral("FocusOS");
+    const QString label = QStringLiteral("FocusOS");
+    m_enrollmentUri = QStringLiteral("otpauth://totp/%1?secret=%2&issuer=%3")
+        .arg(QString::fromLatin1(QUrl::toPercentEncoding(label)),
+             m_secret,
+             QString::fromLatin1(QUrl::toPercentEncoding(issuer)));
+    rebuildQrCode();
+    emit secretChanged();
+    return true;
 }
 
 void TOTPEngine::rebuildQrCode()
