@@ -22,7 +22,7 @@ export KWIN_COMPOSE="${KWIN_COMPOSE:-O2}"
 
 run_session() {
     if [[ -x "$WATCHDOG" ]]; then
-        exec bash "$WATCHDOG" "$FOCUSOS_BIN"
+        exec bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
     else
         exec "$FOCUSOS_BIN"
     fi
@@ -30,10 +30,17 @@ run_session() {
 
 case "$FOCUSOS_MODE" in
     kwin)
+        # kwin_wayland's --exit-with-session takes a SINGLE value that it
+        # word-splits into command + args. Passing the watchdog + its flags as
+        # separate argv words (the old form) made kwin reject `--kiosk`/`--binary`
+        # as its own unknown options and abort instantly — black screen → login.
+        # Quote the whole command into one --exit-with-session value instead.
         if [[ -x "$WATCHDOG" ]]; then
-            exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
+            exec dbus-run-session -- kwin_wayland --xwayland \
+                --exit-with-session="bash $WATCHDOG --kiosk --binary $FOCUSOS_BIN"
         else
-            exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session "$FOCUSOS_BIN"
+            exec dbus-run-session -- kwin_wayland --xwayland \
+                --exit-with-session="$FOCUSOS_BIN"
         fi
         ;;
     direct)
