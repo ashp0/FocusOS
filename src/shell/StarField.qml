@@ -54,13 +54,17 @@ Item {
         readonly property real zNear: 0.10
         readonly property real zFar: 1.0
 
-        readonly property var palette: ["#e8dcc8", "#ffffff", "#c9a84c", "#9eb8c0", "#7da7d9", "#d6c2ff"]
+        // Whether the current seed came out dense — set in seed(), read by onPaint
+        // to decide if the galactic-core glow is drawn. A sparse seed skips it.
+        property bool dense: false
+
+        readonly property var palette: ["#e8dcc8", "#ffffff", "#fff4d6", "#c9a84c", "#9eb8c0", "#7da7d9", "#5e8fd6", "#d6c2ff", "#b69cff"]
 
         // A star's fixed direction from the vanishing point (ux, uy in [-1, 1])
         // plus a depth z. Screen position is centre + (u / z) * halfExtent, so as
         // z shrinks the star slides outward and accelerates — the fly-through.
         function makeStar(randomDepth) {
-            const isFlasher = Math.random() < 0.16
+            const isFlasher = Math.random() < 0.22
             // Bias direction away from dead-centre so stars don't pile up at the
             // vanishing point; magnitude shapes how quickly they reach an edge.
             const ux = (Math.random() * 2 - 1)
@@ -84,8 +88,14 @@ Item {
 
         function seed() {
             const area = Math.max(1, width * height)
-            const base = Math.max(120, Math.min(360, Math.round(area / 6200)))
-            const count = Math.max(24, Math.round(base * Math.max(0.05, root.densityScale)))
+            // Density varies run-to-run: sometimes a sparse sky, sometimes a dense
+            // galaxy. The squared random skews toward modest fields, with the
+            // occasional crowded one. densityScale still thins the light overlay
+            // drawn over the UI panels.
+            const variety = 0.3 + Math.random() * Math.random() * 2.0   // ~0.3 … 2.3
+            dense = variety > 1.1
+            const base = Math.max(90, Math.min(950, Math.round(area / 5200 * variety)))
+            const count = Math.max(36, Math.round(base * Math.max(0.05, root.densityScale)))
             const next = []
             for (let i = 0; i < count; ++i) {
                 next.push(makeStar(true))
@@ -135,6 +145,22 @@ Item {
             ctx.clearRect(0, 0, width, height)
             const cx = width / 2
             const cy = height / 2
+
+            // A faint warm glow at the vanishing point gives the field depth — the
+            // core of the galaxy we're flying toward. Only when this seed came out
+            // dense, and only on the full backdrop field (densityScale ~1); skipped
+            // on the thin overlay over the UI so it never washes out on-screen text.
+            if (dense && root.densityScale >= 0.9) {
+                const glowR = Math.max(width, height) * 0.45
+                const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR)
+                core.addColorStop(0, rgba("#c9a84c", 0.10 * root.fieldOpacity))
+                core.addColorStop(0.35, rgba("#7da7d9", 0.05 * root.fieldOpacity))
+                core.addColorStop(1, rgba("#7da7d9", 0))
+                ctx.fillStyle = core
+                ctx.beginPath()
+                ctx.arc(cx, cy, glowR, 0, Math.PI * 2)
+                ctx.fill()
+            }
 
             for (let i = 0; i < points.length; ++i) {
                 const p = points[i]

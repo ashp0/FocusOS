@@ -914,6 +914,10 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("description"), routine.description);
         object.insert(QStringLiteral("apps"), routine.apps);
         object.insert(QStringLiteral("allowed_urls"), routine.allowedUrls);
+        object.insert(QStringLiteral("access_folder"), routine.accessFolder);
+        object.insert(QStringLiteral("access_desktop"), routine.accessDesktop);
+        object.insert(QStringLiteral("access_documents"), routine.accessDocuments);
+        object.insert(QStringLiteral("access_downloads"), routine.accessDownloads);
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
@@ -956,6 +960,10 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         const QString description = object.value(QStringLiteral("description")).toString().trimmed();
         const QStringList apps = variantToStringList(object.value(QStringLiteral("apps")));
         const QStringList allowedUrls = variantToStringList(object.value(QStringLiteral("allowed_urls")));
+        const QString accessFolder = object.value(QStringLiteral("access_folder")).toString().trimmed();
+        const bool accessDesktop = object.value(QStringLiteral("access_desktop")).toBool();
+        const bool accessDocuments = object.value(QStringLiteral("access_documents")).toBool();
+        const bool accessDownloads = object.value(QStringLiteral("access_downloads")).toBool();
 
         QJsonArray appArray;
         for (const QString &app : apps) {
@@ -973,6 +981,10 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("description"), description);
         routine.insert(QStringLiteral("apps"), appArray);
         routine.insert(QStringLiteral("allowed_urls"), urlArray);
+        routine.insert(QStringLiteral("access_folder"), accessFolder);
+        routine.insert(QStringLiteral("access_desktop"), accessDesktop);
+        routine.insert(QStringLiteral("access_documents"), accessDocuments);
+        routine.insert(QStringLiteral("access_downloads"), accessDownloads);
         routine.insert(QStringLiteral("time_limit_minutes"), qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60)));
         routine.insert(QStringLiteral("min_time_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0)));
         routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
@@ -1171,10 +1183,10 @@ QString RoutineManager::pickApplication()
 QString RoutineManager::pickFile()
 {
     // A generic file picker for the "Open File" workflow. The selected path is
-    // added to a routine like any app entry; when the routine engages the backend
-    // hands the file to its default application (PDF reader, image viewer, office
-    // suite, video player, …) rather than trying to exec it. Any file type is
-    // allowed — no executable check — which keeps the routine list versatile.
+    // added to a routine like any app entry, or opened straight away mid-session;
+    // either way the backend hands the file to its default application (PDF
+    // reader, image viewer, office suite, video player, …) rather than exec'ing
+    // it. Any file type is allowed — no executable check.
     const QString documentFilter =
         QStringLiteral("Books & documents (*.pdf *.epub *.mobi *.azw3 *.djvu *.fb2 *.cbz *.cbr *.chm)");
 #if defined(Q_OS_MACOS)
@@ -1208,6 +1220,168 @@ QString RoutineManager::pickFile()
 #endif
 }
 
+QString RoutineManager::pickFolder()
+{
+    // Editor-side picker for a routine's optional extra access folder. Qt-drawn so
+    // hidden folders are reachable and the start dir is honoured.
+    const QString startDir = QDir::homePath();
+#if defined(Q_OS_MACOS)
+    return QFileDialog::getExistingDirectory(
+        nullptr, QStringLiteral("Select Access Folder"), startDir);
+#elif defined(Q_OS_LINUX)
+    QFileDialog dialog(nullptr, QStringLiteral("Select Access Folder"), startDir);
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setOption(QFileDialog::ShowDirsOnly, true);
+    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    dialog.setFilter(dialog.filter() | QDir::Hidden);
+    dialog.setSidebarUrls({ QUrl::fromLocalFile(QDir::homePath()) });
+    if (dialog.exec() != QDialog::Accepted) {
+        return {};
+    }
+    const QStringList selected = dialog.selectedFiles();
+    return selected.isEmpty() ? QString() : selected.first();
+#else
+    return {};
+#endif
+}
+
+QList<QPair<QString, QString>> RoutineManager::browseRootsInternal() const
+{
+    // The standard folders are opt-in: a routine only exposes the ones it enabled.
+    // The custom access folder, when set, is always browsable. Canonical paths so
+    // the jail check (isWithinBrowseRoots) compares apples to apples and symlinked
+    // roots resolve to their real targets.
+    QList<QPair<QString, QString>> roots;
+    auto add = [&roots](const QString &name, const QString &dir) {
+        if (dir.isEmpty()) {
+            return;
+        }
+        const QString canonical = QFileInfo(dir).canonicalFilePath();
+        if (canonical.isEmpty()) {
+            return; // doesn't exist / unreadable
+        }
+        for (const auto &existing : roots) {
+            if (existing.second == canonical) {
+                return; // de-dupe (e.g. a custom folder that is also Documents)
+            }
+        }
+        roots.append({name, canonical});
+    };
+
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    if (routineIndex < 0) {
+        return roots; // no active routine — nothing is browsable
+    }
+    const Routine &routine = m_routines.at(routineIndex);
+
+    if (routine.accessDesktop) {
+        add(QStringLiteral("DESKTOP"),
+            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation));
+    }
+    if (routine.accessDocuments) {
+        add(QStringLiteral("DOCUMENTS"),
+            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
+    }
+    if (routine.accessDownloads) {
+        add(QStringLiteral("DOWNLOADS"),
+            QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    }
+
+    const QString folder = routine.accessFolder.trimmed();
+    if (!folder.isEmpty()) {
+        add(QFileInfo(folder).fileName().toUpper(), folder);
+    }
+    return roots;
+}
+
+bool RoutineManager::isWithinBrowseRoots(const QString &path) const
+{
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    if (canonical.isEmpty()) {
+        return false;
+    }
+    const auto roots = browseRootsInternal();
+    for (const auto &root : roots) {
+        if (canonical == root.second
+                || canonical.startsWith(root.second + QLatin1Char('/'))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QVariantList RoutineManager::browseRoots() const
+{
+    QVariantList list;
+    const auto roots = browseRootsInternal();
+    for (const auto &root : roots) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), root.first);
+        entry.insert(QStringLiteral("path"), root.second);
+        list.append(entry);
+    }
+    return list;
+}
+
+QVariantList RoutineManager::listFolder(const QString &path) const
+{
+    QVariantList list;
+    if (!isWithinBrowseRoots(path)) {
+        return list; // refuse anything outside the jail
+    }
+
+    QDir dir(path);
+    const QFileInfoList entries = dir.entryInfoList(
+        QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
+        QDir::Name | QDir::DirsFirst | QDir::IgnoreCase);
+    for (const QFileInfo &info : entries) {
+        if (info.isHidden()) {
+            continue;
+        }
+        QVariantMap entry;
+        entry.insert(QStringLiteral("name"), info.fileName());
+        entry.insert(QStringLiteral("path"), info.absoluteFilePath());
+        entry.insert(QStringLiteral("isDir"), info.isDir());
+        entry.insert(QStringLiteral("suffix"), info.suffix().toLower());
+        list.append(entry);
+    }
+    return list;
+}
+
+QString RoutineManager::openFileInSession(const QString &path)
+{
+    if (!m_backend) {
+        return {};
+    }
+
+    // Jail first: the browser only ever hands us paths it listed, but a hostile or
+    // stale path must not slip past — only files inside an allowed root open.
+    if (!isWithinBrowseRoots(path)) {
+        setStatusMessage(QStringLiteral("THAT FILE IS OUTSIDE THE ALLOWED FOLDERS"));
+        return {};
+    }
+
+    // Guard the distraction-free environment: opening *documents* is the point,
+    // but an executable or a .desktop entry would let this become a launcher —
+    // exactly what the lockdown watchdog kills file managers to prevent. Refuse
+    // those so the door stays only as wide as "open my file".
+    const QFileInfo info(path);
+    if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0
+            || info.isExecutable()) {
+        setStatusMessage(QStringLiteral("ONLY DOCUMENTS CAN BE OPENED HERE — NOT APPS OR EXECUTABLES"));
+        return {};
+    }
+
+    QString error;
+    if (!m_backend->launchApps({path}, &error)) {
+        setStatusMessage(error.isEmpty() ? QStringLiteral("COULDN'T OPEN THAT FILE") : error);
+        return {};
+    }
+
+    setStatusMessage(QStringLiteral("OPENED %1").arg(info.fileName()));
+    return path;
+}
+
 QString RoutineManager::openDocumentInSession()
 {
     if (!m_backend) {
@@ -1219,9 +1393,9 @@ QString RoutineManager::openDocumentInSession()
         return {}; // cancelled — no message, the user backed out deliberately.
     }
 
-    // Guard the distraction-free environment: opening *documents* is the point,
-    // but an executable or a .desktop entry would let this picker launch
-    // arbitrary apps — exactly what the lockdown watchdog kills file managers to
+    // Same guard as the browser's openFileInSession: opening *documents* is the
+    // point, but an executable or a .desktop entry would let this become a
+    // launcher — exactly what the lockdown watchdog kills file managers to
     // prevent. Refuse those so the door stays only as wide as "open my file".
     const QFileInfo info(path);
     if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0
@@ -1352,6 +1526,10 @@ void RoutineManager::loadRoutines()
         routine.description = object.value(QStringLiteral("description")).toString().trimmed();
         routine.apps = jsonArrayToStringList(object.value(QStringLiteral("apps")).toArray());
         routine.allowedUrls = jsonArrayToStringList(object.value(QStringLiteral("allowed_urls")).toArray());
+        routine.accessFolder = object.value(QStringLiteral("access_folder")).toString().trimmed();
+        routine.accessDesktop = object.value(QStringLiteral("access_desktop")).toBool();
+        routine.accessDocuments = object.value(QStringLiteral("access_documents")).toBool();
+        routine.accessDownloads = object.value(QStringLiteral("access_downloads")).toBool();
         routine.timeLimitMinutes = qMax(1, object.value(QStringLiteral("time_limit_minutes")).toInt(60));
         routine.minTimeMinutes = qMax(0, object.value(QStringLiteral("min_time_minutes")).toInt(0));
         routine.networkLock = object.value(QStringLiteral("network_lock")).toBool(true);

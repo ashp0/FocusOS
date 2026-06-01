@@ -126,6 +126,7 @@ qt_add_qml_module(focusos
         src/shell/MissionView.qml
         src/shell/NotesDrawer.qml
         src/shell/UnlockModal.qml
+        src/shell/FileBrowser.qml
         src/shell/ProgressOverlay.qml
     RESOURCES
         assets/qml/theme.js

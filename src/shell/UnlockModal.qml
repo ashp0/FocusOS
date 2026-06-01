@@ -59,6 +59,10 @@ Item {
             "description": String(routine.description || ""),
             "apps": toArray(routine.apps),
             "allowed_urls": toArray(routine.allowed_urls),
+            "access_folder": String(routine.access_folder || ""),
+            "access_desktop": Boolean(routine.access_desktop),
+            "access_documents": Boolean(routine.access_documents),
+            "access_downloads": Boolean(routine.access_downloads),
             "time_limit_minutes": Math.max(1, Number(routine.time_limit_minutes || 60)),
             "min_time_minutes": Math.max(0, Number(routine.min_time_minutes || 0)),
             "network_lock": routine.network_lock === undefined ? true : Boolean(routine.network_lock),
@@ -145,6 +149,10 @@ Item {
             "description": "",
             "apps": [],
             "allowed_urls": [],
+            "access_folder": "",
+            "access_desktop": false,
+            "access_documents": false,
+            "access_downloads": false,
             "time_limit_minutes": 60,
             "min_time_minutes": 0,
             "network_lock": true,
@@ -181,6 +189,17 @@ Item {
         }
         const drafts = cloneDrafts()
         drafts[routineIndex].apps.push(path)
+        routineDrafts = drafts
+    }
+
+    // Set/clear a routine's optional access folder. Reassigns routineDrafts so the
+    // editor's displayed path refreshes after the folder picker returns.
+    function setRoutineFolder(routineIndex, path) {
+        if (routineIndex < 0 || routineIndex >= routineDrafts.length) {
+            return
+        }
+        const drafts = cloneDrafts()
+        drafts[routineIndex].access_folder = String(path || "")
         routineDrafts = drafts
     }
 
@@ -1223,9 +1242,9 @@ Item {
                                                 }
                                             }
 
-                                            // Open-file workflow: add any file (PDF, ebook, image,
+                                            // Open-file workflow: pin any file (PDF, ebook, image,
                                             // office doc, video…) that opens in its default app when
-                                            // the routine engages.
+                                            // the routine engages — no folder navigation needed.
                                             AdminButton {
                                                 Layout.preferredWidth: 164
                                                 Layout.preferredHeight: 34
@@ -1238,6 +1257,107 @@ Item {
                                             }
 
                                             Item { Layout.fillWidth: true }
+                                        }
+
+                                        // File access: which folders this routine may browse mid-session
+                                        // via the file browser (📁 FILES). The standard folders are
+                                        // opt-in; the custom access folder below is always browsable.
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            Text {
+                                                text: "BROWSABLE"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            Repeater {
+                                                model: [
+                                                    { key: "access_desktop", label: "DESKTOP" },
+                                                    { key: "access_documents", label: "DOCUMENTS" },
+                                                    { key: "access_downloads", label: "DOWNLOADS" }
+                                                ]
+
+                                                delegate: Rectangle {
+                                                    id: folderChip
+                                                    required property var modelData
+                                                    property bool chosen: Boolean(routineCard.modelData[modelData.key])
+                                                    Layout.preferredWidth: 124
+                                                    Layout.preferredHeight: 34
+                                                    color: chosen ? "#1f1a12" : Theme.voidColor
+                                                    border.width: 1
+                                                    border.color: chosen ? Theme.gold : Theme.goldDim
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: (folderChip.chosen ? "● " : "") + folderChip.modelData.label
+                                                        color: folderChip.chosen ? Theme.gold : Theme.textDim
+                                                        elide: Text.ElideRight
+                                                        font.family: root.headerFont
+                                                        font.pixelSize: 10
+                                                        font.letterSpacing: 0
+                                                    }
+
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: root.updateRoutineField(routineCard.index, folderChip.modelData.key, !folderChip.chosen)
+                                                    }
+                                                }
+                                            }
+
+                                            Item { Layout.fillWidth: true }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            Text {
+                                                text: "ACCESS FOLDER"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                elide: Text.ElideMiddle
+                                                text: routineCard.modelData.access_folder && routineCard.modelData.access_folder.length > 0
+                                                      ? routineCard.modelData.access_folder
+                                                      : "Optional extra folder — always browsable when set"
+                                                color: routineCard.modelData.access_folder && routineCard.modelData.access_folder.length > 0
+                                                       ? Theme.textPrimary : Theme.textDim
+                                                font.family: root.bodyFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            AdminButton {
+                                                Layout.preferredWidth: 100
+                                                Layout.preferredHeight: 34
+                                                label: "BROWSE…"
+                                                danger: false
+                                                onClicked: {
+                                                    const path = routineManager.pickFolder()
+                                                    if (path && path.length > 0) {
+                                                        root.setRoutineFolder(routineCard.index, path)
+                                                    }
+                                                }
+                                            }
+
+                                            AdminButton {
+                                                Layout.preferredWidth: 40
+                                                Layout.preferredHeight: 34
+                                                label: "✕"
+                                                actionEnabled: routineCard.modelData.access_folder && routineCard.modelData.access_folder.length > 0
+                                                onClicked: root.setRoutineFolder(routineCard.index, "")
+                                            }
                                         }
 
                                         RowLayout {

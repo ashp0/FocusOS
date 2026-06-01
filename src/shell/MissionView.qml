@@ -523,10 +523,12 @@ Item {
                 }
             }
 
-            // Open a document the user didn't pre-load into the routine. The file
-            // manager is killed during a session, so this is how a writer or
-            // researcher reaches another file — intentionally, one document at a
-            // time, with no launcher and no path to the open web.
+            // Quick-open a single known document without navigating folders — the
+            // fast path that doesn't make you double-click through the browser.
+            // The file manager is killed during a routine, so this native picker
+            // (executables / .desktop refused) is the only direct way to reach a
+            // reference file the user didn't pre-load. Folder browsing lives in the
+            // "📁 FILES" button in the bottom bar.
             Rectangle {
                 width: 168
                 height: 40

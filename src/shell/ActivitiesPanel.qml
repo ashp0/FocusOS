@@ -13,6 +13,9 @@ Item {
     signal unlockRequested()
     signal editRoutinesRequested()
     signal showSidebar()
+    // Routed to Main's in-app file browser overlay — the mid-session way to reach
+    // a document, jailed to the routine's allowed folders.
+    signal openFilesRequested()
     // Routed to Main's engage-prep overlay: it gates full-access routines behind
     // a TOTP code (Task 4) and shows the "closing other apps" warning (Task 1)
     // before actually calling routineManager.engage().
@@ -999,6 +1002,35 @@ Item {
                     anchors.rightMargin: 22
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
+
+                // In-app file browser — the mid-session way to reach a document.
+                // Sits beside Settings; jailed to the routine's allowed folders.
+                Rectangle {
+                    visible: routineManager.active
+                    width: 96
+                    height: 28
+                    color: filesMouse.containsMouse ? Theme.steel : "transparent"
+                    border.width: 1
+                    border.color: filesMouse.containsMouse ? Theme.goldDim : Theme.textGhost
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "📁 FILES"
+                        color: filesMouse.containsMouse ? Theme.goldDim : Theme.textDim
+                        elide: Text.ElideRight
+                        font.family: root.headerFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    MouseArea {
+                        id: filesMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.openFilesRequested()
+                    }
+                }
 
                 Rectangle {
                     visible: systemStatus.batteryPercent >= 0

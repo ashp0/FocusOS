@@ -16,6 +16,14 @@ struct Routine
     QString description;
     QStringList apps;
     QStringList allowedUrls;
+    // Optional per-routine folder the in-app file browser may reach. Always
+    // browsable when set. Empty = none.
+    QString accessFolder;
+    // The standard user folders are NOT browsable by default — each routine opts
+    // in to the ones it wants reachable from the in-app file browser.
+    bool accessDesktop = false;
+    bool accessDocuments = false;
+    bool accessDownloads = false;
     int timeLimitMinutes = 0;
     int minTimeMinutes = 0;
     bool networkLock = true;
@@ -155,15 +163,35 @@ public:
     Q_INVOKABLE bool saveRoutines(const QVariantList &routines);
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
     Q_INVOKABLE QString pickApplication();
+    // Generic file picker for the editor's "+ OPEN FILE" workflow and the
+    // mid-session quick-open: returns a chosen file path (any type), or empty on
+    // cancel. The selected file later opens in its default application.
     Q_INVOKABLE QString pickFile();
-    // Open a document mid-session. The file manager is killed during a routine
-    // (it can launch arbitrary apps), which would otherwise leave a writer or
-    // researcher unable to reach a reference document they didn't pre-load. This
-    // is the intentional, mindful alternative: a one-shot picker that opens the
-    // chosen file in its viewer, and refuses executables / .desktop launchers so
-    // it can't become an escape hatch out of the locked-down environment.
-    // Returns the opened path, or empty on cancel / rejection.
+    // Folder picker for the routine editor's optional per-routine "access folder".
+    // Returns the chosen directory, or empty on cancel.
+    Q_INVOKABLE QString pickFolder();
+    // Mid-session quick-open: fire a native file dialog and open the chosen
+    // document straight away, no folder navigation needed. Kept alongside the
+    // in-app browser because picking one known file directly (no double-click
+    // through folders) is the fast path. Refuses executables / .desktop launchers.
     Q_INVOKABLE QString openDocumentInSession();
+    // The in-app file browser's allowed roots: the standard folders the active
+    // routine has opted into (accessDesktop/Documents/Downloads), plus its access
+    // folder if set. Each entry is {name, path}. The browser is jailed to these.
+    Q_INVOKABLE QVariantList browseRoots() const;
+    // Directory listing for the in-app browser. Returns entries only when path is
+    // within an allowed root (see isWithinBrowseRoots); each entry is
+    // {name, path, isDir, suffix}, directories first then files, alphabetical,
+    // hidden entries skipped. Empty when path escapes the roots.
+    Q_INVOKABLE QVariantList listFolder(const QString &path) const;
+    // Open a document mid-session from the in-app browser. The file manager is
+    // killed during a routine (it can launch arbitrary apps), which would
+    // otherwise leave a writer or researcher unable to reach a reference document
+    // they didn't pre-load. This is the mindful alternative: it opens the chosen
+    // file in its viewer, refusing executables / .desktop launchers and any path
+    // outside the allowed roots, so it can't become an escape hatch out of the
+    // locked-down environment. Returns the opened path, or empty on rejection.
+    Q_INVOKABLE QString openFileInSession(const QString &path);
     // Reset the unlock-panel inactivity countdown. Wired to IdleMonitor's
     // activity() signal: any user input while access is granted re-arms the
     // 30-minute auto-lock (see ctor).
@@ -233,6 +261,11 @@ private:
     void writeActiveSession(bool force = false) const;
     void clearActiveSession() const;
     bool persistRoutines() const;
+    // The in-app browser's allowed roots as {displayName, canonicalPath} pairs.
+    QList<QPair<QString, QString>> browseRootsInternal() const;
+    // True when path resolves (canonically) to inside one of the allowed roots —
+    // canonical comparison defeats ".." and symlink escapes.
+    bool isWithinBrowseRoots(const QString &path) const;
     void updateDisplaySleepInhibit();
     void resumeActiveSessionIfPresent();
     void onRoutineExpired();

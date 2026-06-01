@@ -159,6 +159,7 @@ Item {
                 unlockModal.activeTab = 0
             }
             onShowSidebar: root.sidebarCollapsed = false
+            onOpenFilesRequested: fileBrowser.openBrowser()
             onEngageRequested: function(routineId, fullAccess) {
                 engagePrep.begin(routineId, fullAccess)
             }
@@ -215,6 +216,15 @@ Item {
         headerFont: root.headerFont
         bodyFont: root.bodyFont
         z: 30
+    }
+
+    // File browser (📁 FILES) — a separate top-level window (same process) so the
+    // user can drag files out into other apps. Jailed to the active routine's
+    // allowed folders.
+    FileBrowser {
+        id: fileBrowser
+        headerFont: root.headerFont
+        bodyFont: root.bodyFont
     }
 
     // Idle / screensaver: pitch-black starfield over everything after a stretch
