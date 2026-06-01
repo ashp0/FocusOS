@@ -1126,11 +1126,16 @@ Item {
     // visible across every space and on top of full-screen apps.
 
     // Faint CRT scanline overlay — drawn on the GPU (no CPU backing store).
+    // The pattern is static, so rasterise it into a layer *once* and let the
+    // compositor blit the cached texture every frame instead of re-running the
+    // per-pixel shader across the whole screen on every frame the starfield or a
+    // video forces a re-render. The layer only refreshes on resize.
     ShaderEffect {
         anchors.fill: parent
         z: 40
         opacity: 0.35
         blending: true
+        layer.enabled: true
         property size iResolution: Qt.size(Math.max(1, width), Math.max(1, height))
         fragmentShader: "qrc:/qt/qml/FocusOS/scanlines.frag.qsb"
     }

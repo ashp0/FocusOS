@@ -51,17 +51,27 @@ Item {
     // this layer can't be seen (app unfocused, or the panel asleep). Pause then,
     // and recompute once on the way back so the opacity snaps to the right value.
     property bool canBeSeen: Qt.application.active && root.visible && root.opacity > 0.01
-    onCanBeSeenChanged: {
-        if (canBeSeen) {
-            tickFade()
-            // Resume the wallpaper video decode that was paused while hidden.
-            if (showMedia && activeAssetType === 1 && currentAssetUrl().length > 0) {
-                videoPlayer.play()
-            }
+    onCanBeSeenChanged: if (canBeSeen) tickFade()
+
+    // Whether the wallpaper video should keep decoding. We pause it only when the
+    // window is genuinely off-screen (minimised / hidden / display asleep) — NOT
+    // merely unfocused. On the bare kwin_wayland session `Qt.application.active`
+    // is unreliable (the shell often never registers as "active"), so gating the
+    // decode on focus, as an earlier power tweak did, left the home-screen
+    // wallpaper frozen on its first frame. Window visibility is dependable.
+    property bool windowVisible: Window.window
+        ? (Window.window.visibility !== Window.Minimized
+           && Window.window.visibility !== Window.Hidden)
+        : true
+    property bool videoShouldDecode: showMedia && activeAssetType === 1
+                                     && windowVisible && currentAssetUrl().length > 0
+    onVideoShouldDecodeChanged: {
+        // A playing MediaPlayer keeps the FFmpeg pipeline decoding frames even
+        // while the panel is off-screen — pure wasted CPU/power. Pause then,
+        // resume when the window comes back.
+        if (videoShouldDecode) {
+            videoPlayer.play()
         } else if (activeAssetType === 1) {
-            // A playing MediaPlayer keeps the FFmpeg pipeline decoding frames even
-            // when the shell is unfocused (e.g. the user alt-tabbed away from the
-            // home screen) — pure wasted CPU/power. Pause it until we're seen again.
             videoPlayer.pause()
         }
     }

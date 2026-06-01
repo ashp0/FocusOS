@@ -75,10 +75,12 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
   a Qt multimedia backend plugin, brightness needs `brightnessctl`.
 - No Plasma session = nothing runs the user's autostart items. `main()` calls
   `backend.runSessionStartupItems()` once per login (XDG_RUNTIME_DIR marker guards
-  against re-running on watchdog respawn): it launches `~/.config/autostart/*.desktop`
-  entries (honoring Hidden / OnlyShowIn / NotShowIn) plus a user-editable
+  against re-running on watchdog respawn): it runs ONLY the user-editable
   `~/.focusos/startup.sh` (edited from the SYSTEM tab of the Settings modal via
   `SystemStatus::{read,write}StartupScript`). This is the Toshy / tray-agent hook.
+  We deliberately do NOT replay `~/.config/autostart/*.desktop` anymore — a stray
+  entry there pulled in the whole Plasma desktop on top of FocusOS, so the user
+  lists exactly what they want (e.g. `toshy-services-restart`) in startup.sh.
 - Inspiration media (AmbientLayer) is home-screen wallpaper only; it's suppressed
   during a routine (`showMedia: !routineManager.active`). `showMedia:false` now also
   tears down the MediaPlayer so a hidden layer never decodes video.
