@@ -257,11 +257,11 @@ int main(int argc, char *argv[])
                        &idleMonitor);
     window.showFocusShell();
 
-    // Run the user's session autostart items (XDG autostart entries + the
-    // editable ~/.focusos/startup.sh) once the shell is up, so anything that
-    // wants the compositor/session env — input remappers like Toshy, tray
-    // agents — comes up like it would in a normal Plasma login. Guarded to run
-    // once per login session, not on watchdog respawns. No-op on macOS.
+    // Run the user's editable ~/.focusos/startup.sh once the shell is up, so the
+    // few agents they want on the bare session — input remappers like Toshy, tray
+    // agents — come up. (We deliberately do NOT replay ~/.config/autostart here:
+    // a stray entry there can drag in the whole Plasma desktop on top of FocusOS.)
+    // Guarded to run once per login session, not on watchdog respawns. No-op on macOS.
     backend.runSessionStartupItems();
 
     return app.exec();

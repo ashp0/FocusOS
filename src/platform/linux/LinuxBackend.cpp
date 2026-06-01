@@ -1257,27 +1257,40 @@ void LinuxBackend::tickLockdownWatchdog()
         QStringLiteral("steam"),
         QStringLiteral("spotify")
     };
-    // Run the whole sweep as ONE detached shell, not 45 blocking pkills on the
-    // GUI thread. FocusOS forks a single `sh -c` and returns immediately; the
-    // individual pkills run sequentially inside that child, off the event loop.
-    // Every name below comes from the hard-coded `outlawed` list (plain
-    // [a-z-] literals); user-supplied always-allowed names are only ever used to
-    // *exclude* entries, so nothing untrusted is interpolated into the script.
+    // Sweep the whole deny-list with just TWO pkill invocations instead of ~45.
+    // pkill's pattern is an extended regex, so all the short names collapse into
+    // one `-x` (exact-name) alternation and all the long names into one `-f`
+    // (full-cmdline) alternation. This runs every 1.5s for the entire routine, so
+    // dropping ~45 process spawns per tick to 2 is a real CPU/wakeup saving (it
+    // matters on battery). We still fork a single detached `sh -c` so the GUI
+    // thread never blocks. Every name below comes from the hard-coded `outlawed`
+    // list (plain [a-zA-Z-] literals, regex-safe); user-supplied always-allowed
+    // names are only ever used to *exclude* entries, so nothing untrusted is
+    // interpolated into the pattern.
     QStringList allowedProcesses = alwaysAllowedProcessNames();
     allowedProcesses.append(m_sessionAllowedProcessNames);
     allowedProcesses.removeDuplicates();
-    QStringList commands;
-    commands.reserve(outlawed.size());
+    QStringList exactNames;   // matched against the (≤15-char) process name
+    QStringList longNames;    // matched against the full command line
     for (const QString &name : outlawed) {
         if (allowedProcesses.contains(name)) {
             continue;
         }
         if (name.size() <= 15) {
-            commands.append(QStringLiteral("pkill -x -- %1").arg(name));
+            exactNames.append(name);
         } else {
-            // -f anchored to the command start (matches pkillExact's long-name path).
-            commands.append(QStringLiteral("pkill -f -- '^%1($| )'").arg(name));
+            longNames.append(name);
         }
+    }
+    QStringList commands;
+    if (!exactNames.isEmpty()) {
+        // -x anchors the regex to the whole name, so the top-level alternation
+        // matches a name that exactly equals any one of the listed processes.
+        commands.append(QStringLiteral("pkill -x -- '%1'").arg(exactNames.join(QLatin1Char('|'))));
+    }
+    if (!longNames.isEmpty()) {
+        // -f anchored to the command start (matches pkillExact's long-name path).
+        commands.append(QStringLiteral("pkill -f -- '^(%1)($| )'").arg(longNames.join(QLatin1Char('|'))));
     }
     if (!commands.isEmpty()) {
         QProcess::startDetached(QStringLiteral("sh"),
@@ -1715,43 +1728,6 @@ bool anyProcessRunning(const QStringList &names)
     return false;
 }
 
-// Launch one XDG autostart .desktop entry, honoring the spec fields that say
-// "don't". Returns without doing anything when the entry is hidden/disabled.
-void launchAutostartEntry(const QString &desktopFilePath)
-{
-    QSettings entry(desktopFilePath, QSettings::IniFormat);
-    entry.beginGroup(QStringLiteral("Desktop Entry"));
-    // Hidden means "logically deleted" per the spec; the autostart-enabled key is
-    // how toolkits let a user toggle an entry off without removing the file.
-    const bool hidden = entry.value(QStringLiteral("Hidden")).toBool();
-    const QString autostartEnabled =
-        entry.value(QStringLiteral("X-GNOME-Autostart-enabled")).toString().trimmed();
-    // We launch as a KDE session, so respect entries scoped to a specific desktop:
-    // OnlyShowIn must list KDE; NotShowIn must not. (Both are ';'-delimited.)
-    const QStringList onlyShowIn =
-        entry.value(QStringLiteral("OnlyShowIn")).toString().split(QLatin1Char(';'), Qt::SkipEmptyParts);
-    const QStringList notShowIn =
-        entry.value(QStringLiteral("NotShowIn")).toString().split(QLatin1Char(';'), Qt::SkipEmptyParts);
-    entry.endGroup();
-    if (hidden || autostartEnabled.compare(QStringLiteral("false"), Qt::CaseInsensitive) == 0) {
-        return;
-    }
-    if (!onlyShowIn.isEmpty() && !onlyShowIn.contains(QStringLiteral("KDE"))) {
-        return;
-    }
-    if (notShowIn.contains(QStringLiteral("KDE"))) {
-        return;
-    }
-
-    const QStringList parts = desktopExecParts(desktopFilePath);
-    if (parts.isEmpty()) {
-        return;
-    }
-    // Use the KDE-flavored environment so KDE autostart helpers behave as they
-    // would in a normal Plasma login (and kwalletd stays suppressed).
-    startDetachedWithKdeEnvironment(parts.first(), parts.mid(1));
-}
-
 } // namespace
 
 void LinuxBackend::ensureGlobalShortcutsDaemon()
@@ -1811,39 +1787,18 @@ void LinuxBackend::runSessionStartupItems()
         }
     }
 
-    // 1) Standard XDG autostart entries. A bare kwin_wayland session never runs
-    //    these, so the user's tray agents / remappers would otherwise never come
-    //    up. Follow the XDG basedir spec: $XDG_CONFIG_HOME (or ~/.config) plus the
-    //    system config dirs, with earlier dirs shadowing later ones by file name.
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    QStringList configDirs;
-    const QString xdgConfigHome = env.value(QStringLiteral("XDG_CONFIG_HOME"));
-    configDirs << (xdgConfigHome.isEmpty() ? QDir::homePath() + QStringLiteral("/.config")
-                                           : xdgConfigHome);
-    const QString xdgConfigDirs = env.value(QStringLiteral("XDG_CONFIG_DIRS"),
-                                            QStringLiteral("/etc/xdg"));
-    configDirs << xdgConfigDirs.split(QLatin1Char(':'), Qt::SkipEmptyParts);
-
-    QSet<QString> seen; // a higher-priority dir's entry shadows lower ones by name
-    for (const QString &dir : configDirs) {
-        QDir autostartDir(dir + QStringLiteral("/autostart"));
-        if (!autostartDir.exists()) {
-            continue;
-        }
-        const QStringList files =
-            autostartDir.entryList({QStringLiteral("*.desktop")}, QDir::Files);
-        for (const QString &file : files) {
-            if (seen.contains(file)) {
-                continue;
-            }
-            seen.insert(file);
-            launchAutostartEntry(autostartDir.absoluteFilePath(file));
-        }
-    }
-
-    // 2) The user-editable startup script (edited from the admin Settings pane).
-    //    Run it through a shell so it can be a plain list of commands without a
-    //    +x bit. Skip an empty/whitespace-only file so we don't spawn a no-op sh.
+    // The user-editable startup script is the *only* login hook now. We used to
+    // also replay every ~/.config/autostart/*.desktop entry to bring up tray
+    // agents on the bare kwin_wayland session, but that was too blunt: some
+    // distros ship an autostart entry that pulls in the whole Plasma desktop
+    // (plasmashell / a full session), which is exactly the environment FocusOS
+    // replaces — so the shell ended up launching Plasma on top of itself. Rather
+    // than guess which entries are safe, we hand the user explicit control: list
+    // the few things you actually want (e.g. `toshy-services-restart`) in
+    // ~/.focusos/startup.sh, editable from the SYSTEM tab of the Settings modal.
+    //
+    // Run it through a shell so it can be a plain list of commands without a +x
+    // bit. Skip an empty/whitespace-only file so we don't spawn a no-op sh.
     const QString scriptPath = QDir::homePath() + QStringLiteral("/.focusos/startup.sh");
     QFile script(scriptPath);
     if (script.exists() && script.open(QIODevice::ReadOnly)) {
