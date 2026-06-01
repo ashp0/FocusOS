@@ -2,7 +2,9 @@
 
 #include "core/RoutineManager.h"
 
+#include <QAudioBuffer>
 #include <QAudioDevice>
+#include <QAudioFormat>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDialog>
@@ -13,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QtMath>
 #include <QMediaDevices>
 #include <QProcess>
 #include <QRandomGenerator>
@@ -86,6 +89,17 @@ QJsonObject readConfigObject()
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
     return document.isObject() ? document.object() : QJsonObject {};
 }
+
+// Loudness target the equalizer matches every track toward. ~-20 dBFS RMS is a
+// comfortable level for ambient backing tracks; the per-track gain is the ratio
+// that nudges a track's measured RMS to this, clamped so nothing is boosted or
+// cut to extremes (which would wreck the sound the user warned about).
+constexpr qreal kTargetRms = 0.10;
+constexpr qreal kMinGain = 0.35;
+constexpr qreal kMaxGain = 2.5;
+// Cap analysis at the first few minutes of each track — enough to estimate
+// overall loudness, but bounded so a long ambient track doesn't decode forever.
+constexpr quint64 kMaxAnalysisSeconds = 180;
 
 QString normalizedBehavior(const QString &behavior)
 {
@@ -161,6 +175,43 @@ MusicEngine::MusicEngine(QObject *parent)
             m_stopAfterFade = false;
             pausePlayback();
         }
+    });
+
+    // Playback watchdog. Sleeping and re-waking the display lets PipeWire
+    // idle-suspend the output sink; on a bare kwin session the player can come
+    // back from that stalled (not Playing) and never resume on its own, so the
+    // music stays dead after the screen wakes. audioOutputsChanged doesn't
+    // reliably fire for a suspend/resume of the *same* device, so poll: if music
+    // should be playing but isn't, re-bind the sink and re-kick it.
+    m_playbackWatchdog.setInterval(4000);
+    connect(&m_playbackWatchdog, &QTimer::timeout, this, &MusicEngine::recoverStalledPlayback);
+    m_playbackWatchdog.start();
+
+    // Loudness-equalization decoder. Runs off to the side: decodes each track to
+    // raw PCM (independent of the output sink, so it works even before audio is
+    // up) to measure RMS, then caches the gain. One track at a time.
+    connect(&m_gainDecoder, &QAudioDecoder::bufferReady, this, [this] {
+        accumulateBuffer(m_gainDecoder.read());
+        const QAudioFormat format = m_gainDecoder.audioFormat();
+        if (format.isValid() && format.sampleRate() > 0) {
+            const quint64 cap = static_cast<quint64>(format.sampleRate())
+                * static_cast<quint64>(qMax(1, format.channelCount())) * kMaxAnalysisSeconds;
+            if (m_analysisSampleCount >= cap) {
+                m_gainDecoder.stop();
+                finalizeAnalysis();
+            }
+        }
+    });
+    connect(&m_gainDecoder, &QAudioDecoder::finished, this, [this] { finalizeAnalysis(); });
+    connect(&m_gainDecoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), this,
+            [this](QAudioDecoder::Error error) {
+        if (error == QAudioDecoder::NoError) {
+            return;
+        }
+        qCDebug(lcMusic, "gain analysis failed for '%s' (%s) — leaving at unity",
+                qPrintable(m_analysisPath), qPrintable(m_gainDecoder.errorString()));
+        // Cache unity so we don't retry a file we can't decode every launch.
+        finishAnalysis(1.0);
     });
 
     loadConfig();
@@ -288,6 +339,7 @@ void MusicEngine::refreshMusicFiles()
     }
 
     rebuildPlaybackQueue();
+    scheduleGainAnalysis();
     emit musicFilesChanged();
 
     if (m_enabled && available() && m_player.playbackState() != QMediaPlayer::PlayingState) {
@@ -422,6 +474,7 @@ void MusicEngine::loadConfig()
     m_enabled = root.value(QStringLiteral("music_enabled")).toBool(true);
     m_volume = qBound(0, root.value(QStringLiteral("music_volume")).toInt(35), 100);
     m_engageBehavior = normalizedBehavior(root.value(QStringLiteral("music_engage_behavior")).toString(QStringLiteral("stop")));
+    loadGainCache(root);
     saveConfig();
 }
 
@@ -431,6 +484,7 @@ bool MusicEngine::saveConfig() const
     root.insert(QStringLiteral("music_enabled"), m_enabled);
     root.insert(QStringLiteral("music_volume"), m_volume);
     root.insert(QStringLiteral("music_engage_behavior"), m_engageBehavior);
+    writeGainCache(root);
 
     QSaveFile saveFile(configPath());
     if (!saveFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -574,6 +628,9 @@ void MusicEngine::advanceSource()
     }
     playCurrentSource();
     m_player.play();
+    // Each track carries its own equalization gain, so ease the output to the
+    // new track's level instead of leaving it at the previous track's volume.
+    applyCurrentVolume(800);
 }
 
 void MusicEngine::applyEngagedState(int fadeMs)
@@ -620,12 +677,275 @@ void MusicEngine::rebindDefaultAudioDevice()
     }
 }
 
+void MusicEngine::setSleeping(bool sleeping)
+{
+    if (m_sleeping == sleeping) {
+        return;
+    }
+    m_sleeping = sleeping;
+
+    if (m_sleeping) {
+        // Going to sleep: ease the sound out and pause. shouldBePlaying() now
+        // returns false, so the stall watchdog won't fight this and try to
+        // re-kick playback while the machine is suspending.
+        fadeTo(0.0, 600, true);
+        return;
+    }
+
+    // Woke up: resume whatever the engaged state calls for (home idle volume, or
+    // the routine's low/same level), unless music is disabled or has no tracks.
+    if (m_enabled && available()) {
+        applyEngagedState(2500);
+    }
+}
+
+bool MusicEngine::shouldBePlaying() const
+{
+    if (!m_enabled || !available() || m_sleeping) {
+        return false;
+    }
+    // "stop" is the only engaged behavior that intentionally pauses playback.
+    if (m_routineEngaged && m_engageBehavior == QStringLiteral("stop")) {
+        return false;
+    }
+    return true;
+}
+
+void MusicEngine::recoverStalledPlayback()
+{
+    if (!shouldBePlaying()) {
+        return;
+    }
+    // Don't fight a fade in progress (e.g. a routine engage/disengage transition).
+    if (m_fadeAnimation.state() == QAbstractAnimation::Running) {
+        return;
+    }
+    if (m_player.playbackState() == QMediaPlayer::PlayingState) {
+        return;
+    }
+
+    // Music should be sounding but isn't. Force the sink to re-acquire — after a
+    // suspend/resume the QAudioOutput can be left bound to a stale stream — then
+    // re-kick playback.
+    m_audioOutput.setDevice(QMediaDevices::defaultAudioOutput());
+    applyEngagedState(800);
+}
+
 qreal MusicEngine::configuredVolume() const
 {
-    return static_cast<qreal>(m_volume) / 100.0;
+    // Fold the current track's loudness-equalization gain into every fade target
+    // so quieter tracks come up and louder ones come down to a steady level.
+    return qBound(0.0, (static_cast<qreal>(m_volume) / 100.0) * currentTrackGain(), 1.0);
 }
 
 qreal MusicEngine::lowVolume() const
 {
-    return qMin(configuredVolume(), 0.12);
+    // Scale the "low" cap by the same gain so the engaged-low level is equally
+    // steady across tracks.
+    return qMin(configuredVolume(), 0.12 * currentTrackGain());
+}
+
+QString MusicEngine::currentSourcePath() const
+{
+    if (m_currentSourceIndex < 0 || m_currentSourceIndex >= m_playbackQueue.size()) {
+        return {};
+    }
+    return m_playbackQueue.at(m_currentSourceIndex);
+}
+
+qreal MusicEngine::currentTrackGain() const
+{
+    const auto it = m_gainCache.constFind(currentSourcePath());
+    return it != m_gainCache.constEnd() ? it->gain : 1.0;
+}
+
+void MusicEngine::applyCurrentVolume(int fadeMs)
+{
+    // shouldBePlaying() (not the live playback state) is the right gate here: we
+    // call this right after m_player.play(), whose state transition is async, so
+    // checking PlayingState would skip the fade on a fresh source change.
+    if (!shouldBePlaying()) {
+        return;
+    }
+    // Don't stomp a transition fade that's still running (engage/disengage).
+    if (m_fadeAnimation.state() == QAbstractAnimation::Running) {
+        return;
+    }
+    const qreal target = (m_routineEngaged && m_engageBehavior == QStringLiteral("low"))
+        ? lowVolume()
+        : configuredVolume();
+    fadeTo(target, fadeMs, false);
+}
+
+void MusicEngine::loadGainCache(const QJsonObject &root)
+{
+    m_gainCache.clear();
+    const QJsonObject gains = root.value(QStringLiteral("music_track_gains")).toObject();
+    for (auto it = gains.constBegin(); it != gains.constEnd(); ++it) {
+        const QJsonObject entry = it.value().toObject();
+        GainEntry gain;
+        gain.gain = qBound(kMinGain, entry.value(QStringLiteral("gain")).toDouble(1.0), kMaxGain);
+        gain.mtime = entry.value(QStringLiteral("mtime")).toVariant().toLongLong();
+        gain.size = entry.value(QStringLiteral("size")).toVariant().toLongLong();
+        m_gainCache.insert(it.key(), gain);
+    }
+}
+
+void MusicEngine::writeGainCache(QJsonObject &root) const
+{
+    QJsonObject gains;
+    for (auto it = m_gainCache.constBegin(); it != m_gainCache.constEnd(); ++it) {
+        QJsonObject entry;
+        entry.insert(QStringLiteral("gain"), it->gain);
+        entry.insert(QStringLiteral("mtime"), it->mtime);
+        entry.insert(QStringLiteral("size"), it->size);
+        gains.insert(it.key(), entry);
+    }
+    root.insert(QStringLiteral("music_track_gains"), gains);
+}
+
+void MusicEngine::scheduleGainAnalysis()
+{
+    // Queue any real track whose gain we haven't measured (or whose file changed
+    // since we did). The fallback qrc track is skipped — it's bundled and tiny.
+    for (const QString &path : std::as_const(m_musicFilePaths)) {
+        const QFileInfo info(path);
+        const auto it = m_gainCache.constFind(path);
+        if (it != m_gainCache.constEnd()
+                && it->mtime == info.lastModified().toMSecsSinceEpoch()
+                && it->size == info.size()) {
+            continue;
+        }
+        if (!m_analysisQueue.contains(path) && path != m_analysisPath) {
+            m_analysisQueue.append(path);
+        }
+    }
+
+    // Drop queued entries for tracks that no longer exist.
+    m_analysisQueue.erase(
+        std::remove_if(m_analysisQueue.begin(), m_analysisQueue.end(),
+                       [this](const QString &path) { return !m_musicFilePaths.contains(path); }),
+        m_analysisQueue.end());
+
+    analyzeNextTrack();
+}
+
+void MusicEngine::analyzeNextTrack()
+{
+    if (m_analyzing || m_analysisQueue.isEmpty()) {
+        return;
+    }
+    m_analysisPath = m_analysisQueue.takeFirst();
+    m_analysisSumSquares = 0.0;
+    m_analysisSampleCount = 0;
+    m_analyzing = true;
+    m_gainDecoder.setSource(QUrl::fromLocalFile(m_analysisPath));
+    m_gainDecoder.start();
+}
+
+void MusicEngine::accumulateBuffer(const QAudioBuffer &buffer)
+{
+    if (!buffer.isValid()) {
+        return;
+    }
+
+    const QAudioFormat format = buffer.format();
+    const int count = buffer.sampleCount();
+    if (count <= 0) {
+        return;
+    }
+
+    // Sum the squares of every sample, normalized to [-1, 1], across all
+    // channels. RMS over the whole track is our loudness proxy.
+    switch (format.sampleFormat()) {
+    case QAudioFormat::Int16: {
+        const qint16 *data = buffer.constData<qint16>();
+        for (int i = 0; i < count; ++i) {
+            const qreal s = static_cast<qreal>(data[i]) / 32768.0;
+            m_analysisSumSquares += s * s;
+        }
+        break;
+    }
+    case QAudioFormat::Int32: {
+        const qint32 *data = buffer.constData<qint32>();
+        for (int i = 0; i < count; ++i) {
+            const qreal s = static_cast<qreal>(data[i]) / 2147483648.0;
+            m_analysisSumSquares += s * s;
+        }
+        break;
+    }
+    case QAudioFormat::UInt8: {
+        const quint8 *data = buffer.constData<quint8>();
+        for (int i = 0; i < count; ++i) {
+            const qreal s = (static_cast<qreal>(data[i]) - 128.0) / 128.0;
+            m_analysisSumSquares += s * s;
+        }
+        break;
+    }
+    case QAudioFormat::Float: {
+        const float *data = buffer.constData<float>();
+        for (int i = 0; i < count; ++i) {
+            const qreal s = static_cast<qreal>(data[i]);
+            m_analysisSumSquares += s * s;
+        }
+        break;
+    }
+    default:
+        return;
+    }
+    m_analysisSampleCount += static_cast<quint64>(count);
+}
+
+void MusicEngine::finalizeAnalysis()
+{
+    if (!m_analyzing) {
+        return;
+    }
+    qreal gain = 1.0;
+    if (m_analysisSampleCount > 0) {
+        const qreal rms = std::sqrt(m_analysisSumSquares / static_cast<qreal>(m_analysisSampleCount));
+        if (rms > 1e-6) {
+            gain = qBound(kMinGain, kTargetRms / rms, kMaxGain);
+        }
+    }
+    finishAnalysis(gain);
+}
+
+void MusicEngine::finishAnalysis(qreal gain)
+{
+    if (!m_analyzing) {
+        return;
+    }
+    const QString path = m_analysisPath;
+    storeTrackGain(path, gain);
+
+    m_analysisPath.clear();
+    m_analysisSumSquares = 0.0;
+    m_analysisSampleCount = 0;
+    m_analyzing = false;
+
+    // If we just measured the track that's currently playing, ease the live
+    // output to its equalized level now.
+    if (!path.isEmpty() && path == currentSourcePath()) {
+        applyCurrentVolume(800);
+    }
+
+    // Start the next track from a clean stack — never re-enter the decoder from
+    // inside one of its own signal handlers.
+    QTimer::singleShot(0, this, &MusicEngine::analyzeNextTrack);
+}
+
+void MusicEngine::storeTrackGain(const QString &path, qreal gain)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    const QFileInfo info(path);
+    GainEntry entry;
+    entry.gain = qBound(kMinGain, gain, kMaxGain);
+    entry.mtime = info.lastModified().toMSecsSinceEpoch();
+    entry.size = info.size();
+    m_gainCache.insert(path, entry);
+    saveConfig();
+    qCDebug(lcMusic, "equalized '%s' → gain %.3f", qPrintable(info.fileName()), entry.gain);
 }

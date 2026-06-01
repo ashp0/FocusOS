@@ -162,6 +162,19 @@ Item {
         routineDrafts = drafts
     }
 
+    // Reorder a routine within the list. The persisted order is what drives the
+    // launcher and the saved config, so moving a card up/down here and pressing
+    // SAVE ALL changes the order everywhere.
+    function moveRoutine(fromIndex, toIndex) {
+        if (toIndex < 0 || toIndex >= routineDrafts.length || fromIndex === toIndex) {
+            return
+        }
+        const drafts = cloneDrafts()
+        const moved = drafts.splice(fromIndex, 1)[0]
+        drafts.splice(toIndex, 0, moved)
+        routineDrafts = drafts
+    }
+
     function addApp(routineIndex, path) {
         if (!path || routineIndex < 0 || routineIndex >= routineDrafts.length) {
             return
@@ -632,7 +645,7 @@ Item {
                 Text {
                     id: sleepDisplayLabel
                     anchors.centerIn: parent
-                    text: "☾ SLEEP DISPLAY"
+                    text: "☾ SLEEP"
                     color: Theme.gold
                     font.family: root.headerFont
                     font.pixelSize: 12
@@ -1095,6 +1108,14 @@ Item {
                                             spacing: 10
 
                                             Text {
+                                                text: (routineCard.index + 1) + "."
+                                                color: Theme.gold
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            Text {
                                                 text: "NAME"
                                                 color: Theme.goldDim
                                                 font.family: root.headerFont
@@ -1108,6 +1129,25 @@ Item {
                                                 text: String(routineCard.modelData.name || "")
                                                 placeholderText: "ROUTINE NAME"
                                                 onTextChanged: root.updateRoutineField(routineCard.index, "name", text)
+                                            }
+
+                                            // Reorder controls. Disabled at the ends of the list.
+                                            AdminButton {
+                                                Layout.preferredWidth: 40
+                                                Layout.preferredHeight: 34
+                                                label: "▲"
+                                                danger: false
+                                                actionEnabled: routineCard.index > 0
+                                                onClicked: root.moveRoutine(routineCard.index, routineCard.index - 1)
+                                            }
+
+                                            AdminButton {
+                                                Layout.preferredWidth: 40
+                                                Layout.preferredHeight: 34
+                                                label: "▼"
+                                                danger: false
+                                                actionEnabled: routineCard.index < root.routineDrafts.length - 1
+                                                onClicked: root.moveRoutine(routineCard.index, routineCard.index + 1)
                                             }
                                         }
 

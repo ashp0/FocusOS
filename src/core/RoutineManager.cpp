@@ -1208,6 +1208,38 @@ QString RoutineManager::pickFile()
 #endif
 }
 
+QString RoutineManager::openDocumentInSession()
+{
+    if (!m_backend) {
+        return {};
+    }
+
+    const QString path = pickFile();
+    if (path.isEmpty()) {
+        return {}; // cancelled — no message, the user backed out deliberately.
+    }
+
+    // Guard the distraction-free environment: opening *documents* is the point,
+    // but an executable or a .desktop entry would let this picker launch
+    // arbitrary apps — exactly what the lockdown watchdog kills file managers to
+    // prevent. Refuse those so the door stays only as wide as "open my file".
+    const QFileInfo info(path);
+    if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0
+            || info.isExecutable()) {
+        setStatusMessage(QStringLiteral("ONLY DOCUMENTS CAN BE OPENED HERE — NOT APPS OR EXECUTABLES"));
+        return {};
+    }
+
+    QString error;
+    if (!m_backend->launchApps({path}, &error)) {
+        setStatusMessage(error.isEmpty() ? QStringLiteral("COULDN'T OPEN THAT FILE") : error);
+        return {};
+    }
+
+    setStatusMessage(QStringLiteral("OPENED %1").arg(info.fileName()));
+    return path;
+}
+
 QString RoutineManager::applicationDisplayName(const QString &path) const
 {
     const QString trimmed = path.trimmed();

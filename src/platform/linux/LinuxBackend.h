@@ -24,6 +24,8 @@ public:
     void lockScreen() override;
     void unlockScreen() override;
     void sleepDisplay() override;
+    void wakeDisplay() override;
+    bool suspendSystem() override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void dropNetworkPolicy() override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;

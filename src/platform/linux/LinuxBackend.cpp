@@ -952,6 +952,41 @@ void LinuxBackend::sleepDisplay()
     }
 }
 
+void LinuxBackend::wakeDisplay()
+{
+    // Force the panel back on. Most compositors wake DPMS on the next input on
+    // their own, but after a deep-idle blank we flip it explicitly so the screen
+    // is guaranteed lit when the user returns (or the machine resumes).
+    const QString kscreen = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
+    if (!kscreen.isEmpty()) {
+        QProcess::startDetached(kscreen, {QStringLiteral("--dpms"), QStringLiteral("on")});
+        return;
+    }
+    const QString xset = QStandardPaths::findExecutable(QStringLiteral("xset"));
+    if (!xset.isEmpty()) {
+        QProcess::startDetached(xset, {QStringLiteral("dpms"), QStringLiteral("force"),
+                                       QStringLiteral("on")});
+    }
+}
+
+bool LinuxBackend::suspendSystem()
+{
+    // Suspend-to-RAM for the deep-idle sleep. systemctl is the portable path
+    // (delegates to logind, which is already configured for this session); fall
+    // back to loginctl suspend. Detached + fire-and-forget — the kernel takes
+    // over and FocusOS is frozen until the machine resumes. Best-effort: if
+    // neither tool is present we return false and the caller stays in soft sleep.
+    const QString systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    if (!systemctl.isEmpty()) {
+        return QProcess::startDetached(systemctl, {QStringLiteral("suspend")});
+    }
+    const QString loginctl = QStandardPaths::findExecutable(QStringLiteral("loginctl"));
+    if (!loginctl.isEmpty()) {
+        return QProcess::startDetached(loginctl, {QStringLiteral("suspend")});
+    }
+    return false;
+}
+
 bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
 {
     // NetGate is the network-level backstop. Only arm the extension policy if it
@@ -1562,48 +1597,16 @@ bool LinuxBackend::signOut(QString *errorMessage)
     // the machine behind nftables.
     dropNetworkPolicy();
 
-    // A plain qApp->quit() is NOT enough in the permanent install: the kiosk
-    // watchdog (focusos-watchdog.sh --kiosk) respawns focusos on any exit. To
-    // actually return to the SDDM login we must end the whole login session.
-    //
-    // The old path fired a single detached `loginctl terminate-session
-    // $XDG_SESSION_ID` and trusted it. When that didn't take — an empty or
-    // unmatched XDG_SESSION_ID, or plasmashell already killed by the routine
-    // lockdown so KWin just sat on a black root window — the user was stranded
-    // on a black screen with no greeter.
-    //
-    // Hand the teardown to a detached shell that escalates until something
-    // works, so it keeps going even after FocusOS itself is killed. It resolves
-    // the real session id (env first, then by querying logind) and tries, in
-    // order: terminate this session, terminate every session this user owns,
-    // and finally drop the compositor (kwin_wayland is launched
-    // --exit-with-session, so killing it ends the session and the display
-    // manager reclaims the VT and shows the greeter).
-    const QString script = QStringLiteral(
-        "sid=\"${XDG_SESSION_ID:-}\"; "
-        "[ -z \"$sid\" ] && sid=\"$(loginctl --no-legend list-sessions 2>/dev/null "
-        "| awk -v u=\"$(id -un)\" '$3==u{print $1; exit}')\"; "
-        "[ -n \"$sid\" ] && loginctl terminate-session \"$sid\" 2>/dev/null; "
-        "sleep 2; "
-        "loginctl terminate-user \"$(id -u)\" 2>/dev/null; "
-        "sleep 2; "
-        "pkill -x kwin_wayland; pkill -x kwin_x11; pkill -x plasma_session");
-
-    const QString shell = firstExecutable({QStringLiteral("bash"), QStringLiteral("sh")});
-    if (!shell.isEmpty() &&
-        QProcess::startDetached(shell, {QStringLiteral("-c"), script})) {
-        return true;
-    }
-
-    // Last resort if we couldn't even spawn the helper: drop the compositor.
-    if (QProcess::startDetached(QStringLiteral("pkill"), {QStringLiteral("-x"), QStringLiteral("kwin_wayland")})) {
-        return true;
-    }
-
-    if (errorMessage) {
-        *errorMessage = QStringLiteral("Unable to sign out — could not start the logout helper.");
-    }
-    return false;
+    // Just quit FocusOS. When it is the session shell (launched
+    // --exit-with-session), exiting ends the login session and the display
+    // manager reclaims the VT and shows the greeter / user login screen — which
+    // is exactly what the user wants. The older path tried to escalate through
+    // loginctl terminate-session/terminate-user and pkill kwin, but when those
+    // didn't take cleanly the user was left stranded on a blank screen with no
+    // greeter. A plain quit is more reliable here.
+    Q_UNUSED(errorMessage);
+    QCoreApplication::quit();
+    return true;
 }
 
 QString LinuxBackend::watchdogScriptPath() const

@@ -156,6 +156,14 @@ public:
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
     Q_INVOKABLE QString pickApplication();
     Q_INVOKABLE QString pickFile();
+    // Open a document mid-session. The file manager is killed during a routine
+    // (it can launch arbitrary apps), which would otherwise leave a writer or
+    // researcher unable to reach a reference document they didn't pre-load. This
+    // is the intentional, mindful alternative: a one-shot picker that opens the
+    // chosen file in its viewer, and refuses executables / .desktop launchers so
+    // it can't become an escape hatch out of the locked-down environment.
+    // Returns the opened path, or empty on cancel / rejection.
+    Q_INVOKABLE QString openDocumentInSession();
     // Reset the unlock-panel inactivity countdown. Wired to IdleMonitor's
     // activity() signal: any user input while access is granted re-arms the
     // 30-minute auto-lock (see ctor).

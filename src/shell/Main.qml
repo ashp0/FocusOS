@@ -204,6 +204,9 @@ Item {
         showStars: true
         showDust: false
         starOpacityScale: 0.35
+        // Half the stars of the full backdrop — lighter to draw over the UI and
+        // keeps the drifting motion from competing with on-screen text.
+        starDensity: 0.5
     }
 
     UnlockModal {

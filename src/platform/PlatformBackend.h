@@ -27,6 +27,13 @@ public:
     // lock overlay — the monitor wakes again on the next input. No-op where
     // unsupported.
     virtual void sleepDisplay() {}
+    // Wake the physical display back up (DPMS on). Pairs with sleepDisplay() for
+    // the deep-idle path so the panel is forced back on when the user returns.
+    virtual void wakeDisplay() {}
+    // Suspend the whole machine (S3 / suspend-to-RAM) for the deep-idle sleep.
+    // Best-effort: returns false where unsupported or not permitted, in which
+    // case the caller falls back to the soft sleep (panel off + music paused).
+    virtual bool suspendSystem() { return false; }
     virtual bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) = 0;
     virtual void dropNetworkPolicy() = 0;
     virtual bool openSystemTerminal(QString *errorMessage = nullptr) = 0;

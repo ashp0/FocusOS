@@ -180,25 +180,24 @@ int main(int argc, char *argv[])
     });
     idleMonitor.setSuppressed(routineManager.active()); // a resumed session may already be active
 
-    // Display-sleep-on-idle. The idle starfield appears after IdleMonitor's
-    // timeout (and only while FocusOS itself is focused); a short while later we
-    // also blank the physical panel to save power. The next input wakes both.
-    // Suppressed while a routine is actively holding the display awake so we
-    // don't fight its keep-awake inhibitor.
-    QTimer displaySleepTimer;
-    displaySleepTimer.setSingleShot(true);
-    displaySleepTimer.setInterval(2 * 60 * 1000); // 2 min after the idle screen
-    QObject::connect(&displaySleepTimer, &QTimer::timeout, &routineManager, [&] {
-        if (idleMonitor.idle() &&
-            !(routineManager.active() && routineManager.displayStaysAwake())) {
+    // Deep-idle sleep. The idle starfield appears after IdleMonitor's first
+    // timeout; a couple of minutes further into idleness IdleMonitor flips
+    // deepIdle — at which point we put the whole machine to sleep to save power:
+    // pause the music, blank the panel, and ask the system to suspend. QML stops
+    // the starfield (pure black) off the same deepIdle flag. On the way back out
+    // (any input → deepIdle false) we resume the music and wake the panel.
+    //
+    // The system suspend is best-effort and slightly delayed so the music has a
+    // moment to fade and the DPMS-off lands first; if suspend isn't permitted we
+    // simply stay in this soft sleep (black, silent, idle) until the user returns.
+    QObject::connect(&idleMonitor, &IdleMonitor::deepIdleChanged, &routineManager, [&] {
+        if (idleMonitor.deepIdle()) {
+            musicEngine.setSleeping(true);
             backend.sleepDisplay();
-        }
-    });
-    QObject::connect(&idleMonitor, &IdleMonitor::idleChanged, &displaySleepTimer, [&] {
-        if (idleMonitor.idle()) {
-            displaySleepTimer.start();
+            QTimer::singleShot(700, &routineManager, [&backend] { backend.suspendSystem(); });
         } else {
-            displaySleepTimer.stop();
+            backend.wakeDisplay();
+            musicEngine.setSleeping(false);
         }
     });
 

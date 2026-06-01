@@ -11,6 +11,10 @@ IdleMonitor::IdleMonitor(QObject *parent)
     m_timer.setInterval(m_timeoutMs);
     connect(&m_timer, &QTimer::timeout, this, &IdleMonitor::goIdle);
 
+    m_deepTimer.setSingleShot(true);
+    m_deepTimer.setInterval(m_deepTimeoutMs);
+    connect(&m_deepTimer, &QTimer::timeout, this, &IdleMonitor::goDeepIdle);
+
     if (qApp) {
         qApp->installEventFilter(this);
     }
@@ -40,10 +44,7 @@ void IdleMonitor::onApplicationStateChanged(Qt::ApplicationState state)
         // Focus is back within FocusOS. Clear any idle state, restart the
         // countdown, and resume an idle-paused routine ("focus back in our
         // window" is the resume trigger from Task 4).
-        if (m_idle) {
-            m_idle = false;
-            emit idleChanged();
-        }
+        clearIdleState();
         if (!m_suppressed) {
             m_timer.start();
         }
@@ -51,10 +52,7 @@ void IdleMonitor::onApplicationStateChanged(Qt::ApplicationState state)
     } else {
         // The user moved to another application — they are not "idle" in the
         // screensaver sense, so suppress the idle screen and stop the countdown.
-        if (m_idle) {
-            m_idle = false;
-            emit idleChanged();
-        }
+        clearIdleState();
         m_timer.stop();
     }
 }
@@ -68,6 +66,16 @@ void IdleMonitor::setTimeoutMs(int ms)
     m_timer.setInterval(ms);
     m_timer.start();
     emit timeoutMsChanged();
+}
+
+void IdleMonitor::setDeepTimeoutMs(int ms)
+{
+    if (ms <= 0 || ms == m_deepTimeoutMs) {
+        return;
+    }
+    m_deepTimeoutMs = ms;
+    m_deepTimer.setInterval(ms);
+    emit deepTimeoutMsChanged();
 }
 
 void IdleMonitor::wake()
@@ -85,10 +93,7 @@ void IdleMonitor::setSuppressed(bool suppressed)
         // Routine engaged: stop the countdown and clear any idle state so the
         // starfield never appears and display-sleep-on-idle never fires.
         m_timer.stop();
-        if (m_idle) {
-            m_idle = false;
-            emit idleChanged();
-        }
+        clearIdleState();
     } else if (focusOsIsActive()) {
         // Routine ended: resume normal idle detection on the home screen.
         m_timer.start();
@@ -126,14 +131,24 @@ bool IdleMonitor::eventFilter(QObject *watched, QEvent *event)
 
 void IdleMonitor::noteActivity()
 {
-    if (m_idle) {
-        m_idle = false;
-        emit idleChanged();
-    }
+    clearIdleState();
     if (!m_suppressed) {
         m_timer.start(); // restart the idle countdown
     }
     emit activity();
+}
+
+void IdleMonitor::clearIdleState()
+{
+    m_deepTimer.stop();
+    if (m_deepIdle) {
+        m_deepIdle = false;
+        emit deepIdleChanged();
+    }
+    if (m_idle) {
+        m_idle = false;
+        emit idleChanged();
+    }
 }
 
 void IdleMonitor::goIdle()
@@ -147,5 +162,18 @@ void IdleMonitor::goIdle()
     if (!m_idle) {
         m_idle = true;
         emit idleChanged();
+    }
+    // Start the countdown to deep sleep (panel off + music off + system suspend).
+    m_deepTimer.start();
+}
+
+void IdleMonitor::goDeepIdle()
+{
+    if (m_suppressed || !focusOsIsActive() || !m_idle) {
+        return;
+    }
+    if (!m_deepIdle) {
+        m_deepIdle = true;
+        emit deepIdleChanged();
     }
 }

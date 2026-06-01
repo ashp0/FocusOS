@@ -523,6 +523,35 @@ Item {
                 }
             }
 
+            // Open a document the user didn't pre-load into the routine. The file
+            // manager is killed during a session, so this is how a writer or
+            // researcher reaches another file — intentionally, one document at a
+            // time, with no launcher and no path to the open web.
+            Rectangle {
+                width: 168
+                height: 40
+                color: openDocHover.containsMouse ? Theme.steel : "#33141420"
+                border.width: 1
+                border.color: openDocHover.containsMouse ? Theme.gold : Theme.goldDim
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "📄 OPEN DOC"
+                    color: openDocHover.containsMouse ? Theme.gold : Theme.goldDim
+                    font.family: root.headerFont
+                    font.pixelSize: 13
+                    font.letterSpacing: 0
+                }
+
+                MouseArea {
+                    id: openDocHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: routineManager.openDocumentInSession()
+                }
+            }
+
             Rectangle {
                 width: 160
                 height: 40

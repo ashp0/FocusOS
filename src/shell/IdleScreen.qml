@@ -12,8 +12,13 @@ Item {
         color: "#000000"
     }
 
+    // The starfield runs during the first idle stage, then stops once the session
+    // goes into deep sleep (panel blanked, music paused, machine suspending) — the
+    // screen is fully black and nothing animates, so the app burns no CPU/GPU
+    // while the display is off. It returns on the first input that wakes us.
     StarField {
         anchors.fill: parent
+        visible: !idleMonitor.deepIdle
     }
 
     MouseArea {
