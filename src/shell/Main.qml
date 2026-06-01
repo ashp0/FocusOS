@@ -57,12 +57,6 @@ Item {
             event.accepted = true
             return
         }
-        // Space — pause / resume active routine
-        if (event.key === Qt.Key_Space && routineManager.active && !unlockModal.modalOpen) {
-            routineManager.togglePause()
-            event.accepted = true
-            return
-        }
         // Media volume keys
         if (event.key === Qt.Key_VolumeUp) {
             systemStatus.adjustSystemVolume(5)
@@ -222,10 +216,14 @@ Item {
 
     // Idle / screensaver: pitch-black starfield over everything after a stretch
     // of no input (IdleMonitor, 5 min). The first interaction wakes the shell.
+    // Only ever shown on the home screen (no engaged routine): while a routine is
+    // active, a focused, idle user is working — not away — so idle detection is
+    // suppressed entirely (see IdleMonitor::setSuppressed). The !active guard here
+    // is belt-and-suspenders; idleMonitor.idle can't be true during a routine.
     IdleScreen {
         anchors.fill: parent
         z: 1000
-        visible: idleMonitor.idle
+        visible: idleMonitor.idle && !routineManager.active
     }
 
     // Engage preparation (Task 1 + Task 4). For a full-access routine it first
@@ -769,6 +767,46 @@ Item {
         }
     }
 
+    // Manual-pause banner (Task 4). A persistent, hard-to-miss reminder that the
+    // timer is manually paused and will NOT auto-resume — users have lost logged
+    // time by forgetting to unpause. Pulses so it keeps drawing the eye.
+    Item {
+        id: manualPauseBanner
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: 18
+        height: 56
+        z: 33
+        visible: routineManager.pauseMode === 2
+
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 64, bannerText.implicitWidth + 64)
+            height: parent.height
+            color: "#cc1a0608"
+            border.width: 2
+            border.color: Theme.crimsonHot
+
+            SequentialAnimation on opacity {
+                running: manualPauseBanner.visible
+                loops: Animation.Infinite
+                NumberAnimation { from: 1.0; to: 0.55; duration: 700; easing.type: Easing.InOutQuad }
+                NumberAnimation { from: 0.55; to: 1.0; duration: 700; easing.type: Easing.InOutQuad }
+            }
+
+            Text {
+                id: bannerText
+                anchors.centerIn: parent
+                text: "⏸  TIMER MANUALLY PAUSED  —  PRESS RESUME TO CONTINUE"
+                color: Theme.gold
+                font.family: root.headerFont
+                font.pixelSize: 15
+                font.letterSpacing: 2
+            }
+        }
+    }
+
     Item {
         id: statusToast
         anchors.left: parent.left
@@ -1022,7 +1060,6 @@ Item {
                     model: [
                         {"key": "⌘ + \\", "desc": "TOGGLE SIDEBAR"},
                         {"key": "⌘ + N", "desc": "OPEN MISSION LOG NOTES"},
-                        {"key": "SPACE", "desc": "PAUSE / RESUME ACTIVE ROUTINE"},
                         {"key": "?", "desc": "TOGGLE THIS MANUAL"},
                         {"key": "ESC", "desc": "CLOSE OVERLAY / DRAWER"}
                     ]

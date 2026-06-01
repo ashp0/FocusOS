@@ -464,6 +464,22 @@ ParsedAppEntry parseAppEntry(const QString &rawEntry)
         return parsed;
     }
 
+    // Special-character-safe path handling. Routine entries are shell-quoted
+    // command strings, but the file/app pickers hand back bare filesystem paths
+    // that aren't quoted. QProcess::splitCommand would then shatter a name with
+    // spaces or other shell-significant characters — "…/My File (v2).pdf"
+    // becomes ["…/My", "File", "(v2).pdf"] — and the launcher fails with
+    // "Unable to launch …/My". So if the whole entry resolves to an existing
+    // path, treat it as one argument-less target. Bare commands like
+    // "flatpak run md.obsidian.Obsidian" don't exist as a file, so they still
+    // fall through to the splitCommand path that supports arguments.
+    const QString expandedWhole = expandedPath(trimmed);
+    const QFileInfo wholeInfo(expandedWhole);
+    if (wholeInfo.isAbsolute() && wholeInfo.exists()) {
+        parsed.path = expandedWhole;
+        return parsed;
+    }
+
     QStringList parts = QProcess::splitCommand(trimmed);
     if (parts.isEmpty()) {
         parsed.path = expandedPath(trimmed);
@@ -511,6 +527,31 @@ QStringList processNamesForCommandLines(const QStringList &entries)
     }
     names.removeDuplicates();
     return names;
+}
+
+// A systemd *user service* (its cgroup leaf unit ends in ".service") is a
+// background daemon — input remappers (Toshy / keyd / xremap), tray agents,
+// sync clients, notification helpers, etc. — not a user-launched GUI window.
+// Apps the user opens from a launcher land in a transient "app-*.scope"
+// instead. We never mass-quit services when a routine engages: killing e.g. a
+// keyboard remapper mid-routine would break the user's typing. This is
+// deliberately versatile — nothing is matched by name, it keys off *how* the
+// process was started, so any well-behaved background utility is spared.
+bool isSystemdUserService(qint64 pid)
+{
+    QFile cgroupFile(QStringLiteral("/proc/%1/cgroup").arg(pid));
+    if (!cgroupFile.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const QString content = QString::fromUtf8(cgroupFile.readAll());
+    const QStringList lines = content.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        const QString leaf = line.section(QLatin1Char('/'), -1);
+        if (leaf.endsWith(QStringLiteral(".service"))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -847,6 +888,12 @@ void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
             continue;
         }
 
+        // Spare background system utilities (Toshy and friends). A systemd user
+        // service is a daemon, not a window the user opened — see the helper.
+        if (isSystemdUserService(pid)) {
+            continue;
+        }
+
         // GUI heuristic: a graphical client has WAYLAND_DISPLAY or DISPLAY in
         // its environment. Pure daemons usually don't — leaving them alone is
         // the safe default.
@@ -885,6 +932,23 @@ void LinuxBackend::unlockScreen()
     const QString kscreen = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
     if (!kscreen.isEmpty()) {
         QProcess::startDetached(kscreen, {QStringLiteral("--dpms"), QStringLiteral("on")});
+    }
+}
+
+void LinuxBackend::sleepDisplay()
+{
+    // Blank the panel without the in-app lock overlay or the m_screenLocked
+    // state — the monitor wakes on the next keypress / mouse move. KDE/Wayland
+    // flips DPMS via kscreen-doctor; fall back to xset on X11 sessions.
+    const QString kscreen = QStandardPaths::findExecutable(QStringLiteral("kscreen-doctor"));
+    if (!kscreen.isEmpty()) {
+        QProcess::startDetached(kscreen, {QStringLiteral("--dpms"), QStringLiteral("off")});
+        return;
+    }
+    const QString xset = QStandardPaths::findExecutable(QStringLiteral("xset"));
+    if (!xset.isEmpty()) {
+        QProcess::startDetached(xset, {QStringLiteral("dpms"), QStringLiteral("force"),
+                                       QStringLiteral("off")});
     }
 }
 
@@ -1500,32 +1564,44 @@ bool LinuxBackend::signOut(QString *errorMessage)
 
     // A plain qApp->quit() is NOT enough in the permanent install: the kiosk
     // watchdog (focusos-watchdog.sh --kiosk) respawns focusos on any exit. To
-    // actually return to the SDDM login we must terminate the whole login
-    // session via logind — that takes down kwin_wayland (which is started with
-    // --exit-with-session), the watchdog, and FocusOS together.
-    const QString loginctl = QStandardPaths::findExecutable(QStringLiteral("loginctl"));
-    if (!loginctl.isEmpty()) {
-        const QString sessionId = qEnvironmentVariable("XDG_SESSION_ID");
-        if (!sessionId.isEmpty() &&
-            QProcess::startDetached(loginctl, {QStringLiteral("terminate-session"), sessionId})) {
-            return true;
-        }
-        // No session id (or it failed): terminate every session this user owns.
-        if (QProcess::startDetached(loginctl,
-                                    {QStringLiteral("terminate-user"),
-                                     QString::number(static_cast<uint>(::getuid()))})) {
-            return true;
-        }
+    // actually return to the SDDM login we must end the whole login session.
+    //
+    // The old path fired a single detached `loginctl terminate-session
+    // $XDG_SESSION_ID` and trusted it. When that didn't take — an empty or
+    // unmatched XDG_SESSION_ID, or plasmashell already killed by the routine
+    // lockdown so KWin just sat on a black root window — the user was stranded
+    // on a black screen with no greeter.
+    //
+    // Hand the teardown to a detached shell that escalates until something
+    // works, so it keeps going even after FocusOS itself is killed. It resolves
+    // the real session id (env first, then by querying logind) and tries, in
+    // order: terminate this session, terminate every session this user owns,
+    // and finally drop the compositor (kwin_wayland is launched
+    // --exit-with-session, so killing it ends the session and the display
+    // manager reclaims the VT and shows the greeter).
+    const QString script = QStringLiteral(
+        "sid=\"${XDG_SESSION_ID:-}\"; "
+        "[ -z \"$sid\" ] && sid=\"$(loginctl --no-legend list-sessions 2>/dev/null "
+        "| awk -v u=\"$(id -un)\" '$3==u{print $1; exit}')\"; "
+        "[ -n \"$sid\" ] && loginctl terminate-session \"$sid\" 2>/dev/null; "
+        "sleep 2; "
+        "loginctl terminate-user \"$(id -u)\" 2>/dev/null; "
+        "sleep 2; "
+        "pkill -x kwin_wayland; pkill -x kwin_x11; pkill -x plasma_session");
+
+    const QString shell = firstExecutable({QStringLiteral("bash"), QStringLiteral("sh")});
+    if (!shell.isEmpty() &&
+        QProcess::startDetached(shell, {QStringLiteral("-c"), script})) {
+        return true;
     }
 
-    // Last resort: drop the compositor. kwin_wayland is launched with
-    // --exit-with-session, so killing it ends the login session too.
+    // Last resort if we couldn't even spawn the helper: drop the compositor.
     if (QProcess::startDetached(QStringLiteral("pkill"), {QStringLiteral("-x"), QStringLiteral("kwin_wayland")})) {
         return true;
     }
 
     if (errorMessage) {
-        *errorMessage = QStringLiteral("Unable to sign out — loginctl unavailable.");
+        *errorMessage = QStringLiteral("Unable to sign out — could not start the logout helper.");
     }
     return false;
 }

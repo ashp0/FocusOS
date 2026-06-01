@@ -449,19 +449,42 @@ Item {
 
             Rectangle {
                 visible: !root.openEnded
-                width: 160
+                width: 196
                 height: 40
                 color: pauseHover.containsMouse ? Theme.steel : "#33141420"
                 border.width: 1
-                border.color: pauseHover.containsMouse ? Theme.gold : Theme.goldDim
+                // Manual pause border is crimson so it reads as "stay paused".
+                border.color: routineManager.pauseMode === 2
+                              ? Theme.crimsonHot
+                              : (pauseHover.containsMouse ? Theme.gold : Theme.goldDim)
 
-                Text {
+                Column {
                     anchors.centerIn: parent
-                    text: routineManager.paused ? "▶ RESUME (␣)" : "⏸ PAUSE (␣)"
-                    color: pauseHover.containsMouse ? Theme.gold : Theme.goldDim
-                    font.family: root.headerFont
-                    font.pixelSize: 13
-                    font.letterSpacing: 2
+                    spacing: 2
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: routineManager.pauseMode === 0
+                              ? "⏸ PAUSE"
+                              : (routineManager.pauseMode === 2 ? "▶ RESUME · MANUAL" : "▶ RESUME · IDLE")
+                        color: routineManager.pauseMode === 2
+                               ? Theme.crimsonHot
+                               : (pauseHover.containsMouse ? Theme.gold : Theme.goldDim)
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 2
+                    }
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: routineManager.pauseMode === 0
+                        text: "DBL-CLICK = MANUAL"
+                        color: Theme.goldDim
+                        opacity: 0.7
+                        font.family: root.bodyFont
+                        font.pixelSize: 8
+                        font.letterSpacing: 1
+                    }
                 }
 
                 MouseArea {
@@ -470,6 +493,7 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: routineManager.togglePause()
+                    onDoubleClicked: routineManager.manualPause()
                 }
             }
 

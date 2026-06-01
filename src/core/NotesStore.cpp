@@ -52,6 +52,15 @@ NotesStore::NotesStore(QObject *parent)
     connect(&m_saveTimer, &QTimer::timeout, this, &NotesStore::saveDraft);
     loadDraft();
     loadArchive();
+    // A draft left over from a previous day shouldn't surface under "today" —
+    // file it under the day it was written and start today blank.
+    rolloverStaleDraft();
+    m_midnightTimer.setSingleShot(true);
+    connect(&m_midnightTimer, &QTimer::timeout, this, [this] {
+        rolloverStaleDraft();
+        scheduleMidnightRollover();
+    });
+    scheduleMidnightRollover();
 }
 
 QString NotesStore::text() const
@@ -65,6 +74,11 @@ void NotesStore::setText(const QString &text)
         return;
     }
     m_text = text;
+    // Stamp a free-form draft (one written without engaging a routine) with the
+    // day it was first written, so the midnight/launch rollover can scope it.
+    if (!m_draftStartedAt.isValid() && !m_text.trimmed().isEmpty()) {
+        m_draftStartedAt = QDateTime::currentDateTime();
+    }
     emit textChanged();
     m_saveTimer.start();
 }
@@ -84,7 +98,7 @@ QString NotesStore::todayCombinedNotes() const
         }
         chunks.append(formatSession(note));
     }
-    if (!m_text.trimmed().isEmpty()) {
+    if (draftIsForToday()) {
         SessionNote pending;
         pending.routineName = m_draftRoutineName.isEmpty() ? QStringLiteral("CURRENT DRAFT") : m_draftRoutineName;
         pending.startedAt = m_draftStartedAt.isValid() ? m_draftStartedAt : QDateTime::currentDateTime();
@@ -105,7 +119,7 @@ int NotesStore::todayNoteCount() const
             ++count;
         }
     }
-    if (!m_text.trimmed().isEmpty()) {
+    if (draftIsForToday()) {
         ++count;
     }
     return count;
@@ -144,7 +158,7 @@ QVariantList NotesStore::availableDates() const
             counts[date] += 1;
         }
     }
-    if (!m_text.trimmed().isEmpty()) {
+    if (draftIsForToday()) {
         counts[QDate::currentDate()] += 1;
     }
 
@@ -181,7 +195,7 @@ QString NotesStore::combinedNotesForDate(const QString &date) const
         }
         chunks.append(formatSession(note));
     }
-    if (target == QDate::currentDate() && !m_text.trimmed().isEmpty()) {
+    if (target == QDate::currentDate() && draftIsForToday()) {
         SessionNote pending;
         pending.routineName = m_draftRoutineName.isEmpty() ? QStringLiteral("CURRENT DRAFT") : m_draftRoutineName;
         pending.startedAt = m_draftStartedAt.isValid() ? m_draftStartedAt : QDateTime::currentDateTime();
@@ -209,7 +223,7 @@ QVariantMap NotesStore::timelineSummaryForDate(const QString &date) const
             ++noteCount;
         }
     }
-    if (target == QDate::currentDate() && !m_text.trimmed().isEmpty()) {
+    if (target == QDate::currentDate() && draftIsForToday()) {
         ++noteCount;
     }
 
@@ -250,7 +264,7 @@ QVariantList NotesStore::timelineForDate(const QString &date) const
         rows.append(entry);
     }
 
-    if (target == QDate::currentDate() && !m_text.trimmed().isEmpty()) {
+    if (target == QDate::currentDate() && draftIsForToday()) {
         const QDateTime started = m_draftStartedAt.isValid() ? m_draftStartedAt.toLocalTime() : QDateTime::currentDateTime();
         QVariantMap entry;
         entry.insert(QStringLiteral("type"), QStringLiteral("draft"));
@@ -380,6 +394,65 @@ void NotesStore::onRoutineSessionFinished(const QString &routineId,
     emit textChanged();
     emit draftChanged();
     emit archiveChanged();
+}
+
+bool NotesStore::draftIsForToday() const
+{
+    if (m_text.trimmed().isEmpty()) {
+        return false;
+    }
+    // An undated draft is treated as today's until it gets a timestamp.
+    if (!m_draftStartedAt.isValid()) {
+        return true;
+    }
+    return m_draftStartedAt.toLocalTime().date() == QDate::currentDate();
+}
+
+void NotesStore::rolloverStaleDraft()
+{
+    // Nothing to do unless there's a non-empty draft stamped before today.
+    if (m_text.trimmed().isEmpty() || !m_draftStartedAt.isValid()) {
+        return;
+    }
+    const QDate draftDate = m_draftStartedAt.toLocalTime().date();
+    if (draftDate >= QDate::currentDate()) {
+        return;
+    }
+
+    // Preserve the work: archive it under the day it was actually written (so it
+    // shows in that day's timeline) rather than silently dropping it. minutes=0
+    // and result "carried" mark it as a rolled-over note, not a focus session.
+    SessionNote note;
+    note.routineId = m_draftRoutineId;
+    note.routineName = m_draftRoutineName.isEmpty() ? QStringLiteral("CARRIED NOTE")
+                                                    : m_draftRoutineName;
+    note.minutes = 0;
+    note.result = QStringLiteral("carried");
+    note.startedAt = m_draftStartedAt;
+    note.endedAt = m_draftStartedAt;
+    note.sessionId = sessionIdFromTimestamp(note.endedAt) + QStringLiteral("-") + safeSlug(note.routineName);
+    note.text = m_text;
+    archiveSession(note);
+
+    // Clear the live editor so today starts blank.
+    m_text.clear();
+    m_draftRoutineId.clear();
+    m_draftRoutineName.clear();
+    m_draftStartedAt = {};
+    saveDraft();
+
+    emit textChanged();
+    emit draftChanged();
+    emit archiveChanged();
+}
+
+void NotesStore::scheduleMidnightRollover()
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    // A second past midnight avoids landing exactly on the boundary.
+    const QDateTime nextMidnight(now.date().addDays(1), QTime(0, 0, 1));
+    const qint64 ms = now.msecsTo(nextMidnight);
+    m_midnightTimer.start(static_cast<int>(qBound<qint64>(1000, ms, 24LL * 60 * 60 * 1000)));
 }
 
 void NotesStore::loadDraft()

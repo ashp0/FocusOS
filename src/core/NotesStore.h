@@ -68,6 +68,14 @@ private:
     void loadArchive();
     void archiveSession(const SessionNote &note);
     void writeSessionFile(const SessionNote &note) const;
+    // Daily scoping. The live draft belongs to the day it was started/last
+    // written; once a new day begins it is no longer "today's note". On launch
+    // and at midnight we archive a leftover draft under its own day and clear
+    // the live editor so today starts blank. draftIsForToday() is the display
+    // guard the "Today's Notes" surfaces use in the meantime.
+    bool draftIsForToday() const;
+    void rolloverStaleDraft();
+    void scheduleMidnightRollover();
     static QString dataDirectory();
     static QString sessionsDirectory();
     static QString draftPath();
@@ -80,5 +88,6 @@ private:
     QString m_draftRoutineName;
     QDateTime m_draftStartedAt;
     QTimer m_saveTimer;
+    QTimer m_midnightTimer;
     QVector<SessionNote> m_archive;
 };

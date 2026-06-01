@@ -23,6 +23,7 @@ public:
     void quitBackgroundApps(const QStringList &allowedCommandLines) override;
     void lockScreen() override;
     void unlockScreen() override;
+    void sleepDisplay() override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void dropNetworkPolicy() override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;

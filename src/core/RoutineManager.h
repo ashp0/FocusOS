@@ -56,6 +56,10 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(int finishedSessionMinutes READ finishedSessionMinutes NOTIFY sessionPromptChanged)
     Q_PROPERTY(QString finishedSessionResult READ finishedSessionResult NOTIFY sessionPromptChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
+    // Smart pause (Task 4). 0 = running, 1 = idle pause (auto-resumes on
+    // keyboard input / window-focus change), 2 = manual pause (stays paused
+    // until the user resumes; a persistent banner reminds them).
+    Q_PROPERTY(int pauseMode READ pauseMode NOTIFY pauseModeChanged)
     Q_PROPERTY(bool editMode READ editMode WRITE setEditMode NOTIFY editModeChanged)
     Q_PROPERTY(bool desktopShellSupported READ desktopShellSupported CONSTANT)
     Q_PROPERTY(bool desktopShellRunning READ desktopShellRunning NOTIFY desktopShellChanged)
@@ -117,6 +121,7 @@ public:
     int finishedSessionMinutes() const;
     QString finishedSessionResult() const;
     bool paused() const;
+    int pauseMode() const;
     bool editMode() const;
     void setEditMode(bool enabled);
     bool desktopShellSupported() const;
@@ -135,7 +140,10 @@ public:
 
     Q_INVOKABLE void engage(const QString &routineId);
     Q_INVOKABLE void abortPendingRoutineStart();
+    // Single press: toggle between running and an "idle pause" that auto-resumes.
     Q_INVOKABLE void togglePause();
+    // Double press: a "manual pause" that never auto-resumes (persistent banner).
+    Q_INVOKABLE void manualPause();
     Q_INVOKABLE void endActiveRoutine();
     Q_INVOKABLE void closeOtherAccess();
     Q_INVOKABLE void launchDesktopShell();
@@ -153,6 +161,10 @@ public:
     // 30-minute auto-lock (see ctor).
     Q_INVOKABLE void notifyActivity();
     Q_INVOKABLE bool signOutSupported() const;
+    // Wired to IdleMonitor's keyboard/window-focus signal: while the timer is in
+    // an idle pause, meaningful user activity (a keypress or window-focus change,
+    // never mouse movement alone) auto-resumes it. No-op for a manual pause.
+    void onResumeHint();
     // Log the user out of their account / session (returns to the login
     // screen). Admin-gated by the caller (settings access).
     Q_INVOKABLE void signOut();
@@ -171,6 +183,9 @@ public slots:
     // (see main.cpp on Linux). Slots are still callable from QML.
     void lockScreen();
     void unlockScreen();
+    // Sleep the physical display (DPMS off) without engaging the lock overlay.
+    // Exposed for the Settings-authorization panel's "sleep display" button.
+    Q_INVOKABLE void sleepDisplay();
 
 signals:
     void activeChanged();
@@ -179,6 +194,7 @@ signals:
     void configChanged();
     void sessionPromptChanged();
     void pausedChanged();
+    void pauseModeChanged();
     void editModeChanged();
     void desktopShellChanged();
     void routineCountChanged();
@@ -216,6 +232,7 @@ private:
     void finishOtherAccess();
     void emitActiveSessionProgress();
     void emitRowsChanged();
+    void resumeRoutine();
     bool startRoutine(const Routine &routine, bool applyNetworkLock, QString *errorMessage = nullptr);
     bool launchRoutineTargets(const Routine &routine, QString *errorMessage = nullptr);
     void setStatusMessage(const QString &message);
@@ -240,6 +257,9 @@ private:
     // Open-ended continuation state (Task 5): active() stays true with no
     // countdown timer running. Holds the id of the routine being continued.
     bool m_openEnded = false;
+    // Smart pause (Task 4): true while the current pause is a manual pause (no
+    // auto-resume). Meaningless when the timer isn't paused.
+    bool m_manualPause = false;
     QString m_finishedRoutineId;
     // In-app screen lock (Task 6).
     bool m_screenLocked = false;

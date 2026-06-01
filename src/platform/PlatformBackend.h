@@ -23,6 +23,10 @@ public:
     // restores it. No-op where unsupported (the QML black overlay still shows).
     virtual void lockScreen() {}
     virtual void unlockScreen() {}
+    // Put the physical display to sleep (DPMS off) WITHOUT engaging the in-app
+    // lock overlay — the monitor wakes again on the next input. No-op where
+    // unsupported.
+    virtual void sleepDisplay() {}
     virtual bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) = 0;
     virtual void dropNetworkPolicy() = 0;
     virtual bool openSystemTerminal(QString *errorMessage = nullptr) = 0;

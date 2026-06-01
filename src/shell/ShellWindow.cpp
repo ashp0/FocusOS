@@ -73,6 +73,9 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 
     connect(routineManager, &RoutineManager::activeChanged, this, &ShellWindow::updateProgressOverlay);
     connect(routineManager, &RoutineManager::overlayProgressEnabledChanged, this, &ShellWindow::updateProgressOverlay);
+    // A manual pause must surface its banner over the routine apps even when the
+    // progress overlay is otherwise disabled — keep the overlay window mapped.
+    connect(routineManager, &RoutineManager::pauseModeChanged, this, &ShellWindow::updateProgressOverlay);
     updateProgressOverlay();
 
 #if defined(Q_OS_LINUX)
@@ -158,7 +161,8 @@ void ShellWindow::updateProgressOverlay()
 {
     const bool shouldShow = m_routineManager &&
                             m_routineManager->active() &&
-                            m_routineManager->overlayProgressEnabled();
+                            (m_routineManager->overlayProgressEnabled() ||
+                             m_routineManager->pauseMode() == 2);
 
     if (shouldShow) {
         if (QScreen *screen = QGuiApplication::primaryScreen()) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAudioOutput>
+#include <QMediaDevices>
 #include <QMediaPlayer>
 #include <QObject>
 #include <QPropertyAnimation>
@@ -57,7 +58,11 @@ private:
     qreal configuredVolume() const;
     qreal lowVolume() const;
     void setImportStatus(const QString &status);
+    // Bind m_audioOutput to the current default output device, restarting
+    // playback if a device only appeared after startup (the Linux silence bug).
+    void rebindDefaultAudioDevice();
 
+    QMediaDevices m_mediaDevices;
     QMediaPlayer m_player;
     QAudioOutput m_audioOutput;
     QPropertyAnimation m_fadeAnimation;

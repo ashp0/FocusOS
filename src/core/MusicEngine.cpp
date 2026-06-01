@@ -105,6 +105,15 @@ MusicEngine::MusicEngine(QObject *parent)
     QDir().mkpath(musicDirectory());
     ensureMusicFolderReadme();
     m_player.setAudioOutput(&m_audioOutput);
+    // Bind explicitly to the current default sink and follow device hot-plug.
+    // This is the Linux "sound stopped working" fix: on a bare kwin_wayland
+    // session PipeWire/PulseAudio often comes up *after* FocusOS, and a
+    // QAudioOutput constructed before any sink exists stays bound to a null
+    // device — silent forever, even once audio is available. Re-binding when a
+    // device appears (see rebindDefaultAudioDevice) restores playback.
+    m_audioOutput.setDevice(QMediaDevices::defaultAudioOutput());
+    connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged,
+            this, &MusicEngine::rebindDefaultAudioDevice);
     m_audioOutput.setVolume(0.0);
     m_fadeAnimation.setEasingCurve(QEasingCurve::InOutQuad);
 
@@ -588,6 +597,26 @@ void MusicEngine::applyEngagedState(int fadeMs)
         fadeTo(lowVolume(), fadeMs, false);
     } else {
         fadeTo(0.0, fadeMs, true);
+    }
+}
+
+void MusicEngine::rebindDefaultAudioDevice()
+{
+    const QAudioDevice device = QMediaDevices::defaultAudioOutput();
+    if (device.isNull() || m_audioOutput.device() == device) {
+        return;
+    }
+
+    const qreal currentVolume = m_audioOutput.volume();
+    m_audioOutput.setDevice(device);
+    m_audioOutput.setVolume(currentVolume);
+    qCDebug(lcMusic, "rebound audio output to '%s'", qPrintable(device.description()));
+
+    // A sink that only just appeared means startup playback was bound to a null
+    // device and produced silence — (re)start it now that there's somewhere to
+    // play to.
+    if (m_enabled && available() && m_player.playbackState() != QMediaPlayer::PlayingState) {
+        applyEngagedState(800);
     }
 }
 

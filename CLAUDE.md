@@ -61,9 +61,11 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
 
 ## Gotchas
 
-- Routine apps + shell live on **KDE virtual desktop 2**; `restoreShellPlacement()`
-  switches back on end/expire/terminate. Desktop switching polls KWin's `current`
-  property (via QDBusInterface, not `qdbus`) before launching apps to avoid a race.
+- Routine apps + shell all run on the user's **single current desktop** — FocusOS
+  no longer spins up a separate "Focus" virtual desktop or pins windows to it (that
+  was just churn + an extra KWin-scripting surface). `restoreShellPlacement()` is a
+  no-op on Linux now; ShellWindow raises the shell back to the foreground when a
+  routine ends.
 - During a routine, LinuxBackend runs a ~1.5s lockdown watchdog that pkills
   launchers (krunner/plasmashell/kickoff/rofi/dmenu/wofi/etc.).
 - nftables blocking needs `CAP_NET_ADMIN`.

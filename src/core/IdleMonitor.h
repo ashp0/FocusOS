@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <Qt>
 #include <QTimer>
 
 class QEvent;
@@ -26,6 +27,14 @@ public:
     // Force-clear the idle state (e.g. the idle overlay swallowing the first tap).
     Q_INVOKABLE void wake();
 
+    bool suppressed() const { return m_suppressed; }
+    // Suppress idle DETECTION (the starfield screensaver + display-sleep-on-idle)
+    // while a routine is engaged: a focused user sitting idle is working, not
+    // away, so we never blank on them. Wired to RoutineManager::active in
+    // main.cpp. Auto-resume of an idle-paused timer is unaffected — that runs off
+    // resumeHint (keyboard/focus events), not this idle timer.
+    void setSuppressed(bool suppressed);
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -34,12 +43,20 @@ signals:
     void timeoutMsChanged();
     // Emitted on every user input event (cheap; no allocation).
     void activity();
+    // Emitted only on a keyboard press/release or a window-focus change —
+    // deliberately NOT on mouse movement. Drives the idle-pause auto-resume
+    // (Task 4): coming back to the keyboard / refocusing resumes the timer, but
+    // a passing mouse jitter does not.
+    void resumeHint();
 
 private:
     void noteActivity();
     void goIdle();
+    bool focusOsIsActive() const;
+    void onApplicationStateChanged(Qt::ApplicationState state);
 
     bool m_idle = false;
+    bool m_suppressed = false;
     int m_timeoutMs = 5 * 60 * 1000; // 5 minutes
     QTimer m_timer;
 };

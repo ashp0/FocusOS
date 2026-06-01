@@ -132,7 +132,10 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
         // most recent remaining-time, not the start-of-session value.
         writeActiveSession();
     });
-    connect(&m_routineTimer, &FocusTimer::pausedChanged, this, &RoutineManager::pausedChanged);
+    connect(&m_routineTimer, &FocusTimer::pausedChanged, this, [this] {
+        emit pausedChanged();
+        emit pauseModeChanged();
+    });
     connect(&m_routineTimer, &FocusTimer::expired, this, &RoutineManager::onRoutineExpired);
 
     m_accessTimer.setInterval(1000);
@@ -322,6 +325,13 @@ void RoutineManager::lockScreen()
     }
 }
 
+void RoutineManager::sleepDisplay()
+{
+    if (m_backend) {
+        m_backend->sleepDisplay();
+    }
+}
+
 void RoutineManager::unlockScreen()
 {
     if (!m_screenLocked) {
@@ -396,17 +406,70 @@ void RoutineManager::setEditMode(bool enabled)
     emit editModeChanged();
 }
 
+int RoutineManager::pauseMode() const
+{
+    if (!m_routineTimer.paused()) {
+        return 0;
+    }
+    return m_manualPause ? 2 : 1;
+}
+
 void RoutineManager::togglePause()
 {
     if (!active()) {
         return;
     }
     if (m_routineTimer.paused()) {
-        m_routineTimer.resume();
-    } else {
+        // A single click resumes from either pause mode (this is how the user
+        // manually unpauses a manual pause).
+        resumeRoutine();
+        return;
+    }
+    // Single click on a running timer = idle pause: it auto-resumes the moment
+    // the user comes back (keyboard / window focus), so stepping away briefly
+    // doesn't require remembering to unpause. Idleness itself never pauses —
+    // this is always a deliberate click.
+    m_manualPause = false;
+    m_routineTimer.pause();
+    emit pauseModeChanged();
+    writeActiveSession(true);
+}
+
+void RoutineManager::manualPause()
+{
+    if (!active()) {
+        return;
+    }
+    // Double click = manual pause: never auto-resumes. Upgrades an existing idle
+    // pause in place. The persistent banner (QML) makes sure the user can't
+    // forget it's paused — that's how logged time used to get lost.
+    if (!m_routineTimer.paused()) {
         m_routineTimer.pause();
     }
+    if (!m_manualPause) {
+        m_manualPause = true;
+    }
+    emit pauseModeChanged();
     writeActiveSession(true);
+}
+
+void RoutineManager::resumeRoutine()
+{
+    if (!active() || !m_routineTimer.paused()) {
+        return;
+    }
+    m_manualPause = false;
+    m_routineTimer.resume();
+    emit pauseModeChanged();
+    writeActiveSession(true);
+}
+
+void RoutineManager::onResumeHint()
+{
+    // Idle pause only: a manual pause is deliberate and stays put.
+    if (active() && m_routineTimer.paused() && !m_manualPause) {
+        resumeRoutine();
+    }
 }
 
 int RoutineManager::routineCount() const
@@ -1358,6 +1421,10 @@ void RoutineManager::writeActiveSession(bool force) const
     object.insert(QStringLiteral("remaining_seconds"), m_routineTimer.remainingSeconds());
     object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
     object.insert(QStringLiteral("network_lock"), routine.networkLock);
+    // Preserve the pause posture so a crash/respawn while paused doesn't silently
+    // resume counting time the user didn't intend (Task 4 — don't mislog time).
+    object.insert(QStringLiteral("paused"), m_routineTimer.paused());
+    object.insert(QStringLiteral("manual_pause"), m_manualPause);
 
     QSaveFile file(activeSessionPath());
     if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -1429,6 +1496,16 @@ void RoutineManager::resumeActiveSessionIfPresent()
     emit activeChanged();
     emitRowsChanged();
     m_routineTimer.start(remaining);
+
+    // Restore a paused posture if the checkpoint was written while paused, so the
+    // user comes back to exactly the state they left (and a manual pause keeps
+    // its banner and stays put rather than quietly resuming).
+    if (object.value(QStringLiteral("paused")).toBool(false)) {
+        m_manualPause = object.value(QStringLiteral("manual_pause")).toBool(false);
+        m_routineTimer.pause();
+        emit pauseModeChanged();
+    }
+
     writeActiveSession(true);
     updateDisplaySleepInhibit();
 
@@ -1567,6 +1644,7 @@ bool RoutineManager::startRoutine(const Routine &routine, bool applyNetworkLock,
 
     m_activeRoutineId = routine.id;
     m_activeStartedAt = QDateTime::currentDateTimeUtc();
+    m_manualPause = false;
     emit activeChanged();
     emitRowsChanged();
     m_routineTimer.start(routine.timeLimitMinutes * 60);

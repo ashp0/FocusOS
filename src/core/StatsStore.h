@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QObject>
+#include <QTimer>
 #include <QVariantList>
 
 struct RoutineSession
@@ -75,11 +76,16 @@ private:
     int displayMinutesForSeconds(int seconds) const;
     int sessionSeconds(const RoutineSession &session) const;
     void importInterruptedActiveSession();
+    // "Today" figures are computed against QDate::currentDate(), so they silently
+    // go stale if FocusOS is left running across midnight. A timer that fires at
+    // the day boundary re-emits statsChanged() so the UI rolls over on its own.
+    void scheduleMidnightRefresh();
 
     QVector<RoutineSession> m_sessions;
     RoutineSession m_activeSession;
     bool m_hasActiveSession = false;
     int m_dailyTargetMinutes = 180;
+    QTimer m_midnightTimer;
     // Last time save() actually wrote to disk. Live progress ticks every second
     // but only persist occasionally so the SSD isn't hammered; final-state and
     // settings writes still go through immediately.

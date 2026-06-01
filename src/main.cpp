@@ -24,6 +24,7 @@
 #include <QLockFile>
 #include <QQuickStyle>
 #include <QStandardPaths>
+#include <QTimer>
 
 #if defined(Q_OS_LINUX)
 #include <QDBusConnection>
@@ -167,6 +168,39 @@ int main(int argc, char *argv[])
     // Any user input re-arms the unlock panel's 30-minute inactivity auto-lock.
     QObject::connect(&idleMonitor, &IdleMonitor::activity,
                      &routineManager, &RoutineManager::notifyActivity);
+    // A keyboard press / window-focus change auto-resumes an idle pause (Task 4).
+    QObject::connect(&idleMonitor, &IdleMonitor::resumeHint,
+                     &routineManager, &RoutineManager::onResumeHint);
+    // Idle detection (starfield screensaver + display-sleep-on-idle) only runs on
+    // the home screen — never during an engaged routine, where a focused, idle
+    // user is working rather than away. Auto-resume is unaffected (resumeHint is
+    // event-driven, not tied to the idle timer).
+    QObject::connect(&routineManager, &RoutineManager::activeChanged, &idleMonitor, [&] {
+        idleMonitor.setSuppressed(routineManager.active());
+    });
+    idleMonitor.setSuppressed(routineManager.active()); // a resumed session may already be active
+
+    // Display-sleep-on-idle. The idle starfield appears after IdleMonitor's
+    // timeout (and only while FocusOS itself is focused); a short while later we
+    // also blank the physical panel to save power. The next input wakes both.
+    // Suppressed while a routine is actively holding the display awake so we
+    // don't fight its keep-awake inhibitor.
+    QTimer displaySleepTimer;
+    displaySleepTimer.setSingleShot(true);
+    displaySleepTimer.setInterval(2 * 60 * 1000); // 2 min after the idle screen
+    QObject::connect(&displaySleepTimer, &QTimer::timeout, &routineManager, [&] {
+        if (idleMonitor.idle() &&
+            !(routineManager.active() && routineManager.displayStaysAwake())) {
+            backend.sleepDisplay();
+        }
+    });
+    QObject::connect(&idleMonitor, &IdleMonitor::idleChanged, &displaySleepTimer, [&] {
+        if (idleMonitor.idle()) {
+            displaySleepTimer.start();
+        } else {
+            displaySleepTimer.stop();
+        }
+    });
 
 #if defined(Q_OS_LINUX)
     // Power-key → screen lock (Task 6). logind is configured (90-focusos-logind

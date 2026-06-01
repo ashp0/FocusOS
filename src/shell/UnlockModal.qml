@@ -615,6 +615,39 @@ Item {
                 font.letterSpacing: 0
             }
 
+            // SLEEP DISPLAY — left of the "SETTINGS AUTHORIZATION" title, shown
+            // on the pre-unlock (locked) panel. Turns the monitor off without
+            // engaging the in-app lock; the next keypress / mouse move wakes it.
+            Rectangle {
+                visible: !root.adminUnlocked
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(120, sleepDisplayLabel.implicitWidth + 22)
+                height: 30
+                color: sleepDisplayMouse.containsMouse ? Theme.crimsonHot : Theme.crimson
+                border.width: 1
+                border.color: sleepDisplayMouse.containsMouse ? Theme.gold : Theme.goldDim
+
+                Text {
+                    id: sleepDisplayLabel
+                    anchors.centerIn: parent
+                    text: "☾ SLEEP DISPLAY"
+                    color: Theme.gold
+                    font.family: root.headerFont
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                }
+
+                MouseArea {
+                    id: sleepDisplayMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: routineManager.sleepDisplay()
+                }
+            }
+
             // LOCK SCREEN (Task 6) — top-left of the Settings title bar, only
             // after the code unlock. Blanks the display; any input restores it.
             Rectangle {

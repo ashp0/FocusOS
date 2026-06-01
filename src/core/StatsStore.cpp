@@ -47,6 +47,21 @@ StatsStore::StatsStore(QObject *parent)
     load();
     importInterruptedActiveSession();
     save();
+
+    m_midnightTimer.setSingleShot(true);
+    connect(&m_midnightTimer, &QTimer::timeout, this, [this] {
+        emit statsChanged();   // "today" rolls over to the new date
+        scheduleMidnightRefresh();
+    });
+    scheduleMidnightRefresh();
+}
+
+void StatsStore::scheduleMidnightRefresh()
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    const QDateTime nextMidnight(now.date().addDays(1), QTime(0, 0, 1));
+    const qint64 ms = now.msecsTo(nextMidnight);
+    m_midnightTimer.start(static_cast<int>(qBound<qint64>(1000, ms, 24LL * 60 * 60 * 1000)));
 }
 
 QVariantList StatsStore::dailyStats() const
