@@ -59,19 +59,61 @@ Item {
 
         property var points: []
 
+        // Only animate while the screen can actually be seen — paused when the app
+        // is unfocused or no routine is active (MissionView is hidden on the home
+        // screen), so the drift costs nothing then and doesn't spin the CPU behind
+        // a focused routine app. routineManager.active is the real gate: a child
+        // Canvas's own `visible` stays true even when an ancestor hides it.
+        property bool animationActive: Qt.application.active && routineManager.active
+
         function seed() {
             const count = 14
             const next = []
             for (let i = 0; i < count; ++i) {
+                // Slow drift velocity (fraction of the field per tick) so the
+                // constellation breathes across the screen instead of sitting frozen.
+                const ang = Math.random() * Math.PI * 2
+                const sp = 0.00012 + Math.random() * 0.00022
                 next.push({
                     x: 0.05 + Math.random() * 0.9,
                     y: 0.1 + Math.random() * 0.8,
+                    vx: Math.cos(ang) * sp,
+                    vy: Math.sin(ang) * sp,
                     r: 1.2 + Math.random() * 2,
-                    alpha: 0.18 + Math.random() * 0.35
+                    alpha: 0.18 + Math.random() * 0.35,
+                    // Decide the link to the next star once, at seed time — deciding
+                    // it per-paint would make the lines flicker now that the field
+                    // repaints continuously.
+                    link: Math.random() < 0.5
                 })
             }
             points = next
             requestPaint()
+        }
+
+        function tick() {
+            if (points.length <= 0) {
+                seed()
+                return
+            }
+            for (let i = 0; i < points.length; ++i) {
+                const p = points[i]
+                p.x += p.vx
+                p.y += p.vy
+                // Wrap softly around the edges so the field never drains away.
+                if (p.x < -0.05) p.x = 1.05
+                else if (p.x > 1.05) p.x = -0.05
+                if (p.y < -0.05) p.y = 1.05
+                else if (p.y > 1.05) p.y = -0.05
+            }
+            requestPaint()
+        }
+
+        Timer {
+            interval: 120
+            running: constellation.animationActive
+            repeat: true
+            onTriggered: constellation.tick()
         }
 
         onPaint: {
@@ -81,7 +123,7 @@ Item {
             ctx.strokeStyle = "rgba(180,180,210,0.06)"
             ctx.lineWidth = 1
             for (let i = 0; i < points.length - 1; ++i) {
-                if (Math.random() < 0.5) continue
+                if (!points[i].link) continue
                 const a = points[i]
                 const b = points[i + 1]
                 ctx.beginPath()

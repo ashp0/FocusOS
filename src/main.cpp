@@ -140,6 +140,12 @@ int main(int argc, char *argv[])
     Updater updater;
     IdleMonitor idleMonitor;
 
+    // The KGlobalAccel registration below is inert unless the global-shortcuts
+    // daemon is running, and a bare kwin_wayland session starts no Plasma
+    // daemons — so bring it up first. Without this the volume/brightness keys
+    // only fire while FocusOS has focus. No-op on macOS.
+    backend.ensureGlobalShortcutsDaemon();
+
     // Claim the volume/brightness media keys session-wide so they work over a
     // focused routine app, not just inside the FocusOS shell. No-op on builds
     // without KF6GlobalAccel (e.g. macOS).
@@ -250,6 +256,13 @@ int main(int argc, char *argv[])
                        &updater,
                        &idleMonitor);
     window.showFocusShell();
+
+    // Run the user's session autostart items (XDG autostart entries + the
+    // editable ~/.focusos/startup.sh) once the shell is up, so anything that
+    // wants the compositor/session env — input remappers like Toshy, tray
+    // agents — comes up like it would in a normal Plasma login. Guarded to run
+    // once per login session, not on watchdog respawns. No-op on macOS.
+    backend.runSessionStartupItems();
 
     return app.exec();
 }

@@ -67,8 +67,13 @@ Item {
             const isFlasher = Math.random() < 0.22
             // Bias direction away from dead-centre so stars don't pile up at the
             // vanishing point; magnitude shapes how quickly they reach an edge.
-            const ux = (Math.random() * 2 - 1)
-            const uy = (Math.random() * 2 - 1)
+            // Sampling in polar with a magnitude floor guarantees this — a uniform
+            // square sample (the old code) let ux/uy land near 0, leaving those
+            // stars glued to the centre as z shrank instead of streaming outward.
+            const ang = Math.random() * Math.PI * 2
+            const mag = 0.22 + Math.random() * 1.05
+            const ux = Math.cos(ang) * mag
+            const uy = Math.sin(ang) * mag
             return {
                 ux: ux,
                 uy: uy,

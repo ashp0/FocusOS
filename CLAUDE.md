@@ -69,8 +69,19 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
 - During a routine, LinuxBackend runs a ~1.5s lockdown watchdog that pkills
   launchers (krunner/plasmashell/kickoff/rofi/dmenu/wofi/etc.).
 - nftables blocking needs `CAP_NET_ADMIN`.
-- Bare kwin_wayland session has no Plasma daemons: media keys need KGlobalAccel,
-  audio needs a Qt multimedia backend plugin, brightness needs `brightnessctl`.
+- Bare kwin_wayland session has no Plasma daemons: media keys need KGlobalAccel
+  (KGlobalAccel is inert unless `kglobalacceld` runs, so `main()` starts it via
+  `backend.ensureGlobalShortcutsDaemon()` before MediaKeys registers), audio needs
+  a Qt multimedia backend plugin, brightness needs `brightnessctl`.
+- No Plasma session = nothing runs the user's autostart items. `main()` calls
+  `backend.runSessionStartupItems()` once per login (XDG_RUNTIME_DIR marker guards
+  against re-running on watchdog respawn): it launches `~/.config/autostart/*.desktop`
+  entries (honoring Hidden / OnlyShowIn / NotShowIn) plus a user-editable
+  `~/.focusos/startup.sh` (edited from the SYSTEM tab of the Settings modal via
+  `SystemStatus::{read,write}StartupScript`). This is the Toshy / tray-agent hook.
+- Inspiration media (AmbientLayer) is home-screen wallpaper only; it's suppressed
+  during a routine (`showMedia: !routineManager.active`). `showMedia:false` now also
+  tears down the MediaPlayer so a hidden layer never decodes video.
 - The kiosk watchdog respawns FocusOS on quit; real sign-out must terminate the
   logind session (`loginctl`).
 - The user treats extra `QQuickView`s as unwanted "second processes" — keep to one

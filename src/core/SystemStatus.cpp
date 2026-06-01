@@ -446,3 +446,35 @@ void SystemStatus::refreshStatus()
     m_brightnessAvailable = brightness.available;
     emit statusChanged();
 }
+
+QString SystemStatus::startupScriptPath() const
+{
+    return QDir::homePath() + QStringLiteral("/.focusos/startup.sh");
+}
+
+QString SystemStatus::readStartupScript() const
+{
+    QFile file(startupScriptPath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
+bool SystemStatus::writeStartupScript(const QString &contents)
+{
+    const QString path = startupScriptPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+    file.write(contents.toUtf8());
+    file.close();
+    // Make it executable too, so a user who adds a shebang and runs it by hand
+    // gets the behavior they expect (the backend runs it through a shell either
+    // way, so this is purely a courtesy).
+    file.setPermissions(file.permissions()
+                        | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    return true;
+}

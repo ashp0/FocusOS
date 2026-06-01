@@ -1683,3 +1683,177 @@ void LinuxBackend::startWatchdog(const QString &binaryPath)
     }
     QProcess::startDetached(shell, args);
 }
+
+namespace {
+
+// True if any running process's /proc/<pid>/comm matches one of `names`. comm is
+// truncated to 15 chars by the kernel, so compare against that prefix too.
+bool anyProcessRunning(const QStringList &names)
+{
+    QDir proc(QStringLiteral("/proc"));
+    const QStringList pids = proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &pid : pids) {
+        bool isPid = false;
+        pid.toLongLong(&isPid);
+        if (!isPid) {
+            continue;
+        }
+        QFile commFile(QStringLiteral("/proc/%1/comm").arg(pid));
+        if (!commFile.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QString comm = QString::fromUtf8(commFile.readAll()).trimmed();
+        if (comm.isEmpty()) {
+            continue;
+        }
+        for (const QString &name : names) {
+            if (comm == name || comm == name.left(15)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Launch one XDG autostart .desktop entry, honoring the spec fields that say
+// "don't". Returns without doing anything when the entry is hidden/disabled.
+void launchAutostartEntry(const QString &desktopFilePath)
+{
+    QSettings entry(desktopFilePath, QSettings::IniFormat);
+    entry.beginGroup(QStringLiteral("Desktop Entry"));
+    // Hidden means "logically deleted" per the spec; the autostart-enabled key is
+    // how toolkits let a user toggle an entry off without removing the file.
+    const bool hidden = entry.value(QStringLiteral("Hidden")).toBool();
+    const QString autostartEnabled =
+        entry.value(QStringLiteral("X-GNOME-Autostart-enabled")).toString().trimmed();
+    // We launch as a KDE session, so respect entries scoped to a specific desktop:
+    // OnlyShowIn must list KDE; NotShowIn must not. (Both are ';'-delimited.)
+    const QStringList onlyShowIn =
+        entry.value(QStringLiteral("OnlyShowIn")).toString().split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    const QStringList notShowIn =
+        entry.value(QStringLiteral("NotShowIn")).toString().split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    entry.endGroup();
+    if (hidden || autostartEnabled.compare(QStringLiteral("false"), Qt::CaseInsensitive) == 0) {
+        return;
+    }
+    if (!onlyShowIn.isEmpty() && !onlyShowIn.contains(QStringLiteral("KDE"))) {
+        return;
+    }
+    if (notShowIn.contains(QStringLiteral("KDE"))) {
+        return;
+    }
+
+    const QStringList parts = desktopExecParts(desktopFilePath);
+    if (parts.isEmpty()) {
+        return;
+    }
+    // Use the KDE-flavored environment so KDE autostart helpers behave as they
+    // would in a normal Plasma login (and kwalletd stays suppressed).
+    startDetachedWithKdeEnvironment(parts.first(), parts.mid(1));
+}
+
+} // namespace
+
+void LinuxBackend::ensureGlobalShortcutsDaemon()
+{
+    // Already up (something started it, or a previous FocusOS launch did) —
+    // nothing to do. KGlobalAccel will bind to whichever instance is running.
+    if (anyProcessRunning({QStringLiteral("kglobalacceld"),
+                           QStringLiteral("kglobalaccel6"),
+                           QStringLiteral("kglobalaccel5")})) {
+        return;
+    }
+
+    // The KF6 daemon is usually shipped in a libexec dir that isn't on PATH, so
+    // probe the common locations as well as PATH. KF5's binary was named with a
+    // version suffix; keep it as a fallback for older installs.
+    QString daemon = firstExecutable({QStringLiteral("kglobalacceld"),
+                                      QStringLiteral("kglobalaccel6"),
+                                      QStringLiteral("kglobalaccel5")});
+    if (daemon.isEmpty()) {
+        static const QStringList libexecCandidates {
+            QStringLiteral("/usr/libexec/kglobalacceld"),
+            QStringLiteral("/usr/lib/kglobalacceld"),
+            QStringLiteral("/usr/lib/x86_64-linux-gnu/libexec/kglobalacceld"),
+            QStringLiteral("/usr/lib/aarch64-linux-gnu/libexec/kglobalacceld"),
+            QStringLiteral("/usr/lib/x86_64-linux-gnu/kglobalaccel6"),
+        };
+        for (const QString &candidate : libexecCandidates) {
+            if (QFileInfo::exists(candidate)) {
+                daemon = candidate;
+                break;
+            }
+        }
+    }
+    if (daemon.isEmpty()) {
+        return;
+    }
+    startDetachedWithKdeEnvironment(daemon);
+}
+
+void LinuxBackend::runSessionStartupItems()
+{
+    // Run at most once per login session. The respawn watchdog relaunches FocusOS
+    // after a crash/kill, but the rest of the session (and the daemons we started)
+    // is still up — re-running autostart would spawn duplicate agents. A marker in
+    // $XDG_RUNTIME_DIR is the right scope: the kernel wipes that dir on logout, so
+    // a genuine fresh login re-runs the items while a mid-session respawn skips.
+    const QString runtimeDir =
+        QProcessEnvironment::systemEnvironment().value(QStringLiteral("XDG_RUNTIME_DIR"));
+    if (!runtimeDir.isEmpty()) {
+        const QString marker = runtimeDir + QStringLiteral("/focusos-startup-done");
+        if (QFileInfo::exists(marker)) {
+            return;
+        }
+        QFile markerFile(marker);
+        if (markerFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            markerFile.close();
+        }
+    }
+
+    // 1) Standard XDG autostart entries. A bare kwin_wayland session never runs
+    //    these, so the user's tray agents / remappers would otherwise never come
+    //    up. Follow the XDG basedir spec: $XDG_CONFIG_HOME (or ~/.config) plus the
+    //    system config dirs, with earlier dirs shadowing later ones by file name.
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QStringList configDirs;
+    const QString xdgConfigHome = env.value(QStringLiteral("XDG_CONFIG_HOME"));
+    configDirs << (xdgConfigHome.isEmpty() ? QDir::homePath() + QStringLiteral("/.config")
+                                           : xdgConfigHome);
+    const QString xdgConfigDirs = env.value(QStringLiteral("XDG_CONFIG_DIRS"),
+                                            QStringLiteral("/etc/xdg"));
+    configDirs << xdgConfigDirs.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+
+    QSet<QString> seen; // a higher-priority dir's entry shadows lower ones by name
+    for (const QString &dir : configDirs) {
+        QDir autostartDir(dir + QStringLiteral("/autostart"));
+        if (!autostartDir.exists()) {
+            continue;
+        }
+        const QStringList files =
+            autostartDir.entryList({QStringLiteral("*.desktop")}, QDir::Files);
+        for (const QString &file : files) {
+            if (seen.contains(file)) {
+                continue;
+            }
+            seen.insert(file);
+            launchAutostartEntry(autostartDir.absoluteFilePath(file));
+        }
+    }
+
+    // 2) The user-editable startup script (edited from the admin Settings pane).
+    //    Run it through a shell so it can be a plain list of commands without a
+    //    +x bit. Skip an empty/whitespace-only file so we don't spawn a no-op sh.
+    const QString scriptPath = QDir::homePath() + QStringLiteral("/.focusos/startup.sh");
+    QFile script(scriptPath);
+    if (script.exists() && script.open(QIODevice::ReadOnly)) {
+        const QString contents = QString::fromUtf8(script.readAll());
+        script.close();
+        if (!contents.trimmed().isEmpty()) {
+            const QString shell = firstExecutable({QStringLiteral("bash"), QStringLiteral("sh")});
+            if (!shell.isEmpty()) {
+                startDetachedWithKdeEnvironment(shell, {scriptPath});
+            }
+        }
+    }
+}

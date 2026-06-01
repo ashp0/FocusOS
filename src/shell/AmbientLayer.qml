@@ -167,7 +167,10 @@ Item {
     }
 
     function syncMediaLayer() {
-        if (!inspirationAssets || inspirationAssets.length <= 0) {
+        // Layers that don't paint media (the thin star overlay, or the backdrop
+        // while a routine is active) must not run the video pipeline — a hidden
+        // MediaPlayer still decodes frames and burns CPU/GPU for nothing.
+        if (!showMedia || !inspirationAssets || inspirationAssets.length <= 0) {
             assetIndex = -1
             videoPlayer.stop()
             mediaTransitionFactor = 0
@@ -296,6 +299,9 @@ Item {
     }
 
     onInspirationAssetsChanged: syncMediaLayer()
+    // Toggling media visibility (e.g. entering/leaving a routine) tears down or
+    // rebuilds the video pipeline rather than leaving it decoding while hidden.
+    onShowMediaChanged: syncMediaLayer()
 
     Component.onCompleted: {
         syncMediaLayer()

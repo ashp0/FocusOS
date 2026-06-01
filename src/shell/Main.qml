@@ -115,9 +115,13 @@ Item {
     }
 
     // Background ambient layer — space backdrop with starfield + inspiration media.
+    // Inspiration media is only ambient wallpaper for the home screen; while a
+    // routine is active it would be a distraction, so the media is suppressed and
+    // only the starfield backdrop remains.
     AmbientLayer {
         anchors.fill: parent
         z: 0
+        showMedia: !routineManager.active
     }
 
     Rectangle {

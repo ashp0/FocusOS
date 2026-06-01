@@ -17,6 +17,10 @@ Item {
     property string deviceInfoText: ""
     property bool showEnrollmentQr: false
     property var routineDrafts: []
+    // Working copy of ~/.focusos/startup.sh, loaded when the admin pane unlocks
+    // and edited in the SYSTEM tab.
+    property string startupScriptDraft: ""
+    property string startupSaveStatus: ""
     property var settingsTabs: [
         {"index": 0, "code": "01", "label": "MISSION PLAN", "subtitle": "ROUTINES"},
         {"index": 1, "code": "02", "label": "ALLOWED APPS", "subtitle": "GLOBAL"},
@@ -101,6 +105,8 @@ Item {
         adminUnlocked = routineManager.accessGranted
         if (adminUnlocked) {
             loadRoutineDrafts()
+            startupScriptDraft = systemStatus.readStartupScript()
+            startupSaveStatus = ""
         }
         modalOpen = true
         if (!adminUnlocked) {
@@ -868,6 +874,8 @@ Item {
                                 routineManager.unlockOtherAccess()
                                 root.adminUnlocked = true
                                 root.loadRoutineDrafts()
+                                root.startupScriptDraft = systemStatus.readStartupScript()
+                                root.startupSaveStatus = ""
                                 root.activeTab = 0
                                 text = ""
                             } else {
@@ -2355,6 +2363,74 @@ Item {
                         }
 
                         Item { Layout.fillWidth: true }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "SESSION STARTUP"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Shell commands run once at login, after the shell comes up — for autostart helpers a bare session skips (input remappers like Toshy, tray agents). Standard ~/.config/autostart entries run too. Runs once per login, not on a respawn."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    AdminTextArea {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 132
+                        font.family: root.bodyFont
+                        placeholderText: "#!/usr/bin/env bash\n# e.g.\n# toshy-config-start\n# nm-applet &"
+                        text: root.startupScriptDraft
+                        onTextChanged: {
+                            if (text !== root.startupScriptDraft) {
+                                root.startupScriptDraft = text
+                                root.startupSaveStatus = ""
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        AdminButton {
+                            Layout.preferredWidth: 168
+                            Layout.preferredHeight: 34
+                            label: "💾 SAVE STARTUP SCRIPT"
+                            danger: false
+                            onClicked: {
+                                const ok = systemStatus.writeStartupScript(root.startupScriptDraft)
+                                root.startupSaveStatus = ok
+                                    ? "SAVED — applies on next login"
+                                    : "SAVE FAILED — could not write " + systemStatus.startupScriptPath()
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.startupSaveStatus
+                            color: Theme.textDim
+                            wrapMode: Text.WordWrap
+                            font.family: root.bodyFont
+                            font.pixelSize: 10
+                            font.letterSpacing: 0
+                        }
                     }
 
                     Item { Layout.fillHeight: true }

@@ -41,6 +41,8 @@ public:
     bool signOut(QString *errorMessage = nullptr) override;
     void setDisplaySleepInhibited(bool inhibited) override;
     void releaseDisplaySleepInhibitors() override;
+    void ensureGlobalShortcutsDaemon() override;
+    void runSessionStartupItems() override;
 
 private:
     void startLockdownWatchdog();

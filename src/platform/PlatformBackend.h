@@ -73,6 +73,19 @@ public:
         return false;
     }
 
+    // Make sure the global-shortcuts daemon (kglobalacceld) is running so the
+    // volume/brightness media keys FocusOS registers via KGlobalAccel actually
+    // fire session-wide — not just when the shell has focus. A bare kwin_wayland
+    // session starts no Plasma daemons, so without this the keys are inert
+    // whenever another app is focused. Idempotent; no-op where unsupported.
+    virtual void ensureGlobalShortcutsDaemon() {}
+    // Run the user's session autostart items once, at launch: the standard XDG
+    // autostart entries (~/.config/autostart/*.desktop, which a bare kwin session
+    // would otherwise skip) plus a user-editable ~/.focusos/startup.sh. This is
+    // how the user brings up input remappers (Toshy), tray agents, etc. that a
+    // normal desktop session would have started for them. No-op where unsupported.
+    virtual void runSessionStartupItems() {}
+
     // Whether this platform can log the user out of their account / session.
     virtual bool signOutSupported() const { return false; }
     // Log the user out: end the login session and drop back to the display

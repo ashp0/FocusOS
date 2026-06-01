@@ -32,6 +32,13 @@ public:
     Q_INVOKABLE void setBrightness(int percent);
     Q_INVOKABLE void refresh();
 
+    // User session startup script (~/.focusos/startup.sh) — edited from the admin
+    // Settings pane and run once per login by the platform backend. These let the
+    // QML editor read/write the file without its own filesystem access.
+    Q_INVOKABLE QString startupScriptPath() const;
+    Q_INVOKABLE QString readStartupScript() const;
+    Q_INVOKABLE bool writeStartupScript(const QString &contents);
+
 signals:
     void statusChanged();
 
