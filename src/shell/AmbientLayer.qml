@@ -51,7 +51,20 @@ Item {
     // this layer can't be seen (app unfocused, or the panel asleep). Pause then,
     // and recompute once on the way back so the opacity snaps to the right value.
     property bool canBeSeen: Qt.application.active && root.visible && root.opacity > 0.01
-    onCanBeSeenChanged: if (canBeSeen) tickFade()
+    onCanBeSeenChanged: {
+        if (canBeSeen) {
+            tickFade()
+            // Resume the wallpaper video decode that was paused while hidden.
+            if (showMedia && activeAssetType === 1 && currentAssetUrl().length > 0) {
+                videoPlayer.play()
+            }
+        } else if (activeAssetType === 1) {
+            // A playing MediaPlayer keeps the FFmpeg pipeline decoding frames even
+            // when the shell is unfocused (e.g. the user alt-tabbed away from the
+            // home screen) — pure wasted CPU/power. Pause it until we're seen again.
+            videoPlayer.pause()
+        }
+    }
 
     Timer {
         id: fadeTicker

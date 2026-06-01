@@ -137,6 +137,34 @@ qt_add_qml_module(focusos
         assets/fonts/IBMPlexMono-SemiBold.ttf
 )
 
+# GPU shaders (src/shell/*.frag), e.g. the starfield and CRT scanline overlay.
+# The system Qt ships the `qsb` tool but not the ShaderTools CMake package, so
+# compile each .frag to .qsb directly and embed the results as Qt resources at
+# qrc:/qt/qml/FocusOS/<name>.frag.qsb.
+find_program(QSB_TOOL
+    NAMES qsb qsb6
+    HINTS "${QT6_INSTALL_PREFIX}/bin" /usr/lib64/qt6/bin
+    REQUIRED
+)
+set(FOCUSOS_SHADER_QSBS "")
+foreach(shader starfield scanlines)
+    set(qsb_out "${CMAKE_CURRENT_BINARY_DIR}/${shader}.frag.qsb")
+    add_custom_command(
+        OUTPUT "${qsb_out}"
+        COMMAND "${QSB_TOOL}" --glsl "100 es,120,150" --hlsl 50 --msl 12 -b
+                -o "${qsb_out}" "${CMAKE_CURRENT_SOURCE_DIR}/src/shell/${shader}.frag"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/shell/${shader}.frag"
+        COMMENT "Compiling ${shader}.frag -> ${shader}.frag.qsb"
+        VERBATIM
+    )
+    list(APPEND FOCUSOS_SHADER_QSBS "${qsb_out}")
+endforeach()
+qt_add_resources(focusos "focusos_shaders"
+    PREFIX "/qt/qml/FocusOS"
+    BASE "${CMAKE_CURRENT_BINARY_DIR}"
+    FILES ${FOCUSOS_SHADER_QSBS}
+)
+
 target_link_libraries(focusos PRIVATE
     Qt6::Core
     Qt6::DBus

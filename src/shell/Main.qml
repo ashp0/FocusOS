@@ -1125,20 +1125,13 @@ Item {
     // overlay window (ProgressOverlay.qml, wired in ShellWindow) so it stays
     // visible across every space and on top of full-screen apps.
 
-    Canvas {
-        id: scanlines
+    // Faint CRT scanline overlay — drawn on the GPU (no CPU backing store).
+    ShaderEffect {
         anchors.fill: parent
         z: 40
         opacity: 0.35
-        onPaint: {
-            const ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
-            ctx.fillStyle = "rgba(160, 180, 220, 0.018)"
-            for (let y = 0; y < height; y += 4) {
-                ctx.fillRect(0, y, width, 2)
-            }
-        }
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
+        blending: true
+        property size iResolution: Qt.size(Math.max(1, width), Math.max(1, height))
+        fragmentShader: "qrc:/qt/qml/FocusOS/scanlines.frag.qsb"
     }
 }
