@@ -152,6 +152,13 @@ int main(int argc, char *argv[])
     MediaKeys mediaKeys(&systemStatus);
 
     QObject::connect(&routineManager, &RoutineManager::activeChanged, &musicEngine, [&routineManager, &musicEngine] {
+        // Each routine carries its own engage behavior (stop / low / same). Apply
+        // it before flipping the engaged flag so the fade targets the right level.
+        // This also runs when the behavior is changed live mid-session, since
+        // setActiveRoutineMusicBehavior re-emits activeChanged.
+        if (routineManager.active()) {
+            musicEngine.setEngageBehavior(routineManager.activeRoutineMusicBehavior());
+        }
         musicEngine.setRoutineEngaged(routineManager.active());
     });
     QObject::connect(&routineManager,

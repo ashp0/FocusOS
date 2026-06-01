@@ -114,6 +114,18 @@ int intFromVariant(const QVariant &value, int fallback)
     return ok ? parsed : fallback;
 }
 
+// Per-routine music behavior on engage: "stop" (silence), "low" (duck to a low
+// volume) or "same" (keep the configured volume). Unknown/empty falls back to
+// "low" — "Continue at low volume" is the default a new routine gets.
+QString normalizedMusicBehavior(const QString &behavior)
+{
+    const QString normalized = behavior.trimmed().toLower();
+    if (normalized == QStringLiteral("stop") || normalized == QStringLiteral("same")) {
+        return normalized;
+    }
+    return QStringLiteral("low");
+}
+
 } // namespace
 
 RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
@@ -294,6 +306,32 @@ bool RoutineManager::activeRoutineBrowsable() const
 {
     const int routineIndex = indexOfRoutine(m_activeRoutineId);
     return routineIndex >= 0 ? m_routines.at(routineIndex).browsable : false;
+}
+
+QString RoutineManager::activeRoutineMusicBehavior() const
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    return routineIndex >= 0 ? m_routines.at(routineIndex).musicBehavior
+                             : QStringLiteral("low");
+}
+
+void RoutineManager::setActiveRoutineMusicBehavior(const QString &behavior)
+{
+    const int routineIndex = indexOfRoutine(m_activeRoutineId);
+    if (routineIndex < 0) {
+        return;
+    }
+
+    const QString normalized = normalizedMusicBehavior(behavior);
+    if (m_routines[routineIndex].musicBehavior == normalized) {
+        return;
+    }
+
+    m_routines[routineIndex].musicBehavior = normalized;
+    persistRoutines();
+    // Re-emitting activeChanged lets the MusicEngine wiring in main.cpp pick up
+    // the new behavior live (it re-reads activeRoutineMusicBehavior on engage).
+    emit activeChanged();
 }
 
 int RoutineManager::remainingSeconds() const
@@ -941,6 +979,7 @@ QVariantList RoutineManager::routinesForEditing() const
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
+        object.insert(QStringLiteral("music_behavior"), routine.musicBehavior);
         routines.append(object);
     }
     return routines;
@@ -1010,6 +1049,7 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         routine.insert(QStringLiteral("break_frequency_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0)));
         routine.insert(QStringLiteral("break_duration_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0)));
         routine.insert(QStringLiteral("keep_display_awake"), object.value(QStringLiteral("keep_display_awake"), true).toBool());
+        routine.insert(QStringLiteral("music_behavior"), normalizedMusicBehavior(object.value(QStringLiteral("music_behavior")).toString()));
         array.append(routine);
     }
 
@@ -1075,6 +1115,11 @@ bool RoutineManager::persistRoutines() const
         object.insert(QStringLiteral("description"), routine.description);
         object.insert(QStringLiteral("apps"), appArray);
         object.insert(QStringLiteral("allowed_urls"), urlArray);
+        object.insert(QStringLiteral("access_folder"), routine.accessFolder);
+        object.insert(QStringLiteral("access_desktop"), routine.accessDesktop);
+        object.insert(QStringLiteral("access_documents"), routine.accessDocuments);
+        object.insert(QStringLiteral("access_downloads"), routine.accessDownloads);
+        object.insert(QStringLiteral("browsable"), routine.browsable);
         object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
         object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
         object.insert(QStringLiteral("network_lock"), routine.networkLock);
@@ -1082,6 +1127,7 @@ bool RoutineManager::persistRoutines() const
         object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
         object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
         object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
+        object.insert(QStringLiteral("music_behavior"), routine.musicBehavior);
         array.append(object);
     }
 
@@ -1556,6 +1602,7 @@ void RoutineManager::loadRoutines()
         routine.breakFrequencyMinutes = qMax(0, object.value(QStringLiteral("break_frequency_minutes")).toInt(0));
         routine.breakDurationMinutes = qMax(0, object.value(QStringLiteral("break_duration_minutes")).toInt(0));
         routine.keepDisplayAwake = object.value(QStringLiteral("keep_display_awake")).toBool(true);
+        routine.musicBehavior = normalizedMusicBehavior(object.value(QStringLiteral("music_behavior")).toString());
         if (!routine.id.isEmpty() && !routine.name.isEmpty()) {
             m_routines.append(routine);
         }

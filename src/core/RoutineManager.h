@@ -35,6 +35,10 @@ struct Routine
     int breakFrequencyMinutes = 0;
     int breakDurationMinutes = 0;
     bool keepDisplayAwake = true;
+    // What the music engine does while this routine is engaged: "stop", "low"
+    // (default — "Continue at low volume") or "same". Drives MusicEngine's
+    // engage behavior; updated live if the user toggles music off mid-session.
+    QString musicBehavior = QStringLiteral("low");
     // Researcher escape hatch: when set, the routine runs with NO outbound
     // network restrictions (full internet). Because that is high-risk, engaging
     // such a routine always requires a valid TOTP code first (enforced in QML
@@ -55,6 +59,8 @@ class RoutineManager final : public QAbstractListModel
     // Whether the active routine offers the in-app folder browser ("browse
     // computer") in addition to the standard native open-file picker.
     Q_PROPERTY(bool activeRoutineBrowsable READ activeRoutineBrowsable NOTIFY activeChanged)
+    // Music engage behavior of the currently active routine ("stop"/"low"/"same").
+    Q_PROPERTY(QString activeRoutineMusicBehavior READ activeRoutineMusicBehavior NOTIFY activeChanged)
     Q_PROPERTY(int remainingSeconds READ remainingSeconds NOTIFY remainingSecondsChanged)
     Q_PROPERTY(int elapsedSeconds READ elapsedSeconds NOTIFY remainingSecondsChanged)
     // Open-ended continuation: after a routine's timer expires the user can
@@ -124,6 +130,7 @@ public:
     int activeRoutineBreakFrequencyMinutes() const;
     int activeRoutineBreakDurationMinutes() const;
     bool activeRoutineBrowsable() const;
+    QString activeRoutineMusicBehavior() const;
     int remainingSeconds() const;
     int elapsedSeconds() const;
     bool openEnded() const;
@@ -154,6 +161,11 @@ public:
     void setOverlayProgressEnabled(bool enabled);
     bool displayStaysAwake() const;
     void setDisplayStaysAwake(bool stayAwake);
+
+    // Update the active routine's music behavior live (and persist it). Wired to
+    // the home/launcher music toggle: switching music off mid-session sets the
+    // active routine's behavior to "stop" so it sticks for next time.
+    Q_INVOKABLE void setActiveRoutineMusicBehavior(const QString &behavior);
 
     Q_INVOKABLE void engage(const QString &routineId);
     Q_INVOKABLE void abortPendingRoutineStart();

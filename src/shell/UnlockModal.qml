@@ -74,7 +74,8 @@ Item {
             "full_access": Boolean(routine.full_access),
             "break_frequency_minutes": Math.max(0, Number(routine.break_frequency_minutes || 0)),
             "break_duration_minutes": Math.max(0, Number(routine.break_duration_minutes || 0)),
-            "keep_display_awake": routine.keep_display_awake === undefined ? true : Boolean(routine.keep_display_awake)
+            "keep_display_awake": routine.keep_display_awake === undefined ? true : Boolean(routine.keep_display_awake),
+            "music_behavior": String(routine.music_behavior || "low")
         }
     }
 
@@ -167,7 +168,8 @@ Item {
             "full_access": false,
             "break_frequency_minutes": 0,
             "break_duration_minutes": 0,
-            "keep_display_awake": true
+            "keep_display_awake": true,
+            "music_behavior": "low"
         })
         routineDrafts = drafts
     }
@@ -1518,6 +1520,99 @@ Item {
 
                                         RowLayout {
                                             Layout.fillWidth: true
+                                            spacing: 14
+
+                                            Text {
+                                                text: "MUSIC"
+                                                color: Theme.goldDim
+                                                font.family: root.headerFont
+                                                font.pixelSize: 12
+                                                font.letterSpacing: 0
+                                            }
+
+                                            ComboBox {
+                                                id: routineMusicBox
+                                                Layout.preferredWidth: 230
+                                                Layout.preferredHeight: 34
+                                                model: ["Stop music", "Continue at low volume", "Continue at same volume"]
+                                                currentIndex: root.behaviorIndex(String(routineCard.modelData.music_behavior || "low"))
+                                                font.family: root.bodyFont
+                                                font.pixelSize: 12
+
+                                                onActivated: function(index) {
+                                                    root.updateRoutineField(routineCard.index, "music_behavior", root.behaviorValue(index))
+                                                }
+
+                                                contentItem: Text {
+                                                    leftPadding: 10
+                                                    rightPadding: 28
+                                                    text: routineMusicBox.displayText
+                                                    color: Theme.textPrimary
+                                                    verticalAlignment: Text.AlignVCenter
+                                                    elide: Text.ElideRight
+                                                    font.family: root.bodyFont
+                                                    font.pixelSize: 12
+                                                    font.letterSpacing: 0
+                                                }
+
+                                                indicator: Text {
+                                                    x: routineMusicBox.width - width - 10
+                                                    y: (routineMusicBox.height - height) / 2
+                                                    text: "▾"
+                                                    color: Theme.gold
+                                                    font.family: root.headerFont
+                                                    font.pixelSize: 14
+                                                    font.letterSpacing: 0
+                                                }
+
+                                                background: Rectangle {
+                                                    color: Theme.steel
+                                                    border.width: 1
+                                                    border.color: routineMusicBox.activeFocus ? Theme.gold : Theme.goldDim
+                                                }
+
+                                                delegate: ItemDelegate {
+                                                    width: routineMusicBox.width
+                                                    height: 34
+                                                    contentItem: Text {
+                                                        text: modelData
+                                                        color: Theme.textPrimary
+                                                        verticalAlignment: Text.AlignVCenter
+                                                        leftPadding: 10
+                                                        font.family: root.bodyFont
+                                                        font.pixelSize: 12
+                                                        font.letterSpacing: 0
+                                                    }
+                                                    background: Rectangle {
+                                                        color: highlighted ? Theme.steel : Theme.iron
+                                                        border.width: 0
+                                                    }
+                                                }
+
+                                                popup: Popup {
+                                                    y: routineMusicBox.height
+                                                    width: routineMusicBox.width
+                                                    implicitHeight: contentItem.implicitHeight
+                                                    padding: 0
+                                                    contentItem: ListView {
+                                                        clip: true
+                                                        implicitHeight: contentHeight
+                                                        model: routineMusicBox.popup.visible ? routineMusicBox.delegateModel : null
+                                                        currentIndex: routineMusicBox.highlightedIndex
+                                                    }
+                                                    background: Rectangle {
+                                                        color: Theme.iron
+                                                        border.width: 1
+                                                        border.color: Theme.goldDim
+                                                    }
+                                                }
+                                            }
+
+                                            Item { Layout.fillWidth: true }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
                                             spacing: 10
 
                                             Rectangle {
@@ -1991,89 +2086,14 @@ Item {
                             onClicked: musicEngine.refreshMusicFiles()
                         }
 
+                        // Per-routine now: each routine carries its own engage
+                        // behavior (Stop / Low / Same), set in the ROUTINES tab.
                         Text {
-                            text: "ENGAGE BEHAVIOUR:"
-                            color: Theme.textPrimary
+                            text: "ENGAGE BEHAVIOUR IS SET PER ROUTINE →"
+                            color: Theme.textDim
                             font.family: root.headerFont
-                            font.pixelSize: 13
+                            font.pixelSize: 11
                             font.letterSpacing: 0
-                        }
-
-                        ComboBox {
-                            id: behaviorBox
-                            Layout.preferredWidth: 230
-                            Layout.preferredHeight: 34
-                            model: ["Stop music", "Continue at low volume", "Continue at same volume"]
-                            currentIndex: root.behaviorIndex(musicEngine.engageBehavior)
-                            font.family: root.bodyFont
-                            font.pixelSize: 12
-
-                            onActivated: function(index) {
-                                musicEngine.engageBehavior = root.behaviorValue(index)
-                            }
-
-                            contentItem: Text {
-                                leftPadding: 10
-                                rightPadding: 28
-                                text: behaviorBox.displayText
-                                color: Theme.textPrimary
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
-                                font.family: root.bodyFont
-                                font.pixelSize: 12
-                                font.letterSpacing: 0
-                            }
-
-                            indicator: Text {
-                                x: behaviorBox.width - width - 10
-                                y: (behaviorBox.height - height) / 2
-                                text: "▾"
-                                color: Theme.gold
-                                font.family: root.headerFont
-                                font.pixelSize: 14
-                                font.letterSpacing: 0
-                            }
-
-                            background: Rectangle {
-                                color: Theme.steel
-                                border.width: 1
-                                border.color: behaviorBox.activeFocus ? Theme.gold : Theme.goldDim
-                            }
-
-                            delegate: ItemDelegate {
-                                width: behaviorBox.width
-                                height: 34
-                                contentItem: Text {
-                                    text: modelData
-                                    color: Theme.textPrimary
-                                    verticalAlignment: Text.AlignVCenter
-                                    font.family: root.bodyFont
-                                    font.pixelSize: 12
-                                    font.letterSpacing: 0
-                                }
-                                background: Rectangle {
-                                    color: highlighted ? Theme.steel : Theme.iron
-                                    border.width: 0
-                                }
-                            }
-
-                            popup: Popup {
-                                y: behaviorBox.height
-                                width: behaviorBox.width
-                                implicitHeight: contentItem.implicitHeight
-                                padding: 0
-                                contentItem: ListView {
-                                    clip: true
-                                    implicitHeight: contentHeight
-                                    model: behaviorBox.popup.visible ? behaviorBox.delegateModel : null
-                                    currentIndex: behaviorBox.highlightedIndex
-                                }
-                                background: Rectangle {
-                                    color: Theme.iron
-                                    border.width: 1
-                                    border.color: Theme.goldDim
-                                }
-                            }
                         }
 
 	                        Item { Layout.fillWidth: true }

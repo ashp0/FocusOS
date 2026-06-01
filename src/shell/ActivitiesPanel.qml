@@ -897,7 +897,16 @@ Item {
                         hoverEnabled: true
                         enabled: musicEngine.available
                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: musicEngine.enabled = !musicEngine.enabled
+                        onClicked: {
+                            const turningOn = !musicEngine.enabled
+                            musicEngine.enabled = turningOn
+                            // While a routine is engaged, reflect the toggle into
+                            // that routine's music behavior so it sticks: off →
+                            // "stop", back on → the "low volume" default.
+                            if (routineManager.active) {
+                                routineManager.setActiveRoutineMusicBehavior(turningOn ? "low" : "stop")
+                            }
+                        }
                     }
                 }
 
