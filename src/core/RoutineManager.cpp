@@ -634,6 +634,17 @@ bool RoutineManager::restoreLoginSessions()
     return true;
 }
 
+QStringList RoutineManager::previewBackgroundAppQuit() const
+{
+    if (!m_backend) {
+        return {};
+    }
+    // Preview the worst case: no routine apps yet (those would additionally be
+    // spared), only the always-allowed list. Anything session-critical that
+    // shows up here is something to add to the always-allowed list first.
+    return m_backend->previewBackgroundAppQuit(m_alwaysAllowedApps);
+}
+
 void RoutineManager::endActiveRoutine()
 {
     if (!active()) {
@@ -797,9 +808,27 @@ void RoutineManager::setOverlayProgressEnabled(bool enabled)
     emit overlayProgressEnabledChanged();
 }
 
+bool RoutineManager::deepSleepSuspend() const
+{
+    return m_deepSleepSuspend;
+}
+
+void RoutineManager::setDeepSleepSuspend(bool enabled)
+{
+    if (m_deepSleepSuspend == enabled) {
+        return;
+    }
+
+    m_deepSleepSuspend = enabled;
+    saveConfig();
+    emit configChanged();
+}
+
 void RoutineManager::engage(const QString &routineId)
 {
-    if (active() || accessGranted()) {
+    // m_engaging guards the async window between "network lock requested" and the
+    // resolver callback firing, so a second click can't start a parallel engage.
+    if (active() || accessGranted() || m_engaging) {
         return;
     }
     clearFinishedSessionPrompt();
@@ -810,21 +839,50 @@ void RoutineManager::engage(const QString &routineId)
         return;
     }
 
-    const Routine &routine = m_routines.at(routineIndex);
+    // Copy the routine — the engage may complete in an async callback, by which
+    // point m_routines could have been reloaded (the reference would dangle).
+    const Routine routine = m_routines.at(routineIndex);
     // Full-internet-access routines deliberately skip the outbound allowlist.
     // The TOTP gate that authorizes them is enforced in QML before engage() is
     // ever called (see ActivitiesPanel / Main fullAccessPrompt).
     const bool applyNetworkLock = routine.networkLock && !routine.fullAccess;
-    QString error;
-    if (!startRoutine(routine, applyNetworkLock, &error)) {
-        if (applyNetworkLock && error.startsWith(QStringLiteral("network:"), Qt::CaseInsensitive)) {
-            setNetworkLockPrompt(routine, error.mid(QStringLiteral("network:").size()).trimmed());
-            return;
+
+    if (!applyNetworkLock || !m_backend) {
+        // No network lock (or no backend): nothing slow to do — engage inline.
+        QString error;
+        if (!finishEngage(routine, /*networkApplied=*/false, &error)) {
+            setStatusMessage(error.isEmpty() ? QStringLiteral("ROUTINE START FAILED") : error);
         }
-        setStatusMessage(error.isEmpty()
-                             ? QStringLiteral("ROUTINE START FAILED")
-                             : error);
+        return;
     }
+
+    // Resolve DNS + apply the firewall OFF the GUI thread so engage doesn't
+    // freeze the shell. Routine apps only launch once the lock is confirmed up.
+    m_engaging = true;
+    setStatusMessage(QStringLiteral("APPLYING NETWORK LOCK…"));
+    m_backend->applyNetworkPolicyAsync(routine.allowedUrls,
+        [this, routine](bool ok, const QString &networkError) {
+            m_engaging = false;
+            if (active() || accessGranted()) {
+                // State changed under us while resolving (shouldn't normally
+                // happen) — undo the lock we just applied and bail.
+                if (ok && m_backend) {
+                    m_backend->dropNetworkPolicy();
+                }
+                return;
+            }
+            if (!ok) {
+                setNetworkLockPrompt(routine, networkError.trimmed());
+                return;
+            }
+            QString error;
+            if (!finishEngage(routine, /*networkApplied=*/true, &error)) {
+                if (m_backend) {
+                    m_backend->dropNetworkPolicy();
+                }
+                setStatusMessage(error.isEmpty() ? QStringLiteral("ROUTINE LAUNCH FAILED") : error);
+            }
+        });
 }
 
 void RoutineManager::abortPendingRoutineStart()
@@ -1539,6 +1597,8 @@ void RoutineManager::loadConfig()
     }
 
     m_overlayProgressEnabled = root.value(QStringLiteral("overlay_progress_enabled")).toBool(true);
+    // Default OFF — whole-machine suspend bricks hardware that can't resume.
+    m_deepSleepSuspend = root.value(QStringLiteral("deep_sleep_suspend")).toBool(false);
 
     saveConfig();
     emit configChanged();
@@ -1556,6 +1616,7 @@ bool RoutineManager::saveConfig() const
     }
     root.insert(QStringLiteral("always_allowed_apps"), alwaysAllowed);
     root.insert(QStringLiteral("overlay_progress_enabled"), m_overlayProgressEnabled);
+    root.insert(QStringLiteral("deep_sleep_suspend"), m_deepSleepSuspend);
     QSaveFile saveFile(configPath());
     if (saveFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         saveFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
@@ -1730,21 +1791,36 @@ void RoutineManager::resumeActiveSessionIfPresent()
         return;
     }
 
+    // Belt-and-suspenders cleanup: if there's no valid session to resume, make
+    // sure no firewall/blocker policy is left armed from a crash (the async-safe
+    // crash handler tears the nft table down, but the BlockerPolicy file or a
+    // partial state could linger). dropNetworkPolicy is idempotent / no-op when
+    // nothing is active, so it's safe to run on every clean launch.
+    const auto cleanupAndReturn = [this]() {
+        clearActiveSession();
+        if (m_backend) {
+            m_backend->dropNetworkPolicy();
+        }
+    };
+
     QFile file(activeSessionPath());
     if (!file.open(QIODevice::ReadOnly)) {
+        if (m_backend) {
+            m_backend->dropNetworkPolicy();
+        }
         return;
     }
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
     file.close();
     if (!document.isObject()) {
-        clearActiveSession();
+        cleanupAndReturn();
         return;
     }
 
     const QJsonObject object = document.object();
     const int routineIndex = indexOfRoutine(object.value(QStringLiteral("routine_id")).toString());
     if (routineIndex < 0) {
-        clearActiveSession();
+        cleanupAndReturn();
         return;
     }
 
@@ -1752,27 +1828,30 @@ void RoutineManager::resumeActiveSessionIfPresent()
     if (remaining <= 0) {
         // The routine had already run out before the crash/kill — don't
         // resurrect an expired session.
-        clearActiveSession();
+        cleanupAndReturn();
         return;
     }
 
     const Routine &routine = m_routines.at(routineIndex);
 
     if (m_backend) {
-        if (routine.networkLock) {
-            QString error;
-            // Best-effort: if the lock can't be reapplied we still resume the
-            // timer so the commitment holds; the status line surfaces why.
-            if (!m_backend->applyNetworkPolicy(routine.allowedUrls, &error) && !error.isEmpty()) {
-                setStatusMessage(QStringLiteral("NETWORK LOCK NOT REAPPLIED: %1").arg(error));
-            }
-        }
         // Re-establish the lockdown posture (kills the desktop shell /
         // launchers, starts the lockdown + respawn watchdogs). Routine apps are
         // NOT relaunched — survivors of the crash are still open and the user
         // can use Relaunch if they want fresh windows.
         m_backend->prepareRoutineSession(routine.apps);
         m_backend->startWatchdog(QCoreApplication::applicationFilePath());
+        if (routine.networkLock) {
+            // Best-effort, OFF the GUI thread so a slow resolver doesn't freeze
+            // the shell coming up after a crash. The timer/commitment resume
+            // immediately below regardless; the status line surfaces a failure.
+            m_backend->applyNetworkPolicyAsync(routine.allowedUrls,
+                [this](bool ok, const QString &error) {
+                    if (!ok && !error.isEmpty()) {
+                        setStatusMessage(QStringLiteral("NETWORK LOCK NOT REAPPLIED: %1").arg(error));
+                    }
+                });
+        }
     }
 
     m_activeRoutineId = routine.id;
@@ -1902,22 +1981,18 @@ void RoutineManager::emitRowsChanged()
     });
 }
 
-bool RoutineManager::startRoutine(const Routine &routine, bool applyNetworkLock, QString *errorMessage)
+// Finish engaging a routine once any network lock is already applied (the slow
+// DNS+nft work happens in engage() before this, on a worker thread). Launches
+// the routine's apps, flips active state, starts the timer + checkpoint +
+// respawn watchdog. networkApplied tells us to roll the firewall back if launch
+// fails. Returns false (with errorMessage) if the apps can't be launched.
+bool RoutineManager::finishEngage(const Routine &routine, bool networkApplied, QString *errorMessage)
 {
     if (m_backend) {
         QString error;
-        if (applyNetworkLock && !m_backend->applyNetworkPolicy(routine.allowedUrls, &error)) {
-            if (errorMessage) {
-                *errorMessage = QStringLiteral("network: %1").arg(error.isEmpty()
-                                                                       ? QStringLiteral("network restrictions could not be applied")
-                                                                       : error);
-            }
-            return false;
-        }
-
         m_backend->prepareRoutineSession(routine.apps);
         if (!launchRoutineTargets(routine, &error)) {
-            if (applyNetworkLock) {
+            if (networkApplied) {
                 m_backend->dropNetworkPolicy();
             }
             if (errorMessage) {

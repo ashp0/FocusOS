@@ -34,37 +34,85 @@
 
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
+#include <sys/wait.h>
 #include <unistd.h>
+
+extern char **environ;
 
 // Last-ditch cleanup so a crash doesn't strand the user behind an nftables
 // allowlist (which is what bricked the wifi after the engage-time KWin DBus
-// abort). We only know the backend at runtime, so the handler keeps a static
-// pointer set by main() once the backend is up.
+// abort).
+//
+// A signal handler may only call async-signal-safe functions — NOT Qt /
+// QProcess / malloc, which the old version did (it called backend methods that
+// fork QProcess and allocate). If the crash held the allocator lock, that path
+// could deadlock or re-crash, leaving the firewall up. So we do the teardown the
+// safe way: fork()+execve() pre-resolved binaries. The absolute paths are
+// resolved ONCE at install time (below) into static buffers, because resolving
+// them at signal time (QStandardPaths / execvp PATH search) is itself unsafe.
 //
 // FUTURE: when we move to a focusos compositor / supervisor model, this
 // belongs in the supervisor process which can't crash with the policy on.
-static PlatformBackend *g_crashCleanupBackend = nullptr;
+static char g_nftPath[4096] = {0};
+static char g_pkillPath[4096] = {0};
+// Mutable, static-storage argv tokens (string literals would need an unsafe
+// const-cast to pass to execve's char *const argv[]).
+static char g_argDelete[] = "delete";
+static char g_argTable[] = "table";
+static char g_argInet[] = "inet";
+static char g_argFocusos[] = "focusos";
+static char g_argF[] = "-f";
+static char g_argDashDash[] = "--";
+static char g_argWho[] = "--who=FocusOS";
+
+static void focusosForkExec(char *const argv[])
+{
+    const pid_t pid = fork();
+    if (pid == 0) {
+        execve(argv[0], argv, environ);
+        _exit(127);
+    } else if (pid > 0) {
+        int status = 0;
+        waitpid(pid, &status, 0); // waitpid is async-signal-safe
+    }
+}
 
 static void focusosFatalSignalHandler(int signum)
 {
-    if (g_crashCleanupBackend) {
-        g_crashCleanupBackend->dropNetworkPolicy();
-        // Release the display-sleep inhibitor too — otherwise the respawn
-        // watchdog relaunches FocusOS while the orphaned systemd-inhibit/sleep
-        // helper keeps holding the lock, and they pile up across crashes,
-        // blocking idle/sleep indefinitely.
-        g_crashCleanupBackend->releaseDisplaySleepInhibitors();
-        // Do not launch plasmashell as a crash fallback in kiosk mode. The
-        // external watchdog is responsible for respawning FocusOS; opening a
-        // desktop shell here would create an escape surface during a lock.
+    // Delete our nftables table so a crash never strands the user behind the
+    // outbound allowlist.
+    if (g_nftPath[0] != '\0') {
+        char *argv[] = {g_nftPath, g_argDelete, g_argTable, g_argInet, g_argFocusos, nullptr};
+        focusosForkExec(argv);
     }
+    // Release our display-sleep inhibitor (the systemd-inhibit helper runs
+    // detached and outlives us; without this they pile up across crashes and
+    // block idle/sleep). Matches LinuxBackend::releaseDisplaySleepInhibitors.
+    if (g_pkillPath[0] != '\0') {
+        char *argv[] = {g_pkillPath, g_argF, g_argDashDash, g_argWho, nullptr};
+        focusosForkExec(argv);
+    }
+    // Do not launch plasmashell as a crash fallback in kiosk mode — the external
+    // watchdog respawns FocusOS; a desktop shell here would be an escape surface.
     std::signal(signum, SIG_DFL);
     std::raise(signum);
 }
 
 static void installCrashCleanupHandlers(PlatformBackend *backend)
 {
-    g_crashCleanupBackend = backend;
+    Q_UNUSED(backend);
+    // Resolve the helper binaries now (safe: we're not in a signal handler yet)
+    // and stash absolute paths for the handler to execve directly.
+    const auto stash = [](const QString &program, char *dest, size_t destSize) {
+        const QByteArray path = QStandardPaths::findExecutable(program).toLocal8Bit();
+        if (!path.isEmpty() && static_cast<size_t>(path.size()) < destSize) {
+            std::memcpy(dest, path.constData(), static_cast<size_t>(path.size()) + 1);
+        }
+    };
+    stash(QStringLiteral("nft"), g_nftPath, sizeof(g_nftPath));
+    stash(QStringLiteral("pkill"), g_pkillPath, sizeof(g_pkillPath));
+
     std::signal(SIGSEGV, focusosFatalSignalHandler);
     std::signal(SIGABRT, focusosFatalSignalHandler);
     std::signal(SIGBUS, focusosFatalSignalHandler);
@@ -207,7 +255,13 @@ int main(int argc, char *argv[])
         if (idleMonitor.deepIdle()) {
             musicEngine.setSleeping(true);
             backend.sleepDisplay();
-            QTimer::singleShot(700, &routineManager, [&backend] { backend.suspendSystem(); });
+            // Whole-machine suspend is opt-in (deep_sleep_suspend, default off):
+            // on hardware that can't resume from S3 (common on Mac/iMac) it never
+            // wakes — the soft sleep above (display off + music off) is the safe
+            // default and any input recovers it via the deepIdle=false branch.
+            if (routineManager.deepSleepSuspend()) {
+                QTimer::singleShot(700, &routineManager, [&backend] { backend.suspendSystem(); });
+            }
         } else {
             backend.wakeDisplay();
             musicEngine.setSleeping(false);

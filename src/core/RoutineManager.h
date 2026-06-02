@@ -94,6 +94,13 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(QStringList alwaysAllowedApps READ alwaysAllowedApps NOTIFY alwaysAllowedAppsChanged)
     Q_PROPERTY(bool overlayProgressEnabled READ overlayProgressEnabled WRITE setOverlayProgressEnabled NOTIFY overlayProgressEnabledChanged)
     Q_PROPERTY(bool displayStaysAwake READ displayStaysAwake WRITE setDisplayStaysAwake NOTIFY displayStaysAwakeChanged)
+    // Whether the deep-idle stage (after the screensaver) suspends the whole
+    // machine (S3) in addition to turning the display off + pausing music.
+    // Default OFF: on hardware where Linux can't resume from suspend (common on
+    // Mac/iMac), suspending bricks the session — the machine sleeps and nothing
+    // wakes it. Off = a safe soft sleep (display off + music off) that any input
+    // recovers from. Opt in only when you've confirmed resume works.
+    Q_PROPERTY(bool deepSleepSuspend READ deepSleepSuspend WRITE setDeepSleepSuspend NOTIFY configChanged)
 
 public:
     enum Role {
@@ -161,6 +168,8 @@ public:
     void setOverlayProgressEnabled(bool enabled);
     bool displayStaysAwake() const;
     void setDisplayStaysAwake(bool stayAwake);
+    bool deepSleepSuspend() const;
+    void setDeepSleepSuspend(bool enabled);
 
     // Update the active routine's music behavior live (and persist it). Wired to
     // the home/launcher music toggle: switching music off mid-session sets the
@@ -230,6 +239,11 @@ public:
     Q_INVOKABLE void removeAlwaysAllowedApp(int index);
     Q_INVOKABLE bool sessionRecoverySupported() const;
     Q_INVOKABLE bool restoreLoginSessions();
+    // Dry run of the strict engage-time app sweep: the names of GUI apps that
+    // would be closed if a routine engaged right now (given the always-allowed
+    // list), without killing anything. Lets the user verify the keep-set on
+    // their own machine before trusting it. Empty where unsupported.
+    Q_INVOKABLE QStringList previewBackgroundAppQuit() const;
 
     static QString dataDirectory();
 
@@ -295,7 +309,7 @@ private:
     void emitActiveSessionProgress();
     void emitRowsChanged();
     void resumeRoutine();
-    bool startRoutine(const Routine &routine, bool applyNetworkLock, QString *errorMessage = nullptr);
+    bool finishEngage(const Routine &routine, bool networkApplied, QString *errorMessage = nullptr);
     bool launchRoutineTargets(const Routine &routine, QString *errorMessage = nullptr);
     void setStatusMessage(const QString &message);
     void setNetworkLockPrompt(const Routine &routine, const QString &error);
@@ -339,7 +353,11 @@ private:
     QString m_networkLockRoutineName;
     QStringList m_alwaysAllowedApps;
     bool m_alwaysAllowedLaunched = false;
+    // True between "network lock requested" and the async resolver callback, so
+    // a second engage can't race a parallel one (see engage()).
+    bool m_engaging = false;
     bool m_overlayProgressEnabled = true;
+    bool m_deepSleepSuspend = false;
     bool m_editMode = false;
     bool m_desktopShellRunning = false;
     // Throttle for the active.json crash checkpoint — the timer ticks every

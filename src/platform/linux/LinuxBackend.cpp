@@ -70,6 +70,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -77,6 +78,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QtConcurrent>
 
 #include <csignal>
 #include <unistd.h>
@@ -807,7 +809,7 @@ void LinuxBackend::endRoutineLockdown()
     m_sessionAllowedProcessNames.clear();
 }
 
-void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
+QStringList LinuxBackend::sweepBackgroundApps(const QStringList &allowedCommandLines, bool dryRun)
 {
     // Walk /proc and SIGTERM every GUI app the current user is running that
     // isn't part of the routine. "GUI app" = a process of ours whose environ
@@ -868,6 +870,7 @@ void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
     const uid_t myUid = ::getuid();
     const qint64 myPid = QCoreApplication::applicationPid();
 
+    QStringList acted; // names SIGTERM'd (or, in dry-run, that would be)
     QDir procDir(QStringLiteral("/proc"));
     const QStringList entries = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString &entry : entries) {
@@ -917,8 +920,38 @@ void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
             continue;
         }
 
-        ::kill(static_cast<pid_t>(pid), SIGTERM);
+        acted.append(name);
+        if (!dryRun) {
+            ::kill(static_cast<pid_t>(pid), SIGTERM);
+        }
     }
+
+    acted.removeDuplicates();
+    acted.sort();
+    return acted;
+}
+
+void LinuxBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
+{
+    const QStringList killed = sweepBackgroundApps(allowedCommandLines, /*dryRun=*/false);
+
+    // Leave a record so the user can audit, after the fact, exactly which GUI
+    // apps a strict engage closed — the keep-set is conservative but this is the
+    // ground truth on their own machine. Best-effort; never blocks the engage.
+    if (!killed.isEmpty()) {
+        QFile log(QDir::homePath() + QStringLiteral("/.focusos/lockdown.log"));
+        if (log.open(QIODevice::Append | QIODevice::Text)) {
+            const QString stamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+            log.write(QStringLiteral("%1 quitBackgroundApps SIGTERM: %2\n")
+                          .arg(stamp, killed.join(QStringLiteral(", ")))
+                          .toUtf8());
+        }
+    }
+}
+
+QStringList LinuxBackend::previewBackgroundAppQuit(const QStringList &allowedCommandLines)
+{
+    return sweepBackgroundApps(allowedCommandLines, /*dryRun=*/true);
 }
 
 void LinuxBackend::lockScreen()
@@ -996,20 +1029,27 @@ bool LinuxBackend::suspendSystem()
     return false;
 }
 
-bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
+// Shared tail for both the sync and async apply paths: load an already-resolved
+// ruleset and, on success, arm the blocker policy + extension-presence watchdog.
+// Runs on the main thread (touches LinuxBackend state + the watchdog timer).
+bool LinuxBackend::commitNetworkPolicy(const QString &ruleset,
+                                       const QStringList &allowedHosts,
+                                       QString *errorMessage)
 {
     // NetGate is the network-level backstop. Only arm the extension policy if it
     // succeeds — if the backstop can't apply the routine aborts, and writing an
     // active policy here would strand the browser behind a half-applied lock.
-    if (!m_netGate.apply(allowedHosts, errorMessage)) {
+    if (!m_netGate.applyRuleset(ruleset, errorMessage)) {
         return false;
     }
     BlockerPolicy::write(true, allowedHosts);
 
-    // Arm the extension-presence watchdog: remember the allowlist so we can
-    // restore it after a full-deny clamp, and start the timer (independent of
-    // the app-lockdown sweep, which a network-only routine might not run).
+    // Arm the extension-presence watchdog: remember the allowlist + the resolved
+    // ruleset (so a post-clamp restore needn't re-resolve DNS), and start the
+    // timer (independent of the app-lockdown sweep, which a network-only routine
+    // might not run).
     m_activeAllowedHosts = allowedHosts;
+    m_activeRuleset = ruleset;
     m_networkLockActive = true;
     m_extensionBanActive = false;
     m_extensionSeenAlive = false;
@@ -1019,11 +1059,39 @@ bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *
     return true;
 }
 
+bool LinuxBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage)
+{
+    // Synchronous path (DNS on the calling thread) — kept for callers where a
+    // brief block is acceptable. The engage path uses applyNetworkPolicyAsync.
+    return commitNetworkPolicy(m_netGate.buildRuleset(allowedHosts), allowedHosts, errorMessage);
+}
+
+void LinuxBackend::applyNetworkPolicyAsync(const QStringList &allowedHosts,
+                                           std::function<void(bool, const QString &)> onComplete)
+{
+    // Resolve DNS + render the ruleset on a worker thread (the multi-second part
+    // that froze the UI on engage), then hop back to the GUI thread to do the
+    // fast privileged nft swap and arm the watchdogs.
+    auto *watcher = new QFutureWatcher<QString>();
+    QObject::connect(watcher, &QFutureWatcher<QString>::finished, qApp,
+                     [this, watcher, allowedHosts, onComplete = std::move(onComplete)]() {
+                         const QString ruleset = watcher->result();
+                         watcher->deleteLater();
+                         QString error;
+                         const bool ok = commitNetworkPolicy(ruleset, allowedHosts, &error);
+                         onComplete(ok, error);
+                     });
+    watcher->setFuture(QtConcurrent::run([this, allowedHosts]() -> QString {
+        return m_netGate.buildRuleset(allowedHosts);
+    }));
+}
+
 void LinuxBackend::dropNetworkPolicy()
 {
     m_networkLockActive = false;
     m_extensionBanActive = false;
     m_activeAllowedHosts.clear();
+    m_activeRuleset.clear();
     maybeStopWatchdogTimer();
     BlockerPolicy::write(false, {});
     m_netGate.drop();
@@ -1373,7 +1441,7 @@ void LinuxBackend::enforceBlockerExtension()
     if (QFileInfo::exists(BlockerPolicy::blockerDir() + QStringLiteral("/presence-check-off"))) {
         if (m_extensionBanActive) {
             QString error;
-            m_netGate.apply(m_activeAllowedHosts, &error);
+            m_netGate.applyRuleset(m_activeRuleset, &error);
             m_extensionBanActive = false;
         }
         m_extensionMissingSinceMs = 0;
@@ -1406,7 +1474,7 @@ void LinuxBackend::enforceBlockerExtension()
             // Extension is back (or the browser closed) — restore the routine
             // allowlist so allowed sites work again.
             QString error;
-            m_netGate.apply(m_activeAllowedHosts, &error);
+            m_netGate.applyRuleset(m_activeRuleset, &error);
             m_extensionBanActive = false;
             m_lastExtensionAlertMs = 0;
         }

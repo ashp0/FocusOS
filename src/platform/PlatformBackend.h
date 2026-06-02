@@ -3,6 +3,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
+
 class PlatformBackend
 {
 public:
@@ -41,7 +43,29 @@ public:
     // case the caller falls back to the soft sleep (panel off + music paused).
     virtual bool suspendSystem() { return false; }
     virtual bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) = 0;
+    // Async variant: the slow DNS resolution runs on a worker thread so the GUI
+    // never freezes on engage. `onComplete(success, error)` is invoked on the
+    // main (GUI) thread when the policy is fully applied (or has failed). The
+    // default implementation (no-op platforms) completes immediately with
+    // success. Callers must not launch routine apps until the callback fires
+    // with success — the firewall must be up first.
+    virtual void applyNetworkPolicyAsync(const QStringList &allowedHosts,
+                                         std::function<void(bool, const QString &)> onComplete)
+    {
+        QString error;
+        const bool ok = applyNetworkPolicy(allowedHosts, &error);
+        onComplete(ok, error);
+    }
     virtual void dropNetworkPolicy() = 0;
+    // Dry run for the strict engage-time app sweep (quitBackgroundApps): return
+    // the process names that WOULD be SIGTERM'd for the given routine, without
+    // killing anything. Lets the user verify the keep-set on their own machine
+    // before trusting a routine to it. Empty where unsupported.
+    virtual QStringList previewBackgroundAppQuit(const QStringList &allowedCommandLines)
+    {
+        Q_UNUSED(allowedCommandLines);
+        return {};
+    }
     virtual bool openSystemTerminal(QString *errorMessage = nullptr) = 0;
     virtual void terminateUnrestrictedApps() = 0;
     virtual bool launchDesktopShell(QString *errorMessage = nullptr) { Q_UNUSED(errorMessage); return false; }

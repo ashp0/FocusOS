@@ -28,7 +28,10 @@ public:
     void wakeDisplay() override;
     bool suspendSystem() override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
+    void applyNetworkPolicyAsync(const QStringList &allowedHosts,
+                                 std::function<void(bool, const QString &)> onComplete) override;
     void dropNetworkPolicy() override;
+    QStringList previewBackgroundAppQuit(const QStringList &allowedCommandLines) override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;
     void terminateUnrestrictedApps() override;
     bool launchDesktopShell(QString *errorMessage = nullptr) override;
@@ -46,6 +49,11 @@ public:
     void runSessionStartupItems() override;
 
 private:
+    // Shared core of quitBackgroundApps / previewBackgroundAppQuit: enumerate the
+    // user's GUI processes outside the keep-set and either SIGTERM them (dryRun
+    // false) or just collect their names (dryRun true). Returns the names acted
+    // on / that would be acted on.
+    QStringList sweepBackgroundApps(const QStringList &allowedCommandLines, bool dryRun);
     void startLockdownWatchdog();
     void stopLockdownWatchdog();
     void tickLockdownWatchdog();
@@ -56,6 +64,10 @@ private:
     // extension stopped talking to its native host (i.e. it was disabled or
     // removed), clamp the network to a full deny and nag the user to re-enable
     // it; restore the routine allowlist once the extension is back.
+    // Main-thread tail shared by applyNetworkPolicy + applyNetworkPolicyAsync:
+    // load an already-resolved ruleset and arm the blocker policy / watchdog.
+    bool commitNetworkPolicy(const QString &ruleset, const QStringList &allowedHosts,
+                             QString *errorMessage);
     void ensureWatchdogTimer();
     void maybeStopWatchdogTimer();
     void enforceBlockerExtension();
@@ -77,6 +89,10 @@ private:
     // full-deny + nag loop. Set true the first tick the beacon is fresh.
     bool m_extensionSeenAlive = false;
     QStringList m_activeAllowedHosts;
+    // The last successfully-resolved+applied ruleset text. Cached so the
+    // extension-presence watchdog can RESTORE the allowlist after a full-deny
+    // clamp without repeating the (slow, GUI-thread) DNS resolution.
+    QString m_activeRuleset;
     // Wall-clock (ms) the "browser up but extension beacon stale" condition has
     // held continuously; 0 when clear. The ban only fires once it has persisted
     // past a debounce, so browser/extension startup lag doesn't false-trigger.

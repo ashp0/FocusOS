@@ -21,6 +21,7 @@ if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
 endif()
 
 find_package(Qt6 6.7 REQUIRED COMPONENTS
+    Concurrent
     Core
     DBus
     Gui
@@ -166,6 +167,7 @@ qt_add_resources(focusos "focusos_shaders"
 )
 
 target_link_libraries(focusos PRIVATE
+    Qt6::Concurrent
     Qt6::Core
     Qt6::DBus
     Qt6::Gui

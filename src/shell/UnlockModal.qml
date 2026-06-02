@@ -21,6 +21,10 @@ Item {
     // and edited in the SYSTEM tab.
     property string startupScriptDraft: ""
     property string startupSaveStatus: ""
+    // Dry-run result of the strict engage-time app sweep (H3): the apps that a
+    // routine would close. Populated by the PREVIEW button in the APPEARANCE tab.
+    property var appQuitPreview: []
+    property bool appQuitPreviewRun: false
     property var settingsTabs: [
         {"index": 0, "code": "01", "label": "MISSION PLAN", "subtitle": "ROUTINES"},
         {"index": 1, "code": "02", "label": "ALLOWED APPS", "subtitle": "GLOBAL"},
@@ -2229,6 +2233,13 @@ Item {
                         onToggled: routineManager.overlayProgressEnabled = !routineManager.overlayProgressEnabled
                     }
 
+                    SettingsToggleRow {
+                        label: "DEEP SLEEP SUSPENDS THE COMPUTER"
+                        detail: "After the screensaver, also suspend to RAM. Leave OFF if your machine can't wake from sleep (common on Mac hardware) — the display turns off either way."
+                        checked: routineManager.deepSleepSuspend
+                        onToggled: routineManager.deepSleepSuspend = !routineManager.deepSleepSuspend
+                    }
+
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 1
@@ -2273,6 +2284,85 @@ Item {
                         }
 
                         Item { Layout.fillWidth: true }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                    }
+
+                    // ── Strict app-sweep preview (H3) ──
+                    // Engaging a routine SIGTERMs your other GUI apps. This dry
+                    // run shows exactly which ones would close on THIS machine,
+                    // so you can spot anything important and add it to ALLOWED
+                    // APPS first — without actually killing anything.
+                    Text {
+                        Layout.fillWidth: true
+                        text: "STRICT APP CLEANUP — DRY RUN"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        Rectangle {
+                            Layout.preferredWidth: 220
+                            Layout.preferredHeight: 36
+                            color: previewMouse.containsMouse ? Theme.steel : Theme.iron
+                            border.width: 1
+                            border.color: previewMouse.containsMouse ? Theme.gold : Theme.goldDim
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "▷ PREVIEW WHAT WOULD CLOSE"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 12
+                                font.letterSpacing: 0
+                            }
+
+                            MouseArea {
+                                id: previewMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.appQuitPreview = routineManager.previewBackgroundAppQuit()
+                                    root.appQuitPreviewRun = true
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 96
+                        visible: root.appQuitPreviewRun
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: Theme.goldDim
+
+                        Text {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            text: root.appQuitPreview.length > 0
+                                  ? ("WOULD CLOSE:  " + root.appQuitPreview.join("   ■   "))
+                                  : "NOTHING WOULD CLOSE — no non-allowed GUI apps are running right now."
+                            color: root.appQuitPreview.length > 0 ? Theme.textPrimary : Theme.textDim
+                            wrapMode: Text.WordWrap
+                            verticalAlignment: Text.AlignTop
+                            font.family: root.bodyFont
+                            font.pixelSize: 12
+                            font.letterSpacing: 0
+                        }
                     }
 
                     Item { Layout.fillHeight: true }

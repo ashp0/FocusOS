@@ -374,10 +374,23 @@ QString NetGate::buildRuleset(const QStringList &allowedHosts) const
     return rules;
 }
 
+bool NetGate::applyRuleset(const QString &ruleset, QString *errorMessage) const
+{
+#ifdef Q_OS_LINUX
+    return loadRulesetIntoNft(ruleset, errorMessage);
+#else
+    Q_UNUSED(ruleset)
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    return true;
+#endif
+}
+
 bool NetGate::apply(const QStringList &allowedHosts, QString *errorMessage) const
 {
 #ifdef Q_OS_LINUX
-    return loadRulesetIntoNft(buildRuleset(allowedHosts), errorMessage);
+    return applyRuleset(buildRuleset(allowedHosts), errorMessage);
 #else
     Q_UNUSED(allowedHosts)
     if (errorMessage) {
