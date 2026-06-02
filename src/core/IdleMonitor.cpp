@@ -15,6 +15,10 @@ IdleMonitor::IdleMonitor(QObject *parent)
     m_deepTimer.setInterval(m_deepTimeoutMs);
     connect(&m_deepTimer, &QTimer::timeout, this, &IdleMonitor::goDeepIdle);
 
+    m_lockTimer.setSingleShot(true);
+    m_lockTimer.setInterval(m_lockTimeoutMs);
+    connect(&m_lockTimer, &QTimer::timeout, this, &IdleMonitor::goLockIdle);
+
     if (qApp) {
         qApp->installEventFilter(this);
     }
@@ -118,6 +122,7 @@ void IdleMonitor::noteActivity()
 void IdleMonitor::clearIdleState()
 {
     m_deepTimer.stop();
+    m_lockTimer.stop();
     if (m_deepIdle) {
         m_deepIdle = false;
         emit deepIdleChanged();
@@ -152,4 +157,17 @@ void IdleMonitor::goDeepIdle()
         m_deepIdle = true;
         emit deepIdleChanged();
     }
+    // Start the final countdown to the screen lock (30 minutes total idle).
+    m_lockTimer.start();
+}
+
+void IdleMonitor::goLockIdle()
+{
+    // Same guard as the earlier stages: never lock a focused, idle user mid
+    // routine. m_deepIdle is the precondition because the lock timer is only ever
+    // armed from goDeepIdle().
+    if (m_suppressed || !m_deepIdle) {
+        return;
+    }
+    emit lockIdle();
 }

@@ -671,7 +671,11 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.max(120, sleepDisplayLabel.implicitWidth + 22)
                 height: 30
-                color: sleepDisplayMouse.containsMouse ? Theme.crimsonHot : Theme.crimson
+                // Deliberately NOT crimson: red + this corner reads as the close
+                // button (the ✕ on the right is crimson), but SLEEP is a benign
+                // "turn the panel off" — a misclick just blanks the monitor. Use
+                // the calm steel/gold utility style so it can't be mistaken for it.
+                color: sleepDisplayMouse.containsMouse ? Theme.steel : "transparent"
                 border.width: 1
                 border.color: sleepDisplayMouse.containsMouse ? Theme.gold : Theme.goldDim
 

@@ -268,6 +268,14 @@ int main(int argc, char *argv[])
         }
     });
 
+    // Third idle stage: after a full 30 minutes untouched on the home screen,
+    // escalate the dark deep-sleep into an actual screen lock (loginctl
+    // lock-session + DPMS off). Any input clears it via the lock overlay's
+    // unlockScreen(). Suppressed during a routine, so an engaged session is never
+    // locked out from under the user.
+    QObject::connect(&idleMonitor, &IdleMonitor::lockIdle,
+                     &routineManager, &RoutineManager::lockScreen);
+
 #if defined(Q_OS_LINUX)
     // Power-key → screen lock (Task 6). logind is configured (90-focusos-logind
     // .conf) so HandlePowerKey=lock: instead of powering the machine off, the
@@ -304,6 +312,17 @@ int main(int argc, char *argv[])
                               QStringLiteral("org.freedesktop.login1.Session"),
                               QStringLiteral("Unlock"), &routineManager, SLOT(unlockScreen()));
         }
+
+        // Resume hook for the deep-idle suspend. The Manager's PrepareForSleep
+        // fires with false the moment the machine wakes; route it to
+        // handlePrepareForSleep so a lid/power resume relights the panel even
+        // without a Qt input event (otherwise it can stay DPMS-off until the
+        // first mouse/key). Lives on the Manager object, not the session.
+        systemBus.connect(QStringLiteral("org.freedesktop.login1"),
+                          QStringLiteral("/org/freedesktop/login1"),
+                          QStringLiteral("org.freedesktop.login1.Manager"),
+                          QStringLiteral("PrepareForSleep"),
+                          &routineManager, SLOT(handlePrepareForSleep(bool)));
     }
 #endif
 

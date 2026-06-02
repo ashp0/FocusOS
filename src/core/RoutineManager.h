@@ -257,6 +257,12 @@ public slots:
     // Sleep the physical display (DPMS off) without engaging the lock overlay.
     // Exposed for the Settings-authorization panel's "sleep display" button.
     Q_INVOKABLE void sleepDisplay();
+    // Wired to logind's PrepareForSleep(bool) signal (see main.cpp on Linux).
+    // aboutToSleep=false means the machine just resumed: force the panel back on
+    // so a resume triggered by lid/power (a non-Qt event the deep-idle state
+    // machine never sees) doesn't leave the display DPMS-off until the first
+    // mouse/key. A no-op on the way down (aboutToSleep=true) — we already blanked.
+    void handlePrepareForSleep(bool aboutToSleep);
 
 signals:
     void activeChanged();

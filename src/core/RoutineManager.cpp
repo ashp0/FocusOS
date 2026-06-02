@@ -126,6 +126,44 @@ QString normalizedMusicBehavior(const QString &behavior)
     return QStringLiteral("low");
 }
 
+// The single on-disk encoding for one routine. Both writers go through here —
+// the editor's saveRoutines() (after it validates/dedupes the QML payload into a
+// Routine) and the live persistRoutines() (music / display-sleep toggles) — so
+// the two paths can never drift on field set or normalization. Keep this the
+// only place that names routines.json's keys.
+QJsonObject serializeRoutine(const Routine &routine)
+{
+    QJsonArray appArray;
+    for (const QString &app : routine.apps) {
+        appArray.append(app);
+    }
+    QJsonArray urlArray;
+    for (const QString &url : routine.allowedUrls) {
+        urlArray.append(url);
+    }
+
+    QJsonObject object;
+    object.insert(QStringLiteral("id"), routine.id);
+    object.insert(QStringLiteral("name"), routine.name);
+    object.insert(QStringLiteral("description"), routine.description);
+    object.insert(QStringLiteral("apps"), appArray);
+    object.insert(QStringLiteral("allowed_urls"), urlArray);
+    object.insert(QStringLiteral("access_folder"), routine.accessFolder);
+    object.insert(QStringLiteral("access_desktop"), routine.accessDesktop);
+    object.insert(QStringLiteral("access_documents"), routine.accessDocuments);
+    object.insert(QStringLiteral("access_downloads"), routine.accessDownloads);
+    object.insert(QStringLiteral("browsable"), routine.browsable);
+    object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
+    object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
+    object.insert(QStringLiteral("network_lock"), routine.networkLock);
+    object.insert(QStringLiteral("full_access"), routine.fullAccess);
+    object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
+    object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
+    object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
+    object.insert(QStringLiteral("music_behavior"), routine.musicBehavior);
+    return object;
+}
+
 } // namespace
 
 RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
@@ -382,6 +420,20 @@ void RoutineManager::sleepDisplay()
 {
     if (m_backend) {
         m_backend->sleepDisplay();
+    }
+}
+
+void RoutineManager::handlePrepareForSleep(bool aboutToSleep)
+{
+    if (aboutToSleep) {
+        return; // Going down — the deep-idle path already blanked + muted.
+    }
+    // Just resumed. The deep-idle state machine only wakes the panel on
+    // deepIdleChanged(false), which needs a Qt input event; a lid/power resume
+    // is not one, so the display could stay DPMS-off until the user happens to
+    // touch the trackpad. Light it back up here.
+    if (m_backend) {
+        m_backend->wakeDisplay();
     }
 }
 
@@ -1080,45 +1132,28 @@ bool RoutineManager::saveRoutines(const QVariantList &routines)
         }
         usedIds.insert(id);
 
-        const QString description = object.value(QStringLiteral("description")).toString().trimmed();
-        const QStringList apps = variantToStringList(object.value(QStringLiteral("apps")));
-        const QStringList allowedUrls = variantToStringList(object.value(QStringLiteral("allowed_urls")));
-        const QString accessFolder = object.value(QStringLiteral("access_folder")).toString().trimmed();
-        const bool accessDesktop = object.value(QStringLiteral("access_desktop")).toBool();
-        const bool accessDocuments = object.value(QStringLiteral("access_documents")).toBool();
-        const bool accessDownloads = object.value(QStringLiteral("access_downloads")).toBool();
-        const bool browsable = object.value(QStringLiteral("browsable")).toBool();
-
-        QJsonArray appArray;
-        for (const QString &app : apps) {
-            appArray.append(app);
-        }
-
-        QJsonArray urlArray;
-        for (const QString &url : allowedUrls) {
-            urlArray.append(url);
-        }
-
-        QJsonObject routine;
-        routine.insert(QStringLiteral("id"), id);
-        routine.insert(QStringLiteral("name"), name);
-        routine.insert(QStringLiteral("description"), description);
-        routine.insert(QStringLiteral("apps"), appArray);
-        routine.insert(QStringLiteral("allowed_urls"), urlArray);
-        routine.insert(QStringLiteral("access_folder"), accessFolder);
-        routine.insert(QStringLiteral("access_desktop"), accessDesktop);
-        routine.insert(QStringLiteral("access_documents"), accessDocuments);
-        routine.insert(QStringLiteral("access_downloads"), accessDownloads);
-        routine.insert(QStringLiteral("browsable"), browsable);
-        routine.insert(QStringLiteral("time_limit_minutes"), qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60)));
-        routine.insert(QStringLiteral("min_time_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0)));
-        routine.insert(QStringLiteral("network_lock"), object.value(QStringLiteral("network_lock"), true).toBool());
-        routine.insert(QStringLiteral("full_access"), object.value(QStringLiteral("full_access"), false).toBool());
-        routine.insert(QStringLiteral("break_frequency_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0)));
-        routine.insert(QStringLiteral("break_duration_minutes"), qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0)));
-        routine.insert(QStringLiteral("keep_display_awake"), object.value(QStringLiteral("keep_display_awake"), true).toBool());
-        routine.insert(QStringLiteral("music_behavior"), normalizedMusicBehavior(object.value(QStringLiteral("music_behavior")).toString()));
-        array.append(routine);
+        // Validate/normalize the editor payload into a Routine, then serialize
+        // through the shared encoder so this and persistRoutines() stay identical.
+        Routine routine;
+        routine.id = id;
+        routine.name = name;
+        routine.description = object.value(QStringLiteral("description")).toString().trimmed();
+        routine.apps = variantToStringList(object.value(QStringLiteral("apps")));
+        routine.allowedUrls = variantToStringList(object.value(QStringLiteral("allowed_urls")));
+        routine.accessFolder = object.value(QStringLiteral("access_folder")).toString().trimmed();
+        routine.accessDesktop = object.value(QStringLiteral("access_desktop")).toBool();
+        routine.accessDocuments = object.value(QStringLiteral("access_documents")).toBool();
+        routine.accessDownloads = object.value(QStringLiteral("access_downloads")).toBool();
+        routine.browsable = object.value(QStringLiteral("browsable")).toBool();
+        routine.timeLimitMinutes = qMax(1, intFromVariant(object.value(QStringLiteral("time_limit_minutes")), 60));
+        routine.minTimeMinutes = qMax(0, intFromVariant(object.value(QStringLiteral("min_time_minutes")), 0));
+        routine.networkLock = object.value(QStringLiteral("network_lock"), true).toBool();
+        routine.fullAccess = object.value(QStringLiteral("full_access"), false).toBool();
+        routine.breakFrequencyMinutes = qMax(0, intFromVariant(object.value(QStringLiteral("break_frequency_minutes")), 0));
+        routine.breakDurationMinutes = qMax(0, intFromVariant(object.value(QStringLiteral("break_duration_minutes")), 0));
+        routine.keepDisplayAwake = object.value(QStringLiteral("keep_display_awake"), true).toBool();
+        routine.musicBehavior = normalizedMusicBehavior(object.value(QStringLiteral("music_behavior")).toString());
+        array.append(serializeRoutine(routine));
     }
 
     QJsonObject root;
@@ -1163,40 +1198,19 @@ bool RoutineManager::updateRoutineDescription(const QString &routineId, const QS
 }
 
 // Serialize the in-memory routines back to routines.json. Shared by the
-// description editor and the per-routine display-sleep toggle so both keep the
-// full routine record (including keep_display_awake) intact on disk.
+// description editor, the per-routine display-sleep toggle and the live
+// music-behavior toggle, so all keep the full routine record intact on disk.
+// Uses serializeRoutine() — the same encoder saveRoutines() uses — so a live
+// toggle and an editor save can never write differently-shaped files. Both
+// writers commit through QSaveFile (atomic rename), and everything here runs on
+// the GUI thread, so a toggle firing alongside an editor save can't tear the
+// file: the two writes are ordered by the event loop and the loser is simply
+// overwritten wholesale by the winner, never interleaved.
 bool RoutineManager::persistRoutines() const
 {
     QJsonArray array;
     for (const Routine &routine : m_routines) {
-        QJsonArray appArray;
-        for (const QString &app : routine.apps) {
-            appArray.append(app);
-        }
-        QJsonArray urlArray;
-        for (const QString &url : routine.allowedUrls) {
-            urlArray.append(url);
-        }
-        QJsonObject object;
-        object.insert(QStringLiteral("id"), routine.id);
-        object.insert(QStringLiteral("name"), routine.name);
-        object.insert(QStringLiteral("description"), routine.description);
-        object.insert(QStringLiteral("apps"), appArray);
-        object.insert(QStringLiteral("allowed_urls"), urlArray);
-        object.insert(QStringLiteral("access_folder"), routine.accessFolder);
-        object.insert(QStringLiteral("access_desktop"), routine.accessDesktop);
-        object.insert(QStringLiteral("access_documents"), routine.accessDocuments);
-        object.insert(QStringLiteral("access_downloads"), routine.accessDownloads);
-        object.insert(QStringLiteral("browsable"), routine.browsable);
-        object.insert(QStringLiteral("time_limit_minutes"), routine.timeLimitMinutes);
-        object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
-        object.insert(QStringLiteral("network_lock"), routine.networkLock);
-        object.insert(QStringLiteral("full_access"), routine.fullAccess);
-        object.insert(QStringLiteral("break_frequency_minutes"), routine.breakFrequencyMinutes);
-        object.insert(QStringLiteral("break_duration_minutes"), routine.breakDurationMinutes);
-        object.insert(QStringLiteral("keep_display_awake"), routine.keepDisplayAwake);
-        object.insert(QStringLiteral("music_behavior"), routine.musicBehavior);
-        array.append(object);
+        array.append(serializeRoutine(routine));
     }
 
     QJsonObject root;
@@ -1525,10 +1539,21 @@ QString RoutineManager::openDocumentInSession()
         return {}; // cancelled — no message, the user backed out deliberately.
     }
 
-    // Same guard as the browser's openFileInSession: opening *documents* is the
-    // point, but an executable or a .desktop entry would let this become a
-    // launcher — exactly what the lockdown watchdog kills file managers to
-    // prevent. Refuse those so the door stays only as wide as "open my file".
+    // DELIBERATELY NOT jailed to isWithinBrowseRoots(), unlike openFileInSession.
+    // That asymmetry is intentional, not an oversight: openFileInSession serves
+    // the in-app *browser*, which hands us paths programmatically (a hostile or
+    // stale path must be confined to the routine's opt-in roots). This path is
+    // the native "OPEN DOC" picker — the human physically navigates and chooses a
+    // single file, so the jail would only stop them reaching their own documents,
+    // not stop an attacker. The file opens in its default *viewer*, never a
+    // launcher, so it is not an escape hatch; the executable/.desktop guard below
+    // keeps it that way. (Mid-session doc access is passcode-free by design; only
+    // the browser is TOTP-gated.)
+    //
+    // Same launcher guard as openFileInSession: opening *documents* is the point,
+    // but an executable or a .desktop entry would let this become a launcher —
+    // exactly what the lockdown watchdog kills file managers to prevent. Refuse
+    // those so the door stays only as wide as "open my file".
     const QFileInfo info(path);
     if (info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) == 0
             || info.isExecutable()) {

@@ -16,9 +16,9 @@ class IdleMonitor final : public QObject
     Q_OBJECT
     Q_PROPERTY(bool idle READ idle NOTIFY idleChanged)
     // Second stage: after `deepTimeoutMs` more without input the session enters a
-    // deep sleep — the starfield stops, the panel blanks, music pauses, and the
-    // machine is asked to suspend. QML binds the pure-black idle screen (no
-    // animation) to this; main.cpp wires the power side effects.
+    // deep sleep — the starfield stops, the panel blanks (DPMS off), music
+    // pauses, and the machine is asked to suspend. QML binds the pure-black idle
+    // screen (no animation) to this; main.cpp wires the power side effects.
     Q_PROPERTY(bool deepIdle READ deepIdle NOTIFY deepIdleChanged)
     Q_PROPERTY(int timeoutMs READ timeoutMs WRITE setTimeoutMs NOTIFY timeoutMsChanged)
     Q_PROPERTY(int deepTimeoutMs READ deepTimeoutMs WRITE setDeepTimeoutMs NOTIFY deepTimeoutMsChanged)
@@ -59,19 +59,28 @@ signals:
     // (Task 4): coming back to the keyboard / refocusing resumes the timer, but
     // a passing mouse jitter does not.
     void resumeHint();
+    // Third stage: emitted once after a full 30 minutes of idleness on the home
+    // screen, on top of the deep-sleep blank. main.cpp wires it to the screen
+    // lock so a machine left untended long-term ends up locked, not merely dark.
+    // Like the other stages it never fires while suppressed (a routine engaged).
+    void lockIdle();
 
 private:
     void noteActivity();
     void goIdle();
     void goDeepIdle();
-    // Clear both idle stages (and stop the deep timer); emits the changes.
+    void goLockIdle();
+    // Clear all idle stages (and stop the deep + lock timers); emits the changes.
     void clearIdleState();
 
     bool m_idle = false;
     bool m_deepIdle = false;
     bool m_suppressed = false;
-    int m_timeoutMs = 5 * 60 * 1000;     // 5 minutes to the starfield screensaver
-    int m_deepTimeoutMs = 2 * 60 * 1000; // 2 more minutes to deep sleep
+    int m_timeoutMs = 5 * 60 * 1000;       // 5 minutes to the starfield screensaver
+    int m_deepTimeoutMs = 2 * 60 * 1000;   // 2 more minutes to deep sleep (panel off)
+    // 23 more minutes after deep sleep → 30 minutes total idle → lock the screen.
+    int m_lockTimeoutMs = 23 * 60 * 1000;
     QTimer m_timer;
     QTimer m_deepTimer;
+    QTimer m_lockTimer;
 };
