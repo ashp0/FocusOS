@@ -32,6 +32,16 @@ BROWSER=""
 for cand in brave-browser brave chromium chromium-browser google-chrome google-chrome-stable; do
   if command -v "$cand" >/dev/null 2>&1; then BROWSER="$(command -v "$cand")"; break; fi
 done
+# macOS ships browsers as .app bundles, not on PATH — probe the usual bundles.
+if [ -z "$BROWSER" ] && [ "$(uname -s)" = "Darwin" ]; then
+  for app in \
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+    "$HOME/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+    if [ -x "$app" ]; then BROWSER="$app"; break; fi
+  done
+fi
 if [ -z "$BROWSER" ]; then
   echo "No Chromium-family browser found to pack the .crx (need brave/chromium/chrome)." >&2
   exit 1

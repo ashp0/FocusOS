@@ -47,6 +47,31 @@ That script:
 Fully restart Brave/Chromium after the first setup so the browser loads the
 policy and native-host manifest.
 
+### macOS (Brave)
+
+Safari is not Chromium and cannot host the extension; the target is Brave (the
+user's Chromium browser). The Linux `setup-testing-machine.sh` is Linux-only, so
+on macOS run:
+
+```bash
+scripts/focusos-blocker-setup-macos.sh   # sudo prompt for the managed policy
+```
+
+It mirrors the Linux pipeline:
+
+- Packs the signed CRX + `updates.xml` into `~/.focusos/blocker/dist`.
+- Serves that dist at `http://127.0.0.1:48217` via a launchd user agent
+  (`~/Library/LaunchAgents/com.focusos.blocker-dist.plist`).
+- Stages the app to `~/Applications/FocusOS.app` when the repo lives under a
+  TCC-protected folder (`~/Desktop`, `~/Documents`, `~/Downloads`) — a
+  Dock-launched browser is blocked from exec'ing a native host located there —
+  and registers `com.focusos.blocker` pointing at that copy.
+- Writes Brave managed policy (`ExtensionInstallForcelist` + `ExtensionSettings`
+  + the incognito/guest clamp) to `/Library/Managed Preferences/`.
+
+Then fully quit Brave (Cmd-Q) and reopen it. Verify at `brave://policy` and
+`brave://extensions`. Undo with `scripts/focusos-blocker-uninstall-macos.sh`.
+
 ## Daily Update Workflow
 
 After setup, the intended testing-machine update path is:

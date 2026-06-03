@@ -57,6 +57,25 @@ QStringList jsonArrayToStringList(const QJsonArray &array)
     return values;
 }
 
+// A routine "requires a web browser" if anything it launches opens in one: an
+// in-browser kiosk app entry (kiosk:<url>) or a plain allowed-URL list (those
+// are handed to the default Chromium browser via openUrls). Such routines lean
+// on the blocker EXTENSION to gate URLs, so they skip the system-wide outbound
+// firewall — a full egress block would otherwise strand the allowed sites'
+// off-host subresources. Routines with neither get the full system-wide block.
+bool routineRequiresBrowser(const Routine &routine)
+{
+    if (!routine.allowedUrls.isEmpty()) {
+        return true;
+    }
+    for (const QString &app : routine.apps) {
+        if (app.trimmed().startsWith(QStringLiteral("kiosk:"), Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QJsonObject readConfigObject()
 {
     QFile file(configPath());
@@ -900,7 +919,23 @@ void RoutineManager::engage(const QString &routineId)
     // Full-internet-access routines deliberately skip the outbound allowlist.
     // The TOTP gate that authorizes them is enforced in QML before engage() is
     // ever called (see ActivitiesPanel / Main fullAccessPrompt).
-    const bool applyNetworkLock = routine.networkLock && !routine.fullAccess;
+    const bool restrictNetwork = routine.networkLock && !routine.fullAccess;
+    // Only routines that DON'T need a web browser get the full system-wide
+    // (pf / nftables) egress block. A browser routine is gated by the blocker
+    // extension's URL allowlist instead, so a system-wide block would be
+    // redundant and would break allowed sites' off-host subresources.
+    const bool applyNetworkLock = restrictNetwork && !routineRequiresBrowser(routine);
+
+    if (restrictNetwork && !applyNetworkLock && m_backend) {
+        // Browser routine: enforce the allowlist in the extension only (fast —
+        // no DNS), then engage inline. dropNetworkPolicy() clears it at end.
+        m_backend->applyBrowserBlockerPolicy(routine.allowedUrls);
+        QString error;
+        if (!finishEngage(routine, /*networkApplied=*/true, &error)) {
+            setStatusMessage(error.isEmpty() ? QStringLiteral("ROUTINE START FAILED") : error);
+        }
+        return;
+    }
 
     if (!applyNetworkLock || !m_backend) {
         // No network lock (or no backend): nothing slow to do — engage inline.
@@ -1869,16 +1904,23 @@ void RoutineManager::resumeActiveSessionIfPresent()
         // can use Relaunch if they want fresh windows.
         m_backend->prepareRoutineSession(routine.apps);
         m_backend->startWatchdog(QCoreApplication::applicationFilePath());
-        if (routine.networkLock) {
-            // Best-effort, OFF the GUI thread so a slow resolver doesn't freeze
-            // the shell coming up after a crash. The timer/commitment resume
-            // immediately below regardless; the status line surfaces a failure.
-            m_backend->applyNetworkPolicyAsync(routine.allowedUrls,
-                [this](bool ok, const QString &error) {
-                    if (!ok && !error.isEmpty()) {
-                        setStatusMessage(QStringLiteral("NETWORK LOCK NOT REAPPLIED: %1").arg(error));
-                    }
-                });
+        if (routine.networkLock && !routine.fullAccess) {
+            if (routineRequiresBrowser(routine)) {
+                // Browser routine: re-arm the extension allowlist only — no pf /
+                // nftables block (mirrors the engage() decision).
+                m_backend->applyBrowserBlockerPolicy(routine.allowedUrls);
+            } else {
+                // Best-effort, OFF the GUI thread so a slow resolver doesn't
+                // freeze the shell coming up after a crash. The timer/commitment
+                // resume immediately below regardless; the status line surfaces a
+                // failure.
+                m_backend->applyNetworkPolicyAsync(routine.allowedUrls,
+                    [this](bool ok, const QString &error) {
+                        if (!ok && !error.isEmpty()) {
+                            setStatusMessage(QStringLiteral("NETWORK LOCK NOT REAPPLIED: %1").arg(error));
+                        }
+                    });
+            }
         }
     }
 

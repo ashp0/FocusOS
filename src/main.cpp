@@ -125,6 +125,64 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
 }
 #endif
 
+#if defined(Q_OS_MACOS)
+#include <csignal>
+#include <cstring>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
+
+// Last-ditch cleanup so a crash doesn't strand the machine behind the pf
+// outbound allowlist. Same async-signal-safe discipline as the Linux handler:
+// only fork()+execve() of a path resolved ONCE at install time — no Qt /
+// QProcess / malloc from inside the handler.
+static char g_pfctlPath[4096] = {0};
+static char g_pfArgDisable[] = "-d";
+
+static void focusosMacForkExec(char *const argv[])
+{
+    const pid_t pid = fork();
+    if (pid == 0) {
+        execve(argv[0], argv, environ);
+        _exit(127);
+    } else if (pid > 0) {
+        int status = 0;
+        waitpid(pid, &status, 0);
+    }
+}
+
+static void focusosMacFatalSignalHandler(int signum)
+{
+    // Disable pf so a crash never leaves the user with no network. (The watchdog
+    // LaunchAgent respawns FocusOS, which re-applies the lock on resume if the
+    // routine is still armed — so dropping it here is safe, not a security hole.)
+    if (g_pfctlPath[0] != '\0') {
+        char *argv[] = {g_pfctlPath, g_pfArgDisable, nullptr};
+        focusosMacForkExec(argv);
+    }
+    std::signal(signum, SIG_DFL);
+    std::raise(signum);
+}
+
+static void installCrashCleanupHandlers(PlatformBackend *backend)
+{
+    Q_UNUSED(backend);
+    // pfctl lives at a fixed path on every macOS install; stash it for the handler
+    // to execve directly (PATH search in a signal handler is itself unsafe).
+    const char kPfctl[] = "/sbin/pfctl";
+    if (sizeof(kPfctl) <= sizeof(g_pfctlPath)) {
+        std::memcpy(g_pfctlPath, kPfctl, sizeof(kPfctl));
+    }
+    std::signal(SIGSEGV, focusosMacFatalSignalHandler);
+    std::signal(SIGABRT, focusosMacFatalSignalHandler);
+    std::signal(SIGBUS, focusosMacFatalSignalHandler);
+    std::signal(SIGFPE, focusosMacFatalSignalHandler);
+    std::signal(SIGTERM, focusosMacFatalSignalHandler);
+    std::signal(SIGINT, focusosMacFatalSignalHandler);
+}
+#endif
+
 int main(int argc, char *argv[])
 {
     // Native-host mode: the browser spawns this binary as the blocker
@@ -169,6 +227,9 @@ int main(int argc, char *argv[])
 
 #if defined(Q_OS_MACOS)
     MacBackend backend;
+    // Drop the pf firewall if FocusOS crashes, so a segfault mid-routine never
+    // leaves the machine with no network behind a half-applied allowlist.
+    installCrashCleanupHandlers(&backend);
 #elif defined(Q_OS_LINUX)
     LinuxBackend backend;
     installCrashCleanupHandlers(&backend);

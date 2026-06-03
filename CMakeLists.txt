@@ -189,20 +189,21 @@ endif()
 
 if(APPLE)
     # Apple frameworks backing the native macOS shim:
-    #   AppKit            — NSApplicationPresentationOptions kiosk mode, NSWorkspace
-    #   Foundation        — NSString/NSArray bridging, NSRunLoop pumping
-    #   IOKit             — IOPMAssertionCreateWithName display-sleep inhibition
-    #   NetworkExtension  — NEFilterManager content-filter network policy
+    #   AppKit      — NSApplicationPresentationOptions kiosk mode, NSWorkspace
+    #   Foundation  — NSString/NSArray bridging, NSRunLoop pumping
+    #   IOKit       — IOPMAssertionCreateWithName display-sleep inhibition
+    # The network lock is now pf (`pfctl`), not the Network Extension content
+    # filter: pf needs only root — no Apple-granted entitlement or System
+    # Extension — so it works on a self-signed research build. See
+    # MacBackendNative.mm (applyNetworkFilter) and packaging/macos/README.md.
     find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
-    find_library(NETWORK_EXTENSION_FRAMEWORK NetworkExtension REQUIRED)
 
     target_link_libraries(focusos PRIVATE
         ${APPKIT_FRAMEWORK}
         ${FOUNDATION_FRAMEWORK}
         ${IOKIT_FRAMEWORK}
-        ${NETWORK_EXTENSION_FRAMEWORK}
     )
 
     # EndpointSecurity backs the AUTH_EXEC process blocker. It is only usable in

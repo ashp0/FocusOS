@@ -66,6 +66,14 @@ public:
         const bool ok = applyNetworkPolicy(allowedHosts, &error);
         onComplete(ok, error);
     }
+    // Browser-routine network policy: write ONLY the signed browser-blocker
+    // policy (the in-extension URL allowlist) WITHOUT the system-wide outbound
+    // firewall. Used for routines that need a web browser — the blocker
+    // extension enforces the allowlist at the navigation layer, so a full pf /
+    // nftables egress block would be redundant and would break the allowed
+    // sites' off-host subresources (CDNs, video, fonts, APIs). Fast (no DNS), so
+    // it runs inline. dropNetworkPolicy() clears it again at routine end.
+    virtual void applyBrowserBlockerPolicy(const QStringList &allowedHosts) { Q_UNUSED(allowedHosts); }
     virtual void dropNetworkPolicy() = 0;
     // Dry run for the strict engage-time app sweep (quitBackgroundApps): return
     // the process names that WOULD be SIGTERM'd for the given routine, without

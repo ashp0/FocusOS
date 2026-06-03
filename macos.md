@@ -156,15 +156,20 @@ terminate]` → `forceTerminate` (already implemented). Works for user GUI apps;
 cannot kill SIP-protected system processes (nor should it). The dry-run
 (`previewBackgroundAppQuit`) and always-allowed exemptions port cleanly.
 
-### Network — Network Extension content filter **or** `pf`
+### Network — `pf` (implemented) **or** Network Extension content filter
 *Linux equivalent: `NetGate.cpp` nftables allowlist.* Two options:
-- **`NEFilterManager` content filter** (already implemented): per-socket allow/deny
-  by host. Sanctioned, survives as a System Extension, user approves it once. Needs
-  the Network Extension entitlement + a bundled `…NetworkFilter` provider. No SIP off.
-- **`pf` (`pfctl` + `/etc/pf.conf`)**: root-only, no entitlement, no SIP off — the
-  closest analog to nftables. IP-level allowlist; DNS-name allowlisting means
-  resolving hosts to IPs first (same async-DNS concern flagged in the Linux launch
-  audit). Best path for a research build that doesn't want to chase entitlements.
+- **`pf` (`pfctl`) — now the implemented macOS path** (`MacBackendNative.mm`
+  `applyNetworkFilter`/`dropNetworkFilter`): root-only, no entitlement, no SIP off —
+  the closest analog to nftables. FocusOS resolves the allowlist to IPs (reusing
+  NetGate's companion-domain expansion for YouTube/Google), writes a ruleset to
+  `/etc/pf.anchors/focusos` that blocks all egress except loopback + DNS + the
+  resolved addresses, and loads it with `pfctl -E -f`. `dropNetworkPolicy` restores
+  `/etc/pf.conf` and disables pf. Best path for a research build (no $99 account).
+- **`NEFilterManager` content filter** (the sanctioned alternative, not currently
+  wired up): per-socket allow/deny, survives as a System Extension, user approves it
+  once — but needs the Network Extension entitlement + a bundled `…NetworkFilter`
+  provider, which is impractical without a Developer account. Swap back to this for
+  a distributable build.
 
 ### Fullscreen / kiosk shell — `NSApplicationPresentationOptions`
 *Linux equivalent: being the session shell + the lock overlay.* Already implemented
@@ -208,11 +213,13 @@ wants to *intercept* them it'd use a `CGEventTap` (Input Monitoring TCC) or the
 Developer-ID signed + notarized; user grants Accessibility / Input Monitoring / Full
 Disk Access via TCC. You get: fullscreen kiosk presentation, hide Dock/menu bar,
 disable Cmd-Tab/Force-Quit *while frontmost*, quit other user apps, a `pf` firewall,
-display-sleep control, and a LaunchAgent watchdog. Spotlight/Mission-Control hotkeys
-disabled via `symbolichotkeys`. **This is a genuinely usable focus kiosk and the
-realistic target for a personal/research build.** It is cooperative: a determined
-user can break frontmost (e.g. force a Space switch) and the shell agents are still
-alive underneath.
+display-sleep control, and a LaunchAgent watchdog. Spotlight / Mission Control /
+Launchpad / screenshot / switcher hotkeys are swallowed by a `CGEventTap`
+(`startInputBlocker`, needs Accessibility) rather than rewriting the user's
+`symbolichotkeys` plist — reversible, nothing left behind. **This is a genuinely
+usable focus kiosk and the realistic target for a personal/research build.** It is
+cooperative: a determined user can still navigate via a trackpad space-swipe (gestures
+ride below the event tap) and the shell agents are alive underneath.
 
 ### Tier B — Tier A + Apple-granted entitlements (still SIP on)
 Add `com.apple.developer.endpoint-security.client` and the Network Extension
@@ -260,23 +267,23 @@ is **Screen Time** app/category limits (admin-password gated, bypassable, but re
 | `PlatformBackend` method | Linux | macOS | Notes |
 | --- | --- | --- | --- |
 | `launchApps` / `openUrls` | ✅ | ✅ | `NSWorkspace` + kiosk `--app` browser. Implemented. |
-| `terminateApps` / `quitBackgroundApps` / `previewBackgroundAppQuit` | ✅ | 🟡 | `NSRunningApplication terminate/forceTerminate`. Can't touch protected system procs. |
-| `prepareRoutineSession` (lockdown sweep) | ✅ pkill loop | ✅ ES `AUTH_EXEC` | macOS *pre-empts* launches — strictly better, but needs entitlement or SIP-off. |
-| `endRoutineLockdown` | ✅ | ✅ | Stop the ES client. Implemented. |
-| `applyNetworkPolicy(Async)` / `dropNetworkPolicy` | ✅ nftables | 🟡 | NEFilter (entitlement) or `pf` (root). Implemented (NEFilter). DNS→IP work needed. |
-| `lockScreen` / `unlockScreen` | ✅ | 🟡 | No clean public lock API; `CGSession -suspend` (→ login window) or `pmset displaysleepnow` + the QML overlay. |
-| `sleepDisplay` / `wakeDisplay` | ✅ DPMS | ✅ | `pmset displaysleepnow`; wakes on input. |
-| `suspendSystem` | 🟡 s2idle pin | ✅ | `pmset sleepnow` — macOS sleep is reliable; the s2idle workaround is unneeded. |
-| `freezeBackgroundProcesses` / `thaw` | ✅ | ✅ | SIGSTOP/SIGCONT by PID. |
+| `terminateApps` / `quitBackgroundApps` / `previewBackgroundAppQuit` | ✅ | ✅ | **Implemented:** `sweepOtherApplications` quits every regular (Dock-visible) app outside the keep-set (routine + always-allowed + Finder + FocusOS), with the same dry-run preview as Linux. Can't touch protected system procs. |
+| `prepareRoutineSession` (lockdown sweep) | ✅ pkill loop | ✅ ES `AUTH_EXEC` + key tap | macOS *pre-empts* launches (ES, needs entitlement/SIP-off) **and** swallows the launcher hotkeys via a `CGEventTap` (`startInputBlocker`) so the user can't reach Spotlight/Mission Control in the first place. |
+| `endRoutineLockdown` | ✅ | ✅ | **Implemented:** stop the ES client + the key tap and leave kiosk presentation, without killing the routine's apps. |
+| `applyNetworkPolicy(Async)` / `dropNetworkPolicy` | ✅ nftables | ✅ | **Implemented via `pf`** (root, no entitlement); `applyNetworkPolicyAsync` now resolves DNS off the GUI thread on a worker (mirrors Linux). NEFilter is the distributable alternative. |
+| `lockScreen` / `unlockScreen` | ✅ | ✅ | **Implemented:** `pmset displaysleepnow` (locks if "require password after sleep" is set) + the QML overlay; unlock wakes via `caffeinate -u`. |
+| `sleepDisplay` / `wakeDisplay` | ✅ DPMS | ✅ | `pmset displaysleepnow`; wakes on input / `caffeinate -u`. Implemented. |
+| `suspendSystem` | 🟡 s2idle pin | ✅ | **Implemented:** `pmset sleepnow` — macOS sleep is reliable; the s2idle workaround is unneeded. |
+| `freezeBackgroundProcesses` / `thaw` | ✅ | ✅ | **Implemented:** SIGSTOP/SIGCONT regular apps outside the keep-set by PID. |
 | `setDisplaySleepInhibited` / `releaseDisplaySleepInhibitors` | ✅ | ✅ | `IOPMAssertion` + `caffeinate -w <pid>`. Implemented and clean. |
 | `startWatchdog` | ✅ shell watchdog | ✅ | LaunchAgent `KeepAlive`/`PathState`. Implemented; arguably cleaner than Linux. |
 | `setAlwaysAllowedApps` | ✅ | ✅ | Exemption set feeds ES allowlist. Implemented. |
 | `launchDesktopShell` / `terminateDesktopShell` / `desktopShellSupported` | ✅ | 🔴 | No swappable shell. Implemented as "leave kiosk + open Terminal" — a different idea. |
-| `restoreShellPlacement` | ✅ (no-op) | ✅ | Leave kiosk presentation. |
+| `restoreShellPlacement` | ✅ (no-op) | ✅ | Re-raise the always-on baseline (kiosk presentation + key tap) so the home screen stays locked between routines. |
 | `restoreLoginSessions` | ✅ (stashed sessions) | 🔴 | macOS has no stashed sessions; returns unsupported. |
 | `ensureGlobalShortcutsDaemon` | ✅ KGlobalAccel | 🔴 | KDE-only concept; N/A. |
-| `runSessionStartupItems` | ✅ startup.sh | 🔴 | launchd already runs login items; N/A. |
-| `signOut` / `signOutSupported` | ✅ loginctl | 🟡 | `launchctl bootout gui/$UID` or a logout AppleEvent; confirm-dialog/coalescing to handle. |
+| `runSessionStartupItems` | ✅ startup.sh | ✅ (repurposed) | No autostart replay needed (launchd handles login items); used as the post-window hook to raise the always-on kiosk + key-tap posture so the home screen is locked "in general", not only mid-routine. |
+| `signOut` / `signOutSupported` | ✅ loginctl | ✅ | **Implemented:** drop pf + lockdown, bootout the watchdog LaunchAgent, then log out via the `aevtrlgo` Apple event (no confirm dialog). |
 | Media keys (`MediaKeys.*`) | ✅ KGlobalAccel + resume re-grab | 🟡 | System handles them; intercept via `CGEventTap`/`MPRemoteCommandCenter`. No re-grab gotcha. |
 | **Replace the session shell / login surface** | ✅ SDDM + KWin payload | 🔴 | **The defining gap.** No equivalent — see §1, §5. |
 
@@ -293,16 +300,21 @@ For a **personal / research locked-down macOS** that mirrors FocusOS as closely 
 the platform allows, build on the existing backend with this posture:
 
 1. **Base = Tier A**, always. Fullscreen `NSApplicationPresentationOptions` kiosk +
-   `symbolichotkeys` disabling Spotlight/Mission-Control/Force-Quit + the LaunchAgent
-   watchdog + `IOPMAssertion`. No special privileges; this alone is a solid focus kiosk.
+   a `CGEventTap` (`startInputBlocker`) swallowing Spotlight / Mission Control /
+   Launchpad / screenshot / Force-Quit hotkeys + the LaunchAgent watchdog +
+   `IOPMAssertion`. The tap needs Accessibility (prompted on first engage) but no
+   other privilege; this alone is a solid focus kiosk. The kiosk + tap are raised at
+   startup (`runSessionStartupItems`), so the home screen is locked too, not only
+   mid-routine.
 2. **App enforcement = Endpoint Security**, the keystone. For distribution, get the
    ES entitlement (Tier B). For a personal machine, SIP-off + `amfi_get_out_of_my_way=1`
    (Tier C) to run the existing ES blocker self-signed. *Don't* fall back to a
    pkill-loop on macOS — the AUTH_EXEC gate is the whole point.
-3. **Network = `pf` for research, NEFilter for distribution.** `pf` needs only root
-   and matches the nftables model; switch to the implemented `NEFilter` provider when
-   you're ready to chase the Network Extension entitlement. Resolve DNS names → IPs on
-   a worker thread (mirror the Linux `applyNetworkPolicyAsync` contract).
+3. **Network = `pf`** (now the implemented macOS path) — needs only root, matches the
+   nftables model, no entitlement. Switch to a `NEFilter` System Extension only if you
+   later want a distributable build. `applyNetworkPolicyAsync` resolves DNS + loads pf
+   on a detached worker thread and hops back to the GUI thread for the callback, so
+   engage no longer freezes the shell (matches the Linux contract).
 4. **Persistence = the LaunchAgent watchdog** keyed on `~/.focusos/active.json`, plus
    (Tier C only, optional) `launchctl disable` of the Dock/Finder/Spotlight agents so
    the desktop isn't lurking behind the kiosk. Keep the checkpoint file as the kill
@@ -327,14 +339,19 @@ intended answer is MDM supervision, not a custom session.
 
 ## 8. Build / wiring notes
 
-- The macOS backend builds today (CLAUDE.md: "keep it compiling"); CMake links
-  AppKit/Foundation/IOKit/NetworkExtension and gates Endpoint Security behind
-  `FOCUSOS_HAS_ENDPOINT_SECURITY` (see the `FOCUSOS_ENDPOINT_SECURITY_AVAILABLE`
-  guard in [`MacBackendNative.mm`](src/platform/macos/MacBackendNative.mm)).
-- To exercise Tier B/C you must **sign** the app: Developer-ID + notarization for
-  Tier B (with the ES + Network-Extension entitlements and a bundled
-  `…NetworkFilter` provider extension), or a self-signed cert + `amfi_get_out_of_my_way=1`
-  for Tier C research.
+- The macOS backend builds today; CMake links AppKit/Foundation/IOKit and gates
+  Endpoint Security behind `FOCUSOS_HAS_ENDPOINT_SECURITY` (see the
+  `FOCUSOS_ENDPOINT_SECURITY_AVAILABLE` guard in
+  [`MacBackendNative.mm`](src/platform/macos/MacBackendNative.mm)). NetworkExtension
+  is no longer linked — the network lock is `pf`.
+- **Implemented Tier-C research path** (no Developer account): build + ad-hoc-sign
+  with [`packaging/macos/build-and-sign.sh`](packaging/macos/build-and-sign.sh),
+  which embeds [`packaging/macos/focusos.entitlements`](packaging/macos/focusos.entitlements)
+  (`com.apple.developer.endpoint-security.client`). Disable SIP (and, if needed,
+  `amfi_get_out_of_my_way=1`) per [`packaging/macos/README.md`](packaging/macos/README.md),
+  then run as root. For a distributable Tier-B build you'd instead use Developer-ID +
+  notarization with the Apple-granted ES (and, if you re-add NEFilter, Network-Extension)
+  entitlements.
 - TCC approvals the app will prompt for: **Accessibility** and/or **Input Monitoring**
   (event taps / hotkey suppression), **Full Disk Access** (Endpoint Security),
   **Screen Recording** is *not* needed. These can't be granted programmatically —

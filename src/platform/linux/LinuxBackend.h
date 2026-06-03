@@ -32,6 +32,7 @@ public:
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void applyNetworkPolicyAsync(const QStringList &allowedHosts,
                                  std::function<void(bool, const QString &)> onComplete) override;
+    void applyBrowserBlockerPolicy(const QStringList &allowedHosts) override;
     void dropNetworkPolicy() override;
     QStringList previewBackgroundAppQuit(const QStringList &allowedCommandLines) override;
     bool openSystemTerminal(QString *errorMessage = nullptr) override;

@@ -18,6 +18,7 @@
 #include <QXmlStreamWriter>
 
 #include <csignal>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -417,7 +418,12 @@ void MacBackend::prepareRoutineSession(const QStringList &appPaths)
     }
 
     startLockdown();
-    closeDistractingApplications();
+
+    // Strict enforcement parity with Linux: close the user's other GUI apps so a
+    // routine starts from a clean surface — nothing but the routine's own apps,
+    // the always-allowed list, Finder, and FocusOS. The QML side previews this
+    // (previewBackgroundAppQuit) before engage so unsaved work can be saved.
+    quitBackgroundApps(appPaths);
 }
 
 bool MacBackend::launchApps(const QStringList &appPaths, QString *errorMessage)
@@ -621,6 +627,33 @@ bool MacBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *er
     return true;
 }
 
+void MacBackend::applyNetworkPolicyAsync(const QStringList &allowedHosts,
+                                         std::function<void(bool, const QString &)> onComplete)
+{
+    // The slow part is DNS resolution (buildPfRuleset resolves every allowed
+    // host, plus its www. counterpart, synchronously). Run the whole apply on a
+    // detached worker thread so engage never freezes the shell — then hop back to
+    // the GUI thread for the callback, matching LinuxBackend's contract and the
+    // RoutineManager engage flow that relies on it. pfctl + the file write are
+    // self-contained (a local QProcess / QSaveFile), so they're safe off-thread.
+    std::thread([this, allowedHosts, onComplete = std::move(onComplete)]() mutable {
+        QString error;
+        const bool ok = applyNetworkPolicy(allowedHosts, &error);
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [onComplete = std::move(onComplete), ok, error]() { onComplete(ok, error); },
+            Qt::QueuedConnection);
+    }).detach();
+}
+
+void MacBackend::applyBrowserBlockerPolicy(const QStringList &allowedHosts)
+{
+    // Browser routine: hand the allowlist to the blocker extension (via the
+    // signed policy the native host reads) and leave pf untouched — the
+    // extension does the URL gating, not the system firewall.
+    BlockerPolicy::write(true, allowedHosts);
+}
+
 void MacBackend::dropNetworkPolicy()
 {
     BlockerPolicy::write(false, {});
@@ -665,13 +698,12 @@ bool MacBackend::openSystemTerminal(QString *errorMessage)
 
 void MacBackend::terminateUnrestrictedApps()
 {
-    closeDistractingApplications();
+    // Re-close anything the temporary admin desktop opened, back to the routine's
+    // own apps + always-allowed list.
+    quitBackgroundApps(m_sessionAppEntries);
     m_desktopAccessOpen = false;
+    applyBaselineKioskPosture();
     if (m_lockdownActive) {
-        QString presentationError;
-        if (!MacBackendNative::enterKioskPresentation(&presentationError)) {
-            qWarning() << presentationError;
-        }
         startLockdown();
     }
 }
@@ -681,6 +713,9 @@ bool MacBackend::launchDesktopShell(QString *errorMessage)
     Q_UNUSED(errorMessage);
     m_desktopAccessOpen = true;
     MacBackendNative::stopExecBlocker();
+    // Full admin access: lift the system-shortcut blocker too so Spotlight, the
+    // Dock and launchers work while the authorized desktop window is open.
+    MacBackendNative::stopInputBlocker();
     MacBackendNative::leaveKioskPresentation();
 
     // The macOS "desktop shell" is Finder/Dock/SystemUIServer. They are managed
@@ -694,10 +729,9 @@ bool MacBackend::launchDesktopShell(QString *errorMessage)
 void MacBackend::terminateDesktopShell()
 {
     m_desktopAccessOpen = false;
-    QString presentationError;
-    if (!MacBackendNative::enterKioskPresentation(&presentationError)) {
-        qWarning() << presentationError;
-    }
+    // Re-raise the baseline lock (kiosk + shortcut blocker); restore the routine's
+    // exec blocker on top if a routine is still running underneath.
+    applyBaselineKioskPosture();
     if (m_lockdownActive) {
         startLockdown();
     }
@@ -705,9 +739,12 @@ void MacBackend::terminateDesktopShell()
 
 void MacBackend::restoreShellPlacement()
 {
+    // A routine ended: drop the exec blocker but keep FocusOS a locked shell on
+    // the home screen — re-raise the baseline kiosk + shortcut blocker rather than
+    // leaving the desktop fully open.
     stopLockdown();
     m_desktopAccessOpen = false;
-    MacBackendNative::leaveKioskPresentation();
+    applyBaselineKioskPosture();
 }
 
 void MacBackend::setAlwaysAllowedApps(const QStringList &commandLines)
@@ -822,11 +859,169 @@ void MacBackend::releaseDisplaySleepInhibitors()
     setDisplaySleepInhibited(false);
 }
 
+void MacBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
+{
+    QStringList keepEntries = m_alwaysAllowedCommandLines;
+    keepEntries.append(allowedCommandLines);
+    keepEntries.removeDuplicates();
+
+    const QStringList killed = MacBackendNative::sweepOtherApplications(
+        bundleIdentifiersForCommandLines(keepEntries),
+        processNamesForCommandLines(keepEntries),
+        executablePathsForCommandLines(keepEntries),
+        /*dryRun=*/false);
+
+    // Leave an audit trail of exactly which GUI apps a strict engage closed —
+    // matches LinuxBackend::quitBackgroundApps. Best-effort; never blocks engage.
+    if (!killed.isEmpty()) {
+        QFile log(QDir::homePath() + QStringLiteral("/.focusos/lockdown.log"));
+        if (log.open(QIODevice::Append | QIODevice::Text)) {
+            const QString stamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+            log.write(QStringLiteral("%1 quitBackgroundApps terminate: %2\n")
+                          .arg(stamp, killed.join(QStringLiteral(", ")))
+                          .toUtf8());
+        }
+    }
+}
+
+QStringList MacBackend::previewBackgroundAppQuit(const QStringList &allowedCommandLines)
+{
+    QStringList keepEntries = m_alwaysAllowedCommandLines;
+    keepEntries.append(allowedCommandLines);
+    keepEntries.removeDuplicates();
+    return MacBackendNative::sweepOtherApplications(
+        bundleIdentifiersForCommandLines(keepEntries),
+        processNamesForCommandLines(keepEntries),
+        executablePathsForCommandLines(keepEntries),
+        /*dryRun=*/true);
+}
+
+void MacBackend::freezeBackgroundProcesses()
+{
+    if (!m_frozenPids.isEmpty()) {
+        return;  // already frozen — don't double-stop
+    }
+    // Deep-idle "app sleep" runs only on the home screen (idle is suppressed
+    // during a routine), so the keep-set is just the always-allowed list; Finder
+    // and FocusOS are kept by the native sweep. SIGSTOP parks the CPU at idle.
+    m_frozenPids = MacBackendNative::freezeOtherApplications(
+        bundleIdentifiersForCommandLines(m_alwaysAllowedCommandLines),
+        processNamesForCommandLines(m_alwaysAllowedCommandLines),
+        executablePathsForCommandLines(m_alwaysAllowedCommandLines));
+}
+
+void MacBackend::thawBackgroundProcesses()
+{
+    // Resume exactly the pids we froze — never a blanket SIGCONT. Idempotent.
+    MacBackendNative::resumeProcesses(m_frozenPids);
+    m_frozenPids.clear();
+}
+
+void MacBackend::lockScreen()
+{
+    // Blank the panel; with "require password after sleep" set this also locks.
+    // The QML black overlay covers the rest, so this is best-effort.
+    QProcess::startDetached(QStringLiteral("/usr/bin/pmset"),
+                            {QStringLiteral("displaysleepnow")});
+}
+
+void MacBackend::unlockScreen()
+{
+    wakeDisplay();
+}
+
+void MacBackend::sleepDisplay()
+{
+    // Blank the panel without the in-app lock overlay — the monitor wakes on the
+    // next input. macOS analog of the Linux DPMS-off.
+    QProcess::startDetached(QStringLiteral("/usr/bin/pmset"),
+                            {QStringLiteral("displaysleepnow")});
+}
+
+void MacBackend::wakeDisplay()
+{
+    // Force the panel back on after a deep-idle blank. caffeinate -u declares user
+    // activity (the documented way to wake the display); a short timeout releases
+    // the assertion immediately so it doesn't keep the screen awake afterwards.
+    QProcess::startDetached(QStringLiteral("/usr/bin/caffeinate"),
+                            {QStringLiteral("-u"), QStringLiteral("-t"), QStringLiteral("1")});
+}
+
+bool MacBackend::suspendSystem()
+{
+    // Opt-in whole-machine suspend for the deep-idle sleep. macOS sleep is
+    // reliable (no S3/black-screen workaround needed), so this is a plain
+    // pmset sleepnow. Best-effort: returns false if pmset can't be started.
+    return QProcess::startDetached(QStringLiteral("/usr/bin/pmset"),
+                                   {QStringLiteral("sleepnow")});
+}
+
+void MacBackend::runSessionStartupItems()
+{
+    // No Plasma-style autostart replay on macOS (launchd handles login items).
+    // What this hook gives us is a guaranteed post-window-show moment to raise the
+    // always-on kiosk posture so the home screen is locked too — Dock/menu bar
+    // hidden and Spotlight / Mission Control / Launchpad unreachable — not only
+    // mid-routine. ("disabled … in general", per the user's request.)
+    applyBaselineKioskPosture();
+}
+
+bool MacBackend::signOut(QString *errorMessage)
+{
+    Q_UNUSED(errorMessage);
+    // Drop the firewall first so a sign-out never strands the machine behind pf.
+    dropNetworkPolicy();
+    // Lift the lockdown surfaces and tear down the respawn watchdog, otherwise the
+    // LaunchAgent would relaunch FocusOS the instant the session restarts.
+    endRoutineLockdown();
+    const QString domain = QStringLiteral("gui/%1").arg(getuid());
+    const QString plistPath = QDir::homePath()
+        + QStringLiteral("/Library/LaunchAgents/com.focusos.watchdog.plist");
+    QProcess::execute(QStringLiteral("/bin/launchctl"),
+                      {QStringLiteral("bootout"), domain, plistPath});
+
+    // Log out of the GUI session → back to the macOS login window. The raw
+    // 'aevtrlgo' Apple event logs out immediately without a confirmation dialog
+    // (the kiosk presentation would otherwise swallow the dialog). If osascript
+    // can't run, fall back to quitting (the watchdog is already torn down).
+    const bool loggedOut = QProcess::startDetached(
+        QStringLiteral("/usr/bin/osascript"),
+        {QStringLiteral("-e"),
+         QStringLiteral("tell application \"loginwindow\" to «event aevtrlgo»")});
+    if (!loggedOut) {
+        QCoreApplication::quit();
+    }
+    return true;
+}
+
+void MacBackend::applyBaselineKioskPosture()
+{
+    QString presentationError;
+    if (!MacBackendNative::enterKioskPresentation(&presentationError)) {
+        qWarning() << presentationError;
+    }
+    QString inputError;
+    if (!MacBackendNative::startInputBlocker(&inputError) && !m_inputBlockerWarned) {
+        m_inputBlockerWarned = true;
+        qWarning() << inputError;
+    }
+}
+
 void MacBackend::startLockdown()
 {
     m_lockdownActive = true;
     if (m_desktopAccessOpen) {
         return;
+    }
+
+    // Swallow the system shortcuts (Spotlight, Mission Control, Launchpad, the
+    // Dock toggle, screenshots, switchers) the kiosk presentation can't reach —
+    // the macOS analog of the Linux launcher-killing watchdog. Needs Accessibility
+    // access to actually suppress; warn once if it can't.
+    QString inputError;
+    if (!MacBackendNative::startInputBlocker(&inputError) && !m_inputBlockerWarned) {
+        m_inputBlockerWarned = true;
+        qWarning() << inputError;
     }
 
     QStringList allowedNames = processNamesForCommandLines(allowedCommandLines());
@@ -866,26 +1061,22 @@ void MacBackend::stopLockdown()
 {
     m_lockdownActive = false;
     MacBackendNative::stopExecBlocker();
+    MacBackendNative::stopInputBlocker();
     m_sessionAppEntries.clear();
 }
 
-void MacBackend::closeDistractingApplications() const
+void MacBackend::endRoutineLockdown()
 {
-    QStringList blockedNames = defaultBlockedProcessNames();
-    QStringList blockedBundleIdentifiers = defaultBlockedBundleIdentifiers();
-    const QStringList allowedNames = processNamesForCommandLines(allowedCommandLines());
-    const QStringList allowedBundleIdentifiers = bundleIdentifiersForCommandLines(allowedCommandLines());
-
-    for (const QString &name : allowedNames) {
-        blockedNames.removeAll(name);
-    }
-    for (const QString &identifier : allowedBundleIdentifiers) {
-        blockedBundleIdentifiers.removeAll(identifier);
-    }
-
-    blockedNames.removeDuplicates();
-    blockedBundleIdentifiers.removeDuplicates();
-    MacBackendNative::terminateApplications(blockedBundleIdentifiers, blockedNames, {});
+    // Stand down the exec blocker + key blocker WITHOUT touching the routine's
+    // apps (they stay open for the finish prompt / admin desktop), and restore
+    // the normal presentation so the "Access Desktop" path — Spotlight, Dock,
+    // launchers — works again. Mirrors LinuxBackend::endRoutineLockdown stopping
+    // the launcher-killing sweep. The pf network lock (if any) is dropped
+    // separately by RoutineManager.
+    m_lockdownActive = false;
+    MacBackendNative::stopExecBlocker();
+    MacBackendNative::stopInputBlocker();
+    MacBackendNative::leaveKioskPresentation();
 }
 
 void MacBackend::killTrackedProcesses(const QStringList &entries)

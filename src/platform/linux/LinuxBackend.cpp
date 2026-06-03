@@ -1180,6 +1180,15 @@ void LinuxBackend::applyNetworkPolicyAsync(const QStringList &allowedHosts,
     }));
 }
 
+void LinuxBackend::applyBrowserBlockerPolicy(const QStringList &allowedHosts)
+{
+    // Browser routine: enforce the allowlist inside the blocker extension only —
+    // hand it the signed policy and leave nftables alone. The extension gates
+    // navigations at the browser layer, so a system-wide egress block would be
+    // redundant and would break allowed sites' off-host subresources.
+    BlockerPolicy::write(true, allowedHosts);
+}
+
 void LinuxBackend::dropNetworkPolicy()
 {
     m_networkLockActive = false;

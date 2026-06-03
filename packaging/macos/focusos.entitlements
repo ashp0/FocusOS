@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      The Endpoint Security client entitlement gates es_new_client(). Apple
+      normally hands this out only to enrolled developers (a "managed"
+      entitlement). On a SIP-disabled research machine with AMFI relaxed, an
+      ad-hoc signature carrying this key is accepted, which is how FocusOS runs
+      the AUTH_EXEC process blocker without an Apple Developer account.
+      See packaging/macos/README.md.
+    -->
+    <key>com.apple.developer.endpoint-security.client</key>
+    <true/>
+</dict>
+</plist>

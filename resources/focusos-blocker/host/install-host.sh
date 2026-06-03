@@ -22,17 +22,27 @@ EXT_ID="${EXT_ID:-gkbnapcbaflmaaoimfonclabmglfiden}"
 # Resolve the focusos binary.
 FOCUSOS_BIN="${FOCUSOS_BIN:-}"
 if [ -z "$FOCUSOS_BIN" ]; then
+  # NB: the .app bundle binary is listed BEFORE the bare build/focusos. On a
+  # case-insensitive macOS filesystem "build/focusos" resolves to the build's
+  # "FocusOS" QML-module DIRECTORY, and `[ -x dir ]` is true for directories —
+  # so we must require a regular file (-f) and prefer the real Mach-O binary.
+  # Prefer an installed copy OUTSIDE the TCC-protected ~/Desktop/Documents/
+  # Downloads — a Dock-launched browser can be blocked from exec'ing a native
+  # host that lives there. focusos-blocker-setup-macos.sh stages one in
+  # ~/Applications for exactly this reason; fall back to the build tree.
   for candidate in \
-    "$REPO_ROOT/build/focusos" \
+    "$HOME/Applications/FocusOS.app/Contents/MacOS/focusos" \
+    "/Applications/FocusOS.app/Contents/MacOS/focusos" \
     "$REPO_ROOT/build/focusos.app/Contents/MacOS/focusos" \
+    "$REPO_ROOT/build/focusos" \
     "$(command -v focusos || true)"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    if [ -n "$candidate" ] && [ -f "$candidate" ] && [ -x "$candidate" ]; then
       FOCUSOS_BIN="$candidate"
       break
     fi
   done
 fi
-if [ -z "$FOCUSOS_BIN" ] || [ ! -x "$FOCUSOS_BIN" ]; then
+if [ -z "$FOCUSOS_BIN" ] || [ ! -f "$FOCUSOS_BIN" ] || [ ! -x "$FOCUSOS_BIN" ]; then
   echo "Could not find the focusos binary. Build it, or set FOCUSOS_BIN=/path/to/focusos." >&2
   exit 1
 fi
