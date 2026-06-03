@@ -73,6 +73,18 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
   (KGlobalAccel is inert unless `kglobalacceld` runs, so `main()` starts it via
   `backend.ensureGlobalShortcutsDaemon()` before MediaKeys registers), audio needs
   a Qt multimedia backend plugin, brightness needs `brightnessctl`.
+  - KWin can drop the global-key grabs across a sleep/resume, so `MediaKeys`
+    subscribes to logind `PrepareForSleep` and re-grabs every volume/brightness
+    shortcut (remove + re-`setShortcut`) on the resume edge — otherwise the keys
+    are dead after the first sleep until re-login.
+- Deep-idle sleep is macOS-style and S3-free by default: pause music + `backend.
+  freezeBackgroundProcesses()` (SIGSTOP every user GUI app, same conservative
+  keep-set as the engage sweep) + DPMS off. Any input / logind resume thaws
+  (`thawBackgroundProcesses()` SIGCONTs exactly the tracked PIDs). Whole-machine
+  suspend stays opt-in (`deep_sleep_suspend`) and is pinned to s2idle/freeze via
+  `packaging/linux/90-focusos-sleep.conf` so it's safe on hardware that
+  black-screens out of S3 (e.g. the 2017 iMac). Freeze only runs on the home
+  screen (idle is suppressed during a routine).
 - No Plasma session = nothing runs the user's autostart items. `main()` calls
   `backend.runSessionStartupItems()` once per login (XDG_RUNTIME_DIR marker guards
   against re-running on watchdog respawn): it runs ONLY the user-editable

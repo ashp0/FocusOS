@@ -87,23 +87,40 @@ these basics before installing FocusOS as the only session:
 - You have a separate admin account, SSH access, live USB, or another recovery
   path.
 
-## Permanent Linux Session Install
+## Linux Session Install
 
-The installer builds the app from this checkout, installs the session wrapper
-and helper scripts, stashes other login sessions, applies KDE/logind lockdown
-config, grants a narrow recovery sudoers rule, and gives `nft` the capabilities
-needed for network policy.
+The installer is interactive and offers three **strictness levels** so you can
+start soft and tighten once you trust the build:
 
-Run it from your normal user account:
+| Level | Posture |
+|-------|---------|
+| `low` | FocusOS is one more **selectable** session next to Plasma. No autologin, no stashing, no lockdown. Start here to verify it launches. |
+| `medium` | Autologin into FocusOS, but logout returns to the greeter (Plasma still selectable), TTYs stay open, power/lid lockdown on. |
+| `max` | Permanent kiosk: stashes every other session, hides the selector, masks the gettys, full logind lockdown + scoped TOTP recovery. |
+
+Run it from your normal user account and pick a level when prompted:
 
 ```bash
 sudo ./packaging/linux/install.sh
 sudo reboot
 ```
 
-After reboot, SDDM should offer FocusOS as the only selectable session. The app
-binary remains in this checkout at `build/focusos`, which lets the in-app
-updater rebuild without sudo.
+Non-interactive / scripted installs can pass the level and skip the prompts, and
+override individual features:
+
+```bash
+sudo ./packaging/linux/install.sh --level low --yes
+sudo ./packaging/linux/install.sh --level max --no-mask-vt --yes
+```
+
+The app binary always remains in this checkout at `build/focusos`, which is what
+lets the in-app updater rebuild in place without sudo.
+
+**Self-heal / no-brick guarantee:** at every level the session wrapper falls
+back to the stock Plasma session if FocusOS crash-loops, so a bad build can
+never leave the machine unbootable. Force the fallback for the next login with
+`touch ~/.focusos/boot-to-plasma`. The chosen posture is recorded in
+`/usr/local/lib/focusos/install-state.conf`.
 
 Installed paths:
 
@@ -111,7 +128,8 @@ Installed paths:
 |------|---------|
 | `/usr/local/bin/focusos-session` | SDDM session entry point. |
 | `/usr/local/lib/focusos/` | Watchdog, update, revert, recovery scripts, KDE config. |
-| `/usr/local/lib/focusos/stashed-sessions/` | Other desktop sessions moved out of SDDM's list. |
+| `/usr/local/lib/focusos/stashed-sessions/` | Other desktop sessions moved out of SDDM's list (`max` level only). |
+| `/usr/local/lib/focusos/install-state.conf` | Records the chosen level + enabled features. |
 | `/usr/share/wayland-sessions/focusos.desktop` | FocusOS Wayland session. |
 | `/etc/systemd/logind.conf.d/90-focusos-logind.conf` | VT/session lockdown. |
 | `/etc/sudoers.d/focusos` | Allows only the recovery script to run without a password. |

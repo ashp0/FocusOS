@@ -29,6 +29,17 @@ ACTIVE_FILE="$FOCUS_DIR/active.json"
 BINARY_FILE="$FOCUS_DIR/watchdog-binary"
 LOCK_FILE="$FOCUS_DIR/watchdog.lock"
 LOG_FILE="$FOCUS_DIR/watchdog.log"
+CRASHLOOP_FILE="$FOCUS_DIR/crash-loop"
+
+# Kiosk crash-loop guard: if focusos dies and is respawned this many times within
+# the window, stop respawning and exit. In the permanent install this watchdog is
+# kwin's --exit-with-session command, so exiting ends the kwin session — which
+# hands control back to focusos-session.sh, which falls back to the stock desktop
+# instead of looping a broken build forever. A respawn that survives at least
+# KIOSK_MIN_HEALTHY seconds is treated as healthy and clears the window.
+KIOSK_CRASH_LIMIT="${FOCUSOS_KIOSK_CRASH_LIMIT:-4}"
+KIOSK_CRASH_WINDOW="${FOCUSOS_KIOSK_CRASH_WINDOW:-90}"
+KIOSK_MIN_HEALTHY="${FOCUSOS_KIOSK_MIN_HEALTHY:-20}"
 
 mkdir -p "$FOCUS_DIR"
 
@@ -82,11 +93,38 @@ spawn_focus() {
 
 log "watchdog start mode=$MODE pid=$$"
 
+# Sliding window of recent respawn timestamps (kiosk crash-loop detection).
+declare -a SPAWN_TIMES=()
+
+record_spawn_and_check_loop() {
+    local now pruned t
+    now="$(date +%s)"
+    pruned=()
+    for t in "${SPAWN_TIMES[@]:-}"; do
+        [[ "$t" =~ ^[0-9]+$ ]] || continue
+        (( now - t < KIOSK_CRASH_WINDOW )) && pruned+=("$t")
+    done
+    pruned+=("$now")
+    SPAWN_TIMES=("${pruned[@]}")
+    (( ${#SPAWN_TIMES[@]} >= KIOSK_CRASH_LIMIT ))
+}
+
 while true; do
     if [[ "$MODE" == "kiosk" ]]; then
         if ! focus_running; then
+            if record_spawn_and_check_loop; then
+                log "kiosk crash loop: ${#SPAWN_TIMES[@]} respawns in ${KIOSK_CRASH_WINDOW}s — giving up so the session can fall back to the stock desktop"
+                printf '%s crash-loop give-up after %s respawns\n' \
+                    "$(date -u +%FT%TZ)" "${#SPAWN_TIMES[@]}" > "$CRASHLOOP_FILE" 2>/dev/null || true
+                exit 0
+            fi
             spawn_focus
-            sleep 3
+            # If this respawn survives the grace period it counts as healthy:
+            # clear the window so a single later crash doesn't trip the loop.
+            sleep "$KIOSK_MIN_HEALTHY"
+            if focus_running; then
+                SPAWN_TIMES=()
+            fi
         fi
     else
         if [[ ! -f "$ACTIVE_FILE" ]]; then

@@ -7,9 +7,11 @@ through to a shell, and common launcher/terminal escape surfaces are closed.
 
 ## Login Session Selector
 
-- `packaging/linux/install.sh` is now a permanent kiosk installer, not a
-  side-by-side session installer.
-- During install, every non-FocusOS `*.desktop` session entry in
+- `packaging/linux/install.sh` is an interactive, strictness-leveled installer
+  (`low`/`medium`/`max`). The hardening described here is the **`max`** posture;
+  `low` installs FocusOS as one more selectable session with none of it, and
+  `medium` keeps Plasma/TTY escapes. The notes below assume `max`.
+- During a `max` install, every non-FocusOS `*.desktop` session entry in
   `/usr/share/wayland-sessions` and `/usr/share/xsessions` is moved into
   `/usr/local/lib/focusos/stashed-sessions/{wayland,xsessions}`.
 - Only `/usr/share/wayland-sessions/focusos.desktop` remains visible to SDDM.
@@ -35,9 +37,16 @@ through to a shell, and common launcher/terminal escape surfaces are closed.
 
 ## Runtime Shell And Compositor Posture
 
-- `focusos-watchdog.sh --kiosk` now respawns FocusOS for the entire login
-  session. It no longer treats an idle FocusOS exit as a reason to release the
-  session back to SDDM or another desktop.
+- `focusos-watchdog.sh --kiosk` respawns FocusOS for the entire login session.
+  It no longer treats an idle FocusOS exit as a reason to release the session
+  back to SDDM or another desktop.
+- **Crash-loop self-heal:** if FocusOS dies and is respawned more than
+  `FOCUSOS_KIOSK_CRASH_LIMIT` (4) times within `FOCUSOS_KIOSK_CRASH_WINDOW` (90s)
+  the watchdog gives up and exits, ending the kwin session. `focusos-session.sh`
+  then execs the stock Plasma session (`startplasma-wayland`) instead of looping
+  a broken build — so a bad build degrades to Plasma rather than bricking the
+  machine. The session wrapper applies the same guard across autologin re-login
+  loops. Force a fallback for the next login with `touch ~/.focusos/boot-to-plasma`.
 - The Linux fatal-signal cleanup in `src/main.cpp` no longer launches
   `plasmashell` on crash. The watchdog is the recovery path; spawning a desktop
   shell would be an escape surface.

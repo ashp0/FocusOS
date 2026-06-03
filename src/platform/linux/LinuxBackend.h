@@ -27,6 +27,8 @@ public:
     void sleepDisplay() override;
     void wakeDisplay() override;
     bool suspendSystem() override;
+    void freezeBackgroundProcesses() override;
+    void thawBackgroundProcesses() override;
     bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) override;
     void applyNetworkPolicyAsync(const QStringList &allowedHosts,
                                  std::function<void(bool, const QString &)> onComplete) override;
@@ -54,6 +56,11 @@ private:
     // false) or just collect their names (dryRun true). Returns the names acted
     // on / that would be acted on.
     QStringList sweepBackgroundApps(const QStringList &allowedCommandLines, bool dryRun);
+    // The hardcoded keep-set of session-critical processes (compositor, audio,
+    // dbus, portals, the global-shortcut daemon, FocusOS itself) that must never
+    // be SIGTERM'd or SIGSTOP'd — doing so wedges the session or the wake path.
+    // Shared by the engage-time app sweep and the deep-idle process freeze.
+    QSet<QString> criticalKeepSet() const;
     void startLockdownWatchdog();
     void stopLockdownWatchdog();
     void tickLockdownWatchdog();
@@ -77,6 +84,9 @@ private:
 
     NetGate m_netGate;
     QList<qint64> m_sessionPids;
+    // PIDs SIGSTOP'd by freezeBackgroundProcesses() for the deep-idle sleep;
+    // SIGCONT'd (and cleared) by thawBackgroundProcesses() on wake.
+    QList<qint64> m_frozenPids;
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
     // Network-lock state, tracked so the watchdog can restore the routine

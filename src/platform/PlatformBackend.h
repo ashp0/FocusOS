@@ -38,10 +38,20 @@ public:
     // Wake the physical display back up (DPMS on). Pairs with sleepDisplay() for
     // the deep-idle path so the panel is forced back on when the user returns.
     virtual void wakeDisplay() {}
-    // Suspend the whole machine (S3 / suspend-to-RAM) for the deep-idle sleep.
-    // Best-effort: returns false where unsupported or not permitted, in which
-    // case the caller falls back to the soft sleep (panel off + music paused).
+    // Suspend the whole machine for the deep-idle sleep. Prefers the safe
+    // suspend-to-idle (s2idle / "freeze") state over S3 suspend-to-RAM, since S3
+    // black-screens some hardware on wake. Best-effort: returns false where
+    // unsupported or not permitted, in which case the caller falls back to the
+    // soft sleep (processes frozen + panel off + music paused).
     virtual bool suspendSystem() { return false; }
+    // macOS-style "app sleep" for the deep-idle path: SIGSTOP every graphical app
+    // the user left running so the CPU parks at idle, WITHOUT a kernel suspend
+    // (which is what risks the black-screen-on-wake). Paired with sleepDisplay()
+    // and paused music this is the safe, instantly-reversible deep sleep.
+    // thawBackgroundProcesses() resumes exactly what was frozen. No-op where
+    // unsupported.
+    virtual void freezeBackgroundProcesses() {}
+    virtual void thawBackgroundProcesses() {}
     virtual bool applyNetworkPolicy(const QStringList &allowedHosts, QString *errorMessage = nullptr) = 0;
     // Async variant: the slow DNS resolution runs on a worker thread so the GUI
     // never freezes on engage. `onComplete(success, error)` is invoked on the

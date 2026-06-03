@@ -430,10 +430,13 @@ void RoutineManager::handlePrepareForSleep(bool aboutToSleep)
     }
     // Just resumed. The deep-idle state machine only wakes the panel on
     // deepIdleChanged(false), which needs a Qt input event; a lid/power resume
-    // is not one, so the display could stay DPMS-off until the user happens to
-    // touch the trackpad. Light it back up here.
+    // is not one, so the display could stay DPMS-off — and any apps frozen for the
+    // deep-idle sleep would stay SIGSTOP'd — until the user happens to touch the
+    // trackpad. Light the panel back up and thaw the frozen apps here. Both are
+    // idempotent, so this is harmless if the input-driven path already ran.
     if (m_backend) {
         m_backend->wakeDisplay();
+        m_backend->thawBackgroundProcesses();
     }
 }
 

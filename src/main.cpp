@@ -93,8 +93,11 @@ static void focusosFatalSignalHandler(int signum)
         char *argv[] = {g_pkillPath, g_argF, g_argDashDash, g_argWho, nullptr};
         focusosForkExec(argv);
     }
-    // Do not launch plasmashell as a crash fallback in kiosk mode — the external
-    // watchdog respawns FocusOS; a desktop shell here would be an escape surface.
+    // Do not launch plasmashell from here — a desktop shell spawned inside the
+    // crashing process would be an escape surface, and recovery belongs at the
+    // session layer anyway: the kiosk watchdog (focusos-watchdog.sh) stops
+    // respawning after a crash loop and focusos-session.sh then falls back to the
+    // stock Plasma session, so a bad build degrades to Plasma instead of bricking.
     std::signal(signum, SIG_DFL);
     std::raise(signum);
 }
@@ -195,9 +198,11 @@ int main(int argc, char *argv[])
     backend.ensureGlobalShortcutsDaemon();
 
     // Claim the volume/brightness media keys session-wide so they work over a
-    // focused routine app, not just inside the FocusOS shell. No-op on builds
+    // focused routine app, not just inside the FocusOS shell. The backend lets
+    // MediaKeys re-spawn the global-shortcuts daemon and re-grab the keys on
+    // resume from sleep, where the compositor can drop the grabs. No-op on builds
     // without KF6GlobalAccel (e.g. macOS).
-    MediaKeys mediaKeys(&systemStatus);
+    MediaKeys mediaKeys(&systemStatus, &backend);
 
     QObject::connect(&routineManager, &RoutineManager::activeChanged, &musicEngine, [&routineManager, &musicEngine] {
         // Each routine carries its own engage behavior (stop / low / same). Apply
@@ -253,17 +258,24 @@ int main(int argc, char *argv[])
     // simply stay in this soft sleep (black, silent, idle) until the user returns.
     QObject::connect(&idleMonitor, &IdleMonitor::deepIdleChanged, &routineManager, [&] {
         if (idleMonitor.deepIdle()) {
+            // Safe deep sleep, macOS-style: pause music, freeze every user GUI app
+            // (SIGSTOP → CPU parks at idle), then blank the panel. No kernel
+            // suspend is involved, so there's no black-screen-on-wake risk and any
+            // input recovers it instantly via the deepIdle=false branch below.
             musicEngine.setSleeping(true);
+            backend.freezeBackgroundProcesses();
             backend.sleepDisplay();
             // Whole-machine suspend is opt-in (deep_sleep_suspend, default off):
-            // on hardware that can't resume from S3 (common on Mac/iMac) it never
-            // wakes — the soft sleep above (display off + music off) is the safe
-            // default and any input recovers it via the deepIdle=false branch.
+            // the backend prefers s2idle ("suspend-then-idle") over S3 so it stays
+            // safe on hardware that black-screens out of S3 — but the process-freeze
+            // soft sleep above is already the safe default and recovers on any input.
             if (routineManager.deepSleepSuspend()) {
                 QTimer::singleShot(700, &routineManager, [&backend] { backend.suspendSystem(); });
             }
         } else {
+            // Coming back: relight the panel, resume the frozen apps, restart music.
             backend.wakeDisplay();
+            backend.thawBackgroundProcesses();
             musicEngine.setSleeping(false);
         }
     });

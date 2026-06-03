@@ -809,19 +809,9 @@ void LinuxBackend::endRoutineLockdown()
     m_sessionAllowedProcessNames.clear();
 }
 
-QStringList LinuxBackend::sweepBackgroundApps(const QStringList &allowedCommandLines, bool dryRun)
+QSet<QString> LinuxBackend::criticalKeepSet() const
 {
-    // Walk /proc and SIGTERM every GUI app the current user is running that
-    // isn't part of the routine. "GUI app" = a process of ours whose environ
-    // carries WAYLAND_DISPLAY / DISPLAY — that filters out the daemons and
-    // session plumbing, so we only close visible apps. We deliberately use
-    // SIGTERM (not SIGKILL) so apps can run their own save-on-quit handlers.
-    //
-    // Two layers of safety keep this from logging the user out:
-    //   1. A hardcoded keep-set of session-critical processes (compositor,
-    //      portal, audio, dbus, FocusOS itself, the session/watchdog scripts).
-    //   2. The routine's apps + the always-allowed list, by process basename.
-    QSet<QString> keep = {
+    return {
         // FocusOS + its session scaffolding
         QStringLiteral("focusos"),
         QStringLiteral("focusos-session"),
@@ -844,6 +834,7 @@ QStringList LinuxBackend::sweepBackgroundApps(const QStringList &allowedCommandL
         QStringLiteral("dbus-run-session"),
         QStringLiteral("systemd"), QStringLiteral("systemd-logind"),
         // KDE global-shortcut / kded helpers FocusOS relies on for media keys
+        QStringLiteral("kglobalacceld"),
         QStringLiteral("kglobalaccel5"), QStringLiteral("kglobalaccel6"),
         QStringLiteral("kded5"), QStringLiteral("kded6"),
         QStringLiteral("polkit-kde-authentication-agent-1"), QStringLiteral("polkitd"),
@@ -851,6 +842,102 @@ QStringList LinuxBackend::sweepBackgroundApps(const QStringList &allowedCommandL
         QStringLiteral("gvfsd"), QStringLiteral("gvfsd-fuse"),
         QStringLiteral("ssh-agent"), QStringLiteral("gpg-agent")
     };
+}
+
+void LinuxBackend::freezeBackgroundProcesses()
+{
+    // macOS-style "sleep": SIGSTOP every graphical app the user has left running
+    // so the CPU parks at idle while the machine sleeps, WITHOUT a kernel suspend
+    // (which is what black-screens some hardware on wake). Paired with DPMS-off +
+    // paused music this gets near-suspend power draw with an instant, risk-free
+    // wake — any input thaws the apps again (thawBackgroundProcesses()).
+    //
+    // This only ever runs on the home screen: deep-idle is suppressed during a
+    // routine, so we never freeze the routine's own apps mid-session. The same
+    // conservative keep-set as the engage-time app sweep protects the compositor,
+    // audio, dbus, portals, the global-shortcut daemon and FocusOS itself —
+    // freezing any of those would wedge the session or the wake path.
+    if (!m_frozenPids.isEmpty()) {
+        return; // already frozen — don't double-stop
+    }
+    const QSet<QString> keep = criticalKeepSet();
+    const uid_t myUid = ::getuid();
+    const qint64 myPid = QCoreApplication::applicationPid();
+
+    QDir procDir(QStringLiteral("/proc"));
+    const QStringList entries = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &entry : entries) {
+        bool isPid = false;
+        const qint64 pid = entry.toLongLong(&isPid);
+        if (!isPid || pid <= 1 || pid == myPid) {
+            continue;
+        }
+
+        const QString base = QStringLiteral("/proc/") + entry;
+        if (QFileInfo(base).ownerId() != myUid) {
+            continue; // only touch our own processes
+        }
+
+        QString name = QFileInfo(QFile::symLinkTarget(base + QStringLiteral("/exe"))).fileName();
+        if (name.isEmpty()) {
+            QFile commFile(base + QStringLiteral("/comm"));
+            if (commFile.open(QIODevice::ReadOnly)) {
+                name = QString::fromUtf8(commFile.readAll()).trimmed();
+            }
+        }
+        if (name.isEmpty() || keep.contains(name)) {
+            continue;
+        }
+
+        // Spare background system utilities (a systemd user service is a daemon,
+        // not a window the user opened) — same heuristic as the app sweep.
+        if (isSystemdUserService(pid)) {
+            continue;
+        }
+
+        // Only freeze graphical clients (WAYLAND_DISPLAY / DISPLAY in environ);
+        // leaving pure daemons running is the safe default.
+        QFile environFile(base + QStringLiteral("/environ"));
+        if (!environFile.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QByteArray environ = environFile.readAll();
+        const bool graphical = environ.contains("WAYLAND_DISPLAY=") ||
+                               environ.contains("DISPLAY=");
+        if (!graphical) {
+            continue;
+        }
+
+        if (::kill(static_cast<pid_t>(pid), SIGSTOP) == 0) {
+            m_frozenPids.append(pid);
+        }
+    }
+}
+
+void LinuxBackend::thawBackgroundProcesses()
+{
+    // Resume exactly the PIDs we froze for the deep-idle sleep — never a blanket
+    // SIGCONT — so we don't disturb anything the user (or a debugger) had
+    // legitimately stopped. Idempotent: a no-op when nothing is frozen.
+    for (const qint64 pid : m_frozenPids) {
+        ::kill(static_cast<pid_t>(pid), SIGCONT);
+    }
+    m_frozenPids.clear();
+}
+
+QStringList LinuxBackend::sweepBackgroundApps(const QStringList &allowedCommandLines, bool dryRun)
+{
+    // Walk /proc and SIGTERM every GUI app the current user is running that
+    // isn't part of the routine. "GUI app" = a process of ours whose environ
+    // carries WAYLAND_DISPLAY / DISPLAY — that filters out the daemons and
+    // session plumbing, so we only close visible apps. We deliberately use
+    // SIGTERM (not SIGKILL) so apps can run their own save-on-quit handlers.
+    //
+    // Two layers of safety keep this from logging the user out:
+    //   1. A hardcoded keep-set of session-critical processes (compositor,
+    //      portal, audio, dbus, FocusOS itself, the session/watchdog scripts).
+    //   2. The routine's apps + the always-allowed list, by process basename.
+    QSet<QString> keep = criticalKeepSet();
 
     // Add the routine + always-allowed apps by process basename so we never
     // terminate something the user explicitly permitted.
@@ -1013,11 +1100,18 @@ void LinuxBackend::wakeDisplay()
 
 bool LinuxBackend::suspendSystem()
 {
-    // Suspend-to-RAM for the deep-idle sleep. systemctl is the portable path
-    // (delegates to logind, which is already configured for this session); fall
-    // back to loginctl suspend. Detached + fire-and-forget — the kernel takes
+    // Opt-in whole-machine suspend for the deep-idle sleep. systemctl is the
+    // portable path (delegates to logind, already configured for this session);
+    // fall back to loginctl suspend. Detached + fire-and-forget — the kernel takes
     // over and FocusOS is frozen until the machine resumes. Best-effort: if
     // neither tool is present we return false and the caller stays in soft sleep.
+    //
+    // SAFETY: which sleep state the kernel enters is governed by the packaged
+    // /etc/systemd/sleep.conf.d/90-focusos-sleep.conf drop-in, which pins
+    // SuspendState to "freeze" (s2idle / "suspend-then-idle"). That avoids the S3
+    // suspend-to-RAM path that black-screens some hardware (e.g. the 2017 iMac) on
+    // wake. Without that drop-in installed this still issues a plain suspend, so
+    // the safe default remains the process-freeze soft sleep, not this call.
     const QString systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
     if (!systemctl.isEmpty()) {
         return QProcess::startDetached(systemctl, {QStringLiteral("suspend")});
