@@ -119,6 +119,12 @@ Item {
         property bool controlAvailable: false
         signal valueEdited(int value)
 
+        // While dragging, the thumb/fill/readout follow this local value so they
+        // track the cursor instantly — independent of how fast the backend's
+        // (throttled) volume write round-trips. -1 means "follow the backend value".
+        property int dragValue: -1
+        readonly property int effectiveValue: dragValue >= 0 ? dragValue : value
+
         width: 132
         height: 28
         visible: controlAvailable
@@ -154,7 +160,7 @@ Item {
         Rectangle {
             anchors.left: rail.left
             anchors.verticalCenter: rail.verticalCenter
-            width: Math.max(0, Math.min(rail.width, rail.width * slider.value / 100))
+            width: Math.max(0, Math.min(rail.width, rail.width * slider.effectiveValue / 100))
             height: 2
             color: Theme.goldDim
         }
@@ -162,7 +168,7 @@ Item {
         Rectangle {
             width: 8
             height: 16
-            x: rail.x + Math.max(0, Math.min(rail.width - width, rail.width * slider.value / 100 - width / 2))
+            x: rail.x + Math.max(0, Math.min(rail.width - width, rail.width * slider.effectiveValue / 100 - width / 2))
             anchors.verticalCenter: rail.verticalCenter
             color: sliderMouse.containsMouse ? Theme.gold : Theme.goldDim
             border.width: 1
@@ -174,7 +180,7 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             width: 32
-            text: slider.value + "%"
+            text: slider.effectiveValue + "%"
             color: Theme.textDim
             horizontalAlignment: Text.AlignRight
             font.family: root.headerFont
@@ -188,12 +194,20 @@ Item {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onPressed: function(mouse) {
-                slider.valueEdited(slider.valueFromX(mouse.x - rail.x))
+                const v = slider.valueFromX(mouse.x - rail.x)
+                slider.dragValue = v
+                slider.valueEdited(v)
             }
             onPositionChanged: function(mouse) {
                 if (pressed) {
-                    slider.valueEdited(slider.valueFromX(mouse.x - rail.x))
+                    const v = slider.valueFromX(mouse.x - rail.x)
+                    slider.dragValue = v
+                    slider.valueEdited(v)
                 }
+            }
+            onReleased: function(mouse) {
+                // Hand control back to the backend value (now reconciled).
+                slider.dragValue = -1
             }
         }
     }

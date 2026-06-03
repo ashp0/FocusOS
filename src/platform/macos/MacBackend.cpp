@@ -9,6 +9,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QGuiApplication>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -16,9 +18,9 @@
 #include <QTextStream>
 #include <QUrl>
 #include <QXmlStreamWriter>
+#include <QtConcurrent>
 
 #include <csignal>
-#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -399,6 +401,7 @@ MacBackend::MacBackend() = default;
 MacBackend::~MacBackend()
 {
     stopLockdown();
+    MacBackendNative::setSystemDockHidden(false);
     setDisplaySleepInhibited(false);
 }
 
@@ -409,15 +412,22 @@ QString MacBackend::name() const
 
 void MacBackend::prepareRoutineSession(const QStringList &appPaths)
 {
+    qInfo() << "[engage] prepareRoutineSession: begin, apps=" << appPaths.size();
     m_sessionAppEntries = appPaths;
     m_desktopAccessOpen = false;
 
     QString presentationError;
+    qInfo() << "[engage] prepareRoutineSession: enterKioskPresentation";
     if (!MacBackendNative::enterKioskPresentation(&presentationError)) {
         qWarning() << presentationError;
     }
+    // Kiosk presentation only hides the Dock while FocusOS is frontmost; during a
+    // routine the routine's own app is frontmost, so hide it session-wide too.
+    MacBackendNative::setSystemDockHidden(true);
 
+    qInfo() << "[engage] prepareRoutineSession: startLockdown";
     startLockdown();
+    qInfo() << "[engage] prepareRoutineSession: quitBackgroundApps";
 
     // Strict enforcement parity with Linux: close the user's other GUI apps so a
     // routine starts from a clean surface — nothing but the routine's own apps,
@@ -630,20 +640,36 @@ bool MacBackend::applyNetworkPolicy(const QStringList &allowedHosts, QString *er
 void MacBackend::applyNetworkPolicyAsync(const QStringList &allowedHosts,
                                          std::function<void(bool, const QString &)> onComplete)
 {
-    // The slow part is DNS resolution (buildPfRuleset resolves every allowed
-    // host, plus its www. counterpart, synchronously). Run the whole apply on a
-    // detached worker thread so engage never freezes the shell — then hop back to
-    // the GUI thread for the callback, matching LinuxBackend's contract and the
-    // RoutineManager engage flow that relies on it. pfctl + the file write are
-    // self-contained (a local QProcess / QSaveFile), so they're safe off-thread.
-    std::thread([this, allowedHosts, onComplete = std::move(onComplete)]() mutable {
-        QString error;
-        const bool ok = applyNetworkPolicy(allowedHosts, &error);
-        QMetaObject::invokeMethod(
-            QCoreApplication::instance(),
-            [onComplete = std::move(onComplete), ok, error]() { onComplete(ok, error); },
-            Qt::QueuedConnection);
-    }).detach();
+    // Mirror LinuxBackend exactly: resolve DNS + render the pf ruleset on a
+    // managed QtConcurrent worker thread (the multi-second part that froze the UI
+    // on engage), then hop back to the GUI thread to do the privileged pfctl swap
+    // and the blocker-policy write.
+    //
+    // The previous implementation ran the WHOLE apply — including the pfctl
+    // QProcess (driven by waitForStarted/waitForFinished) and BlockerPolicy::write
+    // — on a RAW detached std::thread. Driving QProcess off a non-QThread whose
+    // QThreadData is torn down when the thread exits is the crash the REFLECTIONS
+    // routine hit (it is the only routine that takes this path: network-locked,
+    // not full-access, no browser). Keeping all QProcess/QObject work on the GUI
+    // thread removes that hazard and matches the proven Linux path.
+    auto *watcher = new QFutureWatcher<QString>();
+    QObject::connect(watcher, &QFutureWatcher<QString>::finished, qApp,
+                     [this, watcher, allowedHosts, onComplete = std::move(onComplete)]() {
+                         qInfo() << "[engage] applyNetworkPolicyAsync: finished callback (in QFutureWatcher::finished)";
+                         const QString ruleset = watcher->result();
+                         watcher->deleteLater();
+                         QString error;
+                         const bool ok = MacBackendNative::commitNetworkFilter(ruleset, &error);
+                         qInfo() << "[engage] applyNetworkPolicyAsync: commit ok=" << ok << "— calling onComplete (→finishEngage→nested run loop)";
+                         if (ok) {
+                             BlockerPolicy::write(true, allowedHosts);
+                         }
+                         onComplete(ok, error);
+                         qInfo() << "[engage] applyNetworkPolicyAsync: onComplete returned (back in finished callback)";
+                     });
+    watcher->setFuture(QtConcurrent::run([allowedHosts]() -> QString {
+        return MacBackendNative::buildNetworkFilterRuleset(allowedHosts);
+    }));
 }
 
 void MacBackend::applyBrowserBlockerPolicy(const QStringList &allowedHosts)
@@ -702,6 +728,7 @@ void MacBackend::terminateUnrestrictedApps()
     // own apps + always-allowed list.
     quitBackgroundApps(m_sessionAppEntries);
     m_desktopAccessOpen = false;
+    MacBackendNative::setSystemDockHidden(m_lockdownActive);
     applyBaselineKioskPosture();
     if (m_lockdownActive) {
         startLockdown();
@@ -713,9 +740,11 @@ bool MacBackend::launchDesktopShell(QString *errorMessage)
     Q_UNUSED(errorMessage);
     m_desktopAccessOpen = true;
     MacBackendNative::stopExecBlocker();
+    MacBackendNative::stopLaunchWatcher();
     // Full admin access: lift the system-shortcut blocker too so Spotlight, the
     // Dock and launchers work while the authorized desktop window is open.
     MacBackendNative::stopInputBlocker();
+    MacBackendNative::setSystemDockHidden(false);
     MacBackendNative::leaveKioskPresentation();
 
     // The macOS "desktop shell" is Finder/Dock/SystemUIServer. They are managed
@@ -731,6 +760,7 @@ void MacBackend::terminateDesktopShell()
     m_desktopAccessOpen = false;
     // Re-raise the baseline lock (kiosk + shortcut blocker); restore the routine's
     // exec blocker on top if a routine is still running underneath.
+    MacBackendNative::setSystemDockHidden(m_lockdownActive);
     applyBaselineKioskPosture();
     if (m_lockdownActive) {
         startLockdown();
@@ -744,6 +774,9 @@ void MacBackend::restoreShellPlacement()
     // leaving the desktop fully open.
     stopLockdown();
     m_desktopAccessOpen = false;
+    // Routine fully ended → back to the home screen: restore the normal Dock (the
+    // home screen relies on the kiosk presentation to hide it while focused).
+    MacBackendNative::setSystemDockHidden(false);
     applyBaselineKioskPosture();
 }
 
@@ -865,6 +898,7 @@ void MacBackend::quitBackgroundApps(const QStringList &allowedCommandLines)
     keepEntries.append(allowedCommandLines);
     keepEntries.removeDuplicates();
 
+    qInfo() << "[engage] quitBackgroundApps: sweeping, keepEntries=" << keepEntries.size();
     const QStringList killed = MacBackendNative::sweepOtherApplications(
         bundleIdentifiersForCommandLines(keepEntries),
         processNamesForCommandLines(keepEntries),
@@ -959,10 +993,11 @@ bool MacBackend::suspendSystem()
 void MacBackend::runSessionStartupItems()
 {
     // No Plasma-style autostart replay on macOS (launchd handles login items).
-    // What this hook gives us is a guaranteed post-window-show moment to raise the
-    // always-on kiosk posture so the home screen is locked too — Dock/menu bar
-    // hidden and Spotlight / Mission Control / Launchpad unreachable — not only
-    // mid-routine. ("disabled … in general", per the user's request.)
+    // What this hook gives us is a guaranteed post-window-show moment to clean up
+    // any persisted Dock override from a crash before raising the home-screen
+    // kiosk posture again. A resumed routine re-hides the Dock immediately via
+    // prepareRoutineSession().
+    MacBackendNative::setSystemDockHidden(false);
     applyBaselineKioskPosture();
 }
 
@@ -1009,6 +1044,7 @@ void MacBackend::applyBaselineKioskPosture()
 
 void MacBackend::startLockdown()
 {
+    qInfo() << "[engage] startLockdown: begin, desktopAccessOpen=" << m_desktopAccessOpen;
     m_lockdownActive = true;
     if (m_desktopAccessOpen) {
         return;
@@ -1055,12 +1091,25 @@ void MacBackend::startLockdown()
                                             &error)) {
         qWarning() << error;
     }
+
+    // Userland fallback for the (entitlement-gated) exec-blocker: reap blocked
+    // apps the instant they launch — Apple Music from the media key, Dock launches
+    // of Spotify/Discord/a terminal — so the lock holds even in an adhoc build.
+    // Same blocklist/allowlist the exec-blocker uses; safe alongside it.
+    qInfo() << "[engage] startLockdown: startLaunchWatcher";
+    MacBackendNative::startLaunchWatcher(blockedNames,
+                                         blockedBundleIdentifiers,
+                                         allowedNames,
+                                         allowedBundleIdentifiers,
+                                         allowedExecutablePaths);
+    qInfo() << "[engage] startLockdown: done";
 }
 
 void MacBackend::stopLockdown()
 {
     m_lockdownActive = false;
     MacBackendNative::stopExecBlocker();
+    MacBackendNative::stopLaunchWatcher();
     MacBackendNative::stopInputBlocker();
     m_sessionAppEntries.clear();
 }
@@ -1075,7 +1124,9 @@ void MacBackend::endRoutineLockdown()
     // separately by RoutineManager.
     m_lockdownActive = false;
     MacBackendNative::stopExecBlocker();
+    MacBackendNative::stopLaunchWatcher();
     MacBackendNative::stopInputBlocker();
+    MacBackendNative::setSystemDockHidden(false);
     MacBackendNative::leaveKioskPresentation();
 }
 

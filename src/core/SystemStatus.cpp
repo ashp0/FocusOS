@@ -1,12 +1,19 @@
 #include "core/SystemStatus.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QtGlobal>
+
+#if defined(Q_OS_MACOS)
+#include <pwd.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -331,6 +338,25 @@ SystemStatus::SystemStatus(QObject *parent)
     m_statusTimer.setInterval(30000);
     connect(&m_statusTimer, &QTimer::timeout, this, &SystemStatus::refreshStatus);
     m_statusTimer.start();
+
+    // ~50ms throttle window → at most ~20 volume writes/second while dragging,
+    // with the final value always flushed (trailing edge). See flushPendingVolume.
+    m_volumeWriteThrottle.setSingleShot(true);
+    m_volumeWriteThrottle.setInterval(50);
+    connect(&m_volumeWriteThrottle, &QTimer::timeout, this, &SystemStatus::flushPendingVolume);
+
+    refreshElevatedLaunchState();
+}
+
+void SystemStatus::flushPendingVolume()
+{
+    if (m_pendingVolume < 0 || m_pendingVolume == m_lastWrittenVolume) {
+        return;  // nothing new since the last write — let the throttle lapse
+    }
+    writeSystemVolume(m_pendingVolume);
+    m_lastWrittenVolume = m_pendingVolume;
+    // Re-arm so a value that changed again during this window still flushes.
+    m_volumeWriteThrottle.start();
 }
 
 QString SystemStatus::batteryLabel() const
@@ -385,13 +411,22 @@ void SystemStatus::adjustSystemVolume(int deltaPercent)
 void SystemStatus::setSystemVolume(int percent)
 {
     const int clamped = clampedPercent(percent);
-    writeSystemVolume(clamped);
+
     // Optimistically reflect the new value instead of blocking on a read-back —
     // the periodic refresh reconciles any drift. Keeps the slider instant.
     if (!m_volumeAvailable || m_volumePercent != clamped) {
         m_volumePercent = clamped;
         m_volumeAvailable = true;
         emit statusChanged();
+    }
+
+    // Throttle the actual (heavy) write. Leading edge fires immediately; further
+    // changes inside the window ride on the trailing flush (flushPendingVolume).
+    m_pendingVolume = clamped;
+    if (!m_volumeWriteThrottle.isActive()) {
+        writeSystemVolume(clamped);
+        m_lastWrittenVolume = clamped;
+        m_volumeWriteThrottle.start();
     }
 }
 
@@ -477,4 +512,227 @@ bool SystemStatus::writeStartupScript(const QString &contents)
     file.setPermissions(file.permissions()
                         | QFileDevice::ExeOwner | QFileDevice::ExeGroup | QFileDevice::ExeOther);
     return true;
+}
+
+// ───────────────────────── Elevated launch (macOS) ─────────────────────────
+//
+// Goal: let the user start FocusOS from the Dock — no Terminal, no `sudo` typed —
+// yet still get root (needed for the pf firewall and the Endpoint Security
+// blocker). We do that with a single NOPASSWD sudoers rule scoped to *this exact*
+// FocusOS binary and *this user*; main.cpp's maybeReexecElevated() then re-execs
+// the Dock-launched (unprivileged) process through `sudo -n` at startup. The
+// admin password is only ever needed once, here, to install that rule.
+
+#if defined(Q_OS_MACOS)
+namespace {
+
+const QString kSudoersFile = QStringLiteral("/etc/sudoers.d/focusos");
+
+QString elevatedRealUser()
+{
+    // Launched via sudo, getuid() is 0; the human is in SUDO_USER. Otherwise we
+    // are that human already.
+    const QByteArray sudoUser = qgetenv("SUDO_USER");
+    if (!sudoUser.isEmpty() && sudoUser != "root") {
+        return QString::fromLocal8Bit(sudoUser);
+    }
+    if (const struct passwd *pw = getpwuid(getuid())) {
+        return QString::fromLocal8Bit(pw->pw_name);
+    }
+    return {};
+}
+
+QString elevatedSelfPath()
+{
+    // canonicalFilePath resolves symlinks so it matches what sudo compares the
+    // exec'd path against (and what the sudoers Cmnd must spell out).
+    const QString canonical = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+    return canonical.isEmpty() ? QCoreApplication::applicationFilePath() : canonical;
+}
+
+// sudoers escapes whitespace and the special chars ", : = \" in a command path
+// with a leading backslash. Escape them so a path with spaces still matches.
+QString sudoersEscape(const QString &path)
+{
+    QString out;
+    out.reserve(path.size() + 8);
+    for (const QChar ch : path) {
+        if (ch == QLatin1Char('\\') || ch == QLatin1Char(' ') || ch == QLatin1Char(',') ||
+            ch == QLatin1Char(':') || ch == QLatin1Char('=')) {
+            out.append(QLatin1Char('\\'));
+        }
+        out.append(ch);
+    }
+    return out;
+}
+
+// Run a /bin/sh script as root. When already root we run it directly; otherwise
+// we drive `sudo -S` and feed it the admin password on stdin. Returns empty on
+// success, else a human-readable error (trimmed sudo/script stderr).
+QString runPrivilegedScript(const QString &script, const QString &adminPassword)
+{
+    QProcess proc;
+    proc.setProcessChannelMode(QProcess::MergedChannels);
+    if (geteuid() == 0) {
+        proc.start(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), script});
+    } else {
+        // -S: read the password from stdin. -k: ignore any cached credential so a
+        // wrong password fails here instead of silently succeeding on a stale
+        // timestamp. -p "": suppress the prompt (we feed stdin directly).
+        proc.start(QStringLiteral("/usr/bin/sudo"),
+                   {QStringLiteral("-S"), QStringLiteral("-k"), QStringLiteral("-p"),
+                    QString(), QStringLiteral("/bin/sh"), QStringLiteral("-c"), script});
+        if (!proc.waitForStarted(5000)) {
+            return QStringLiteral("Could not start sudo.");
+        }
+        proc.write(adminPassword.toUtf8());
+        proc.write("\n");
+        proc.closeWriteChannel();
+    }
+    if (!proc.waitForFinished(20000)) {
+        proc.kill();
+        proc.waitForFinished(500);
+        return QStringLiteral("The privileged command timed out.");
+    }
+    if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+        QString output = QString::fromLocal8Bit(proc.readAll()).trimmed();
+        if (output.contains(QStringLiteral("incorrect password"), Qt::CaseInsensitive) ||
+            output.contains(QStringLiteral("Sorry, try again"), Qt::CaseInsensitive)) {
+            return QStringLiteral("Incorrect admin password.");
+        }
+        return output.isEmpty()
+            ? QStringLiteral("The privileged command failed (exit %1).").arg(proc.exitCode())
+            : output.left(300);
+    }
+    return {};
+}
+
+} // namespace
+#endif // Q_OS_MACOS
+
+bool SystemStatus::elevatedLaunchSupported() const
+{
+#if defined(Q_OS_MACOS)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool SystemStatus::elevatedLaunchEnabled() const
+{
+    return m_elevatedLaunchEnabled;
+}
+
+bool SystemStatus::runningAsRoot() const
+{
+#if defined(Q_OS_MACOS)
+    return geteuid() == 0;
+#else
+    return false;
+#endif
+}
+
+QString SystemStatus::elevatedBinaryPath() const
+{
+#if defined(Q_OS_MACOS)
+    return elevatedSelfPath();
+#else
+    return {};
+#endif
+}
+
+void SystemStatus::refreshElevatedLaunchState()
+{
+#if defined(Q_OS_MACOS)
+    bool enabled = false;
+    if (geteuid() == 0) {
+        // We can read the rule file directly; confirm it names our binary.
+        QFile file(kSudoersFile);
+        if (file.open(QIODevice::ReadOnly)) {
+            const QString contents = QString::fromUtf8(file.readAll());
+            enabled = contents.contains(QStringLiteral("NOPASSWD:"))
+                && contents.contains(sudoersEscape(elevatedSelfPath()));
+        }
+    } else {
+        // sudoers.d is root-only; instead ask sudo whether it would let us run the
+        // binary with NOPASSWD. A cached sudo timestamp can make the exit code
+        // succeed for password-required entries, so require the explicit tag.
+        QProcess probe;
+        probe.setProcessChannelMode(QProcess::MergedChannels);
+        probe.start(QStringLiteral("/usr/bin/sudo"),
+                    {QStringLiteral("-n"), QStringLiteral("-l"), elevatedSelfPath()});
+        if (probe.waitForFinished(5000)) {
+            const QString listing = QString::fromLocal8Bit(probe.readAll());
+            enabled = probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0
+                && listing.contains(QStringLiteral("NOPASSWD"));
+        }
+    }
+    if (enabled != m_elevatedLaunchEnabled) {
+        m_elevatedLaunchEnabled = enabled;
+        emit elevatedLaunchChanged();
+    }
+#endif
+}
+
+void SystemStatus::refreshElevatedLaunch()
+{
+    refreshElevatedLaunchState();
+}
+
+QString SystemStatus::enableElevatedLaunch(const QString &adminPassword)
+{
+#if defined(Q_OS_MACOS)
+    const QString user = elevatedRealUser();
+    const QString binary = elevatedSelfPath();
+    if (user.isEmpty() || binary.isEmpty()) {
+        return QStringLiteral("Could not determine the user or FocusOS binary path.");
+    }
+    if (geteuid() != 0 && adminPassword.isEmpty()) {
+        return QStringLiteral("Enter your macOS admin password to enable this.");
+    }
+
+    // The rule: this user may run THIS binary as root with no password. Validate
+    // it with visudo before installing so a bad path never breaks sudo entirely.
+    const QString rule = QStringLiteral("%1 ALL=(root) NOPASSWD: %2\n")
+                             .arg(user, sudoersEscape(binary));
+
+    QTemporaryFile temp(QDir::tempPath() + QStringLiteral("/focusos-sudoers.XXXXXX"));
+    temp.setAutoRemove(true);
+    if (!temp.open()) {
+        return QStringLiteral("Could not create a temporary file.");
+    }
+    temp.write(rule.toUtf8());
+    temp.flush();
+    const QString tempPath = temp.fileName();
+
+    const QString script =
+        QStringLiteral("/bin/mkdir -p /etc/sudoers.d && "
+                       "/usr/sbin/visudo -cf '%1' && "
+                       "/usr/bin/install -m 0440 -o root -g wheel '%1' '%2'")
+            .arg(tempPath, kSudoersFile);
+
+    const QString error = runPrivilegedScript(script, adminPassword);
+    refreshElevatedLaunchState();
+    return error;
+#else
+    Q_UNUSED(adminPassword);
+    return QStringLiteral("Elevated launch is only available on macOS.");
+#endif
+}
+
+QString SystemStatus::disableElevatedLaunch(const QString &adminPassword)
+{
+#if defined(Q_OS_MACOS)
+    if (geteuid() != 0 && adminPassword.isEmpty()) {
+        return QStringLiteral("Enter your macOS admin password to disable this.");
+    }
+    const QString script = QStringLiteral("/bin/rm -f '%1'").arg(kSudoersFile);
+    const QString error = runPrivilegedScript(script, adminPassword);
+    refreshElevatedLaunchState();
+    return error;
+#else
+    Q_UNUSED(adminPassword);
+    return QStringLiteral("Elevated launch is only available on macOS.");
+#endif
 }

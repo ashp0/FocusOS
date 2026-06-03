@@ -900,6 +900,9 @@ void RoutineManager::setDeepSleepSuspend(bool enabled)
 
 void RoutineManager::engage(const QString &routineId)
 {
+    qInfo() << "[engage] engage() called, routineId=" << routineId
+            << "active=" << active() << "accessGranted=" << accessGranted()
+            << "m_engaging=" << m_engaging;
     // m_engaging guards the async window between "network lock requested" and the
     // resolver callback firing, so a second click can't start a parallel engage.
     if (active() || accessGranted() || m_engaging) {
@@ -1994,6 +1997,16 @@ void RoutineManager::tickOtherAccess()
 
 void RoutineManager::finishOtherAccess()
 {
+    // Guard against re-entrancy: terminateUnrestrictedApps() below spins a nested
+    // run loop (the macOS app sweep), during which a stale access-timer timeout
+    // already in the event queue can re-deliver tickOtherAccess → finishOtherAccess.
+    // Re-entering here recurses into nested run loops and re-runs the native
+    // kiosk/lockdown calls, which crashes. Bail on the re-entrant call.
+    if (m_finishingOtherAccess) {
+        return;
+    }
+    m_finishingOtherAccess = true;
+
     m_accessTimer.stop();
     m_inactivityTimer.stop();
     m_accessRemainingSeconds = 0;
@@ -2011,6 +2024,7 @@ void RoutineManager::finishOtherAccess()
     }
     emit accessChanged();
     emitRowsChanged();
+    m_finishingOtherAccess = false;
 }
 
 void RoutineManager::emitActiveSessionProgress()
@@ -2058,9 +2072,12 @@ void RoutineManager::emitRowsChanged()
 // fails. Returns false (with errorMessage) if the apps can't be launched.
 bool RoutineManager::finishEngage(const Routine &routine, bool networkApplied, QString *errorMessage)
 {
+    qInfo() << "[engage] finishEngage: begin, routine=" << routine.id << "networkApplied=" << networkApplied;
     if (m_backend) {
         QString error;
+        qInfo() << "[engage] finishEngage: prepareRoutineSession";
         m_backend->prepareRoutineSession(routine.apps);
+        qInfo() << "[engage] finishEngage: launchRoutineTargets";
         if (!launchRoutineTargets(routine, &error)) {
             if (networkApplied) {
                 m_backend->dropNetworkPolicy();
@@ -2074,6 +2091,7 @@ bool RoutineManager::finishEngage(const Routine &routine, bool networkApplied, Q
         }
     }
 
+    qInfo() << "[engage] finishEngage: launch done, flipping active state";
     m_activeRoutineId = routine.id;
     m_activeStartedAt = QDateTime::currentDateTimeUtc();
     m_manualPause = false;

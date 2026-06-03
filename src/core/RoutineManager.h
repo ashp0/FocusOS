@@ -366,6 +366,14 @@ private:
     bool m_deepSleepSuspend = false;
     bool m_editMode = false;
     bool m_desktopShellRunning = false;
+    // Re-entrancy guard for finishOtherAccess(): the backend teardown it calls
+    // (terminateUnrestrictedApps → the macOS app sweep) spins a nested run loop,
+    // which can re-deliver an already-queued access-timer timeout and re-enter
+    // tickOtherAccess → finishOtherAccess. Without this guard that recurses
+    // (each level re-spinning a nested run loop and re-running the native kiosk/
+    // lockdown calls) and crashes. The timer .stop() above doesn't help because a
+    // timeout already posted to the event queue still fires.
+    bool m_finishingOtherAccess = false;
     // Throttle for the active.json crash checkpoint — the timer ticks every
     // second but we only need to touch the disk occasionally. Forced writes
     // (start, pause/resume, resume-on-launch) bypass it.

@@ -21,6 +21,8 @@ Item {
     // and edited in the SYSTEM tab.
     property string startupScriptDraft: ""
     property string startupSaveStatus: ""
+    property string elevatedLaunchPassword: ""
+    property string elevatedLaunchStatus: ""
     // Dry-run result of the strict engage-time app sweep (H3): the apps that a
     // routine would close. Populated by the PREVIEW button in the APPEARANCE tab.
     property var appQuitPreview: []
@@ -111,8 +113,7 @@ Item {
         adminUnlocked = routineManager.accessGranted
         if (adminUnlocked) {
             loadRoutineDrafts()
-            startupScriptDraft = systemStatus.readStartupScript()
-            startupSaveStatus = ""
+            loadSystemSettings()
         }
         modalOpen = true
         if (!adminUnlocked) {
@@ -127,6 +128,14 @@ Item {
         saveStatus = ""
         resetConfirmation = ""
         showEnrollmentQr = false
+    }
+
+    function loadSystemSettings() {
+        startupScriptDraft = systemStatus.readStartupScript()
+        startupSaveStatus = ""
+        elevatedLaunchPassword = ""
+        elevatedLaunchStatus = ""
+        systemStatus.refreshElevatedLaunch()
     }
 
     function allowedUrlsText(routine) {
@@ -852,8 +861,7 @@ Item {
                                 routineManager.unlockOtherAccess()
                                 root.adminUnlocked = true
                                 root.loadRoutineDrafts()
-                                root.startupScriptDraft = systemStatus.readStartupScript()
-                                root.startupSaveStatus = ""
+                                root.loadSystemSettings()
                                 root.activeTab = 0
                             } else {
                                 root.errorText = "RECOVERY FAILED — CHECK KEY AND CODE"
@@ -993,8 +1001,7 @@ Item {
                                 routineManager.unlockOtherAccess()
                                 root.adminUnlocked = true
                                 root.loadRoutineDrafts()
-                                root.startupScriptDraft = systemStatus.readStartupScript()
-                                root.startupSaveStatus = ""
+                                root.loadSystemSettings()
                                 root.activeTab = 0
                                 text = ""
                             } else {
@@ -2540,6 +2547,122 @@ Item {
                                 font.pixelSize: 10
                                 font.letterSpacing: 0
                             }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                        visible: systemStatus.elevatedLaunchSupported
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: systemStatus.elevatedLaunchSupported
+                        text: "DOCK LAUNCH"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: systemStatus.elevatedLaunchSupported
+                        text: systemStatus.elevatedLaunchEnabled
+                              ? (systemStatus.runningAsRoot ? "ENABLED - RUNNING AS ROOT" : "ENABLED - RESTART FROM THE DOCK")
+                              : "DISABLED - ROUTINES NEED A TERMINAL SUDO LAUNCH FOR FULL MACOS LOCKDOWN"
+                        color: systemStatus.elevatedLaunchEnabled ? Theme.gold : Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: systemStatus.elevatedLaunchSupported
+                        text: systemStatus.elevatedBinaryPath()
+                        color: Theme.textDim
+                        wrapMode: Text.WrapAnywhere
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: systemStatus.elevatedLaunchSupported
+                        spacing: 10
+
+                        AdminTextField {
+                            id: elevatedLaunchPasswordField
+                            Layout.preferredWidth: 210
+                            Layout.preferredHeight: 34
+                            placeholderText: systemStatus.runningAsRoot ? "ALREADY ROOT" : "MAC ADMIN PASSWORD"
+                            echoMode: TextInput.Password
+                            enabled: !systemStatus.runningAsRoot
+                            text: root.elevatedLaunchPassword
+                            onTextChanged: {
+                                if (text !== root.elevatedLaunchPassword) {
+                                    root.elevatedLaunchPassword = text
+                                    root.elevatedLaunchStatus = ""
+                                }
+                            }
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 130
+                            Layout.preferredHeight: 34
+                            label: "ENABLE"
+                            danger: false
+                            actionEnabled: !systemStatus.elevatedLaunchEnabled
+                                           && (systemStatus.runningAsRoot || root.elevatedLaunchPassword.length > 0)
+                            onClicked: {
+                                const error = systemStatus.enableElevatedLaunch(root.elevatedLaunchPassword)
+                                systemStatus.refreshElevatedLaunch()
+                                root.elevatedLaunchStatus = error.length === 0
+                                    ? "ENABLED - RESTART FROM THE DOCK"
+                                    : error.toUpperCase()
+                                if (error.length === 0) {
+                                    root.elevatedLaunchPassword = ""
+                                    elevatedLaunchPasswordField.text = ""
+                                }
+                            }
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 130
+                            Layout.preferredHeight: 34
+                            label: "DISABLE"
+                            danger: true
+                            actionEnabled: systemStatus.elevatedLaunchEnabled
+                                           && (systemStatus.runningAsRoot || root.elevatedLaunchPassword.length > 0)
+                            onClicked: {
+                                const error = systemStatus.disableElevatedLaunch(root.elevatedLaunchPassword)
+                                systemStatus.refreshElevatedLaunch()
+                                root.elevatedLaunchStatus = error.length === 0
+                                    ? "DISABLED"
+                                    : error.toUpperCase()
+                                if (error.length === 0) {
+                                    root.elevatedLaunchPassword = ""
+                                    elevatedLaunchPasswordField.text = ""
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.elevatedLaunchStatus
+                            color: root.elevatedLaunchStatus.indexOf("FAILED") >= 0
+                                   || root.elevatedLaunchStatus.indexOf("INCORRECT") >= 0
+                                   ? Theme.crimsonHot : Theme.textDim
+                            wrapMode: Text.WordWrap
+                            font.family: root.bodyFont
+                            font.pixelSize: 10
+                            font.letterSpacing: 0
                         }
                     }
 

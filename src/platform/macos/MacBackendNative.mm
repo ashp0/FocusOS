@@ -33,6 +33,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <unistd.h>
 
 namespace {
 
@@ -565,6 +566,49 @@ bool applicationIsKept(NSRunningApplication *application,
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// NSWorkspace launch watcher — userland blocklist enforcement (see header). The
+// observer block runs on the main queue; it reads the policy under a mutex so
+// MacBackend can update it (re-engage, always-allowed change) without tearing the
+// observer down.
+std::mutex g_launchWatcherMutex;
+std::set<std::string> g_lwBlockedNames;
+std::set<std::string> g_lwBlockedBundleIds;
+std::set<std::string> g_lwAllowedNames;
+std::set<std::string> g_lwAllowedBundleIds;
+std::set<std::string> g_lwAllowedPaths;
+id g_launchObserver = nil;
+
+bool launchShouldBlockLocked(NSRunningApplication *application)
+{
+    // Never touch FocusOS itself or Finder (the desktop).
+    if (application.processIdentifier == NSRunningApplication.currentApplication.processIdentifier) {
+        return false;
+    }
+    const std::string bundleId =
+        lowercase(fromNSString(application.bundleIdentifier).toUtf8().toStdString());
+    if (bundleId == "com.apple.finder") {
+        return false;
+    }
+    const std::string name =
+        lowercase(fromNSString(application.localizedName).toUtf8().toStdString());
+    const std::string path =
+        lowercase(fromNSString(application.executableURL.path).toUtf8().toStdString());
+
+    std::lock_guard<std::mutex> lock(g_launchWatcherMutex);
+    // Allowed wins (routine apps, always-allowed list, the kiosk browser path).
+    if ((!path.empty() && g_lwAllowedPaths.contains(path)) ||
+        (!name.empty() && g_lwAllowedNames.contains(name)) ||
+        (!bundleId.empty() && g_lwAllowedBundleIds.contains(bundleId))) {
+        return false;
+    }
+    // Blocklist only — anything not explicitly blocked is left alone, exactly like
+    // the AUTH_EXEC exec-blocker. This is what keeps us from killing an allowed
+    // launch (a system dialog, the routine's browser) we didn't enumerate.
+    return (!name.empty() && g_lwBlockedNames.contains(name)) ||
+           (!bundleId.empty() && g_lwBlockedBundleIds.contains(bundleId));
+}
+
 #if FOCUSOS_ENDPOINT_SECURITY_AVAILABLE
 
 std::string tokenToString(es_string_token_t token)
@@ -860,6 +904,67 @@ bool enterKioskPresentation(QString *errorMessage)
     return true;
 }
 
+void coverScreenIncludingNotch(void *nsView)
+{
+    if (!nsView) {
+        return;
+    }
+    performOnMainThreadSync(^{
+        id object = (__bridge id)nsView;
+        NSWindow *window = nil;
+        if ([object isKindOfClass:[NSView class]]) {
+            window = [(NSView *)object window];
+        } else if ([object isKindOfClass:[NSWindow class]]) {
+            window = (NSWindow *)object;
+        }
+        if (!window) {
+            return;
+        }
+        NSScreen *screen = window.screen ?: [NSScreen mainScreen];
+        if (!screen) {
+            return;
+        }
+        @try {
+            // Float above the menu bar so the content owns the notch strip too.
+            // (The menu bar is already hidden by the kiosk presentation options;
+            // this is what lets the window's frame extend up to y=0.)
+            window.level = NSMainMenuWindowLevel + 1;
+            // screen.frame is the FULL backing frame, notch strip included —
+            // screen.visibleFrame would re-introduce the safe-area inset.
+            [window setFrame:screen.frame display:YES];
+        } @catch (NSException *) {
+        }
+    });
+}
+
+void restoreStandardWindowLevel(void *nsView)
+{
+    if (!nsView) {
+        return;
+    }
+    performOnMainThreadSync(^{
+        id object = (__bridge id)nsView;
+        NSWindow *window = nil;
+        if ([object isKindOfClass:[NSView class]]) {
+            window = [(NSView *)object window];
+        } else if ([object isKindOfClass:[NSWindow class]]) {
+            window = (NSWindow *)object;
+        }
+        if (!window) {
+            return;
+        }
+        @try {
+            // Back to an ordinary window: normal level (below the menu bar) and
+            // collection behavior so it tiles/moves like any app window. The
+            // caller (ShellWindow) restores the decorated style + windowed frame
+            // on the Qt side.
+            window.level = NSNormalWindowLevel;
+            window.collectionBehavior = NSWindowCollectionBehaviorDefault;
+        } @catch (NSException *) {
+        }
+    });
+}
+
 void leaveKioskPresentation()
 {
     performOnMainThreadSync(^{
@@ -869,6 +974,66 @@ void leaveKioskPresentation()
         } @catch (NSException *) {
         }
     });
+}
+
+void setSystemDockHidden(bool hidden)
+{
+    // The Dock preferences and process belong to the logged-in user. When FocusOS
+    // runs as root (the usual case) we must target that user's domain, so route
+    // `defaults`/`killall` through `sudo -H -u <user>`; otherwise we are the user
+    // and run them directly.
+    const bool root = (geteuid() == 0);
+    const QString consoleUser = qEnvironmentVariable("SUDO_USER");
+    const bool viaUser = root && !consoleUser.isEmpty() && consoleUser != QStringLiteral("root");
+
+    const auto runAsUser = [&](const QString &program, const QStringList &args) {
+        if (viaUser) {
+            QStringList full {QStringLiteral("-H"), QStringLiteral("-u"), consoleUser, program};
+            full += args;
+            QProcess::execute(QStringLiteral("/usr/bin/sudo"), full);
+        } else {
+            QProcess::execute(program, args);
+        }
+    };
+
+    const QString defaults = QStringLiteral("/usr/bin/defaults");
+    const QString dockDomain = QStringLiteral("com.apple.dock");
+    if (hidden) {
+        runAsUser(QStringLiteral("/bin/sh"),
+                  {QStringLiteral("-c"),
+                   QStringLiteral("/bin/mkdir -p \"$HOME/.focusos\"; "
+                                  "if [ ! -f \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
+                                  "/usr/bin/defaults export com.apple.dock "
+                                  "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1 "
+                                  "|| /usr/bin/touch \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                  "fi")});
+        runAsUser(defaults, {QStringLiteral("write"), dockDomain,
+                             QStringLiteral("autohide"), QStringLiteral("-bool"), QStringLiteral("true")});
+        // A huge reveal delay means the Dock never slides in on a bottom-edge
+        // hover, and a zero animation time keeps the hide instant.
+        runAsUser(defaults, {QStringLiteral("write"), dockDomain,
+                             QStringLiteral("autohide-delay"), QStringLiteral("-float"), QStringLiteral("1000")});
+        runAsUser(defaults, {QStringLiteral("write"), dockDomain,
+                             QStringLiteral("autohide-time-modifier"), QStringLiteral("-float"), QStringLiteral("0")});
+    } else {
+        // Restore the user's original Dock domain when we have a snapshot. If a
+        // snapshot could not be written (or this is cleanup after an older build),
+        // fall back to an ordinary visible Dock and remove FocusOS's delay keys.
+        runAsUser(QStringLiteral("/bin/sh"),
+                  {QStringLiteral("-c"),
+                   QStringLiteral("if [ -s \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
+                                  "/usr/bin/defaults import com.apple.dock "
+                                  "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1; "
+                                  "/bin/rm -f \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                  "else "
+                                  "/bin/rm -f \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                  "/usr/bin/defaults delete com.apple.dock autohide-delay >/dev/null 2>&1; "
+                                  "/usr/bin/defaults delete com.apple.dock autohide-time-modifier >/dev/null 2>&1; "
+                                  "/usr/bin/defaults write com.apple.dock autohide -bool false; "
+                                  "fi")});
+    }
+    // Restart the Dock so it re-reads the preference. Harmless if it isn't running.
+    runAsUser(QStringLiteral("/usr/bin/killall"), {QStringLiteral("Dock")});
 }
 
 bool isAccessibilityTrusted()
@@ -1035,6 +1200,70 @@ void releaseDisplaySleepAssertion(quint32 assertionId)
     }
 }
 
+void startLaunchWatcher(const QStringList &blockedNames,
+                        const QStringList &blockedBundleIdentifiers,
+                        const QStringList &allowedNames,
+                        const QStringList &allowedBundleIdentifiers,
+                        const QStringList &allowedExecutablePaths)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_launchWatcherMutex);
+        g_lwBlockedNames = normalizedSet(blockedNames);
+        g_lwBlockedBundleIds = normalizedSet(blockedBundleIdentifiers);
+        g_lwAllowedNames = normalizedSet(allowedNames);
+        g_lwAllowedBundleIds = normalizedSet(allowedBundleIdentifiers);
+        g_lwAllowedPaths = normalizedSet(allowedExecutablePaths);
+    }
+
+    performOnMainThreadSync(^{
+        if (g_launchObserver != nil) {
+            return;  // policy already refreshed above; observer stays installed
+        }
+        g_launchObserver = [[[NSWorkspace sharedWorkspace] notificationCenter]
+            addObserverForName:NSWorkspaceDidLaunchApplicationNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note) {
+            NSRunningApplication *application = note.userInfo[NSWorkspaceApplicationKey];
+            if (!application ||
+                application.activationPolicy != NSApplicationActivationPolicyRegular) {
+                return;
+            }
+            if (!launchShouldBlockLocked(application)) {
+                return;
+            }
+            // Reap it before it can settle / take focus (the media key launching
+            // Apple Music is the canonical case), then pull FocusOS back to front
+            // and re-hide the Dock/menu bar in case the launch revealed them.
+            [application terminate];
+            @try {
+                [NSApplication sharedApplication];
+                [NSApp setPresentationOptions:(NSApplicationPresentationHideDock |
+                                               NSApplicationPresentationHideMenuBar |
+                                               NSApplicationPresentationDisableProcessSwitching)];
+                [NSApp activateIgnoringOtherApps:YES];
+            } @catch (NSException *) {
+            }
+        }];
+    });
+}
+
+void stopLaunchWatcher()
+{
+    performOnMainThreadSync(^{
+        if (g_launchObserver != nil) {
+            [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:g_launchObserver];
+            g_launchObserver = nil;
+        }
+    });
+    std::lock_guard<std::mutex> lock(g_launchWatcherMutex);
+    g_lwBlockedNames.clear();
+    g_lwBlockedBundleIds.clear();
+    g_lwAllowedNames.clear();
+    g_lwAllowedBundleIds.clear();
+    g_lwAllowedPaths.clear();
+}
+
 bool startExecBlocker(const QStringList &blockedNames,
                       const QStringList &blockedBundleIdentifiers,
                       const QStringList &allowedNames,
@@ -1069,10 +1298,15 @@ void stopExecBlocker()
 #endif
 }
 
-bool applyNetworkFilter(const QStringList &allowedHosts, QString *errorMessage)
+QString buildNetworkFilterRuleset(const QStringList &allowedHosts)
 {
-    const QString ruleset = buildPfRuleset(allowedHosts);
+    // Pure value-type work (QHostInfo::fromName, string building) — safe to run
+    // on a QtConcurrent worker thread. No QProcess / QObject here.
+    return buildPfRuleset(allowedHosts);
+}
 
+bool commitNetworkFilter(const QString &ruleset, QString *errorMessage)
+{
     // Persist the ruleset where pfctl can read it (and where it survives for the
     // duration of the routine). /etc/pf.anchors is the conventional home for
     // add-on pf rules and already exists on every macOS install.
@@ -1101,6 +1335,11 @@ bool applyNetworkFilter(const QStringList &allowedHosts, QString *errorMessage)
     return runPfctl({QStringLiteral("-E"),
                      QStringLiteral("-f"), focusosPfRulesetPath()},
                     errorMessage);
+}
+
+bool applyNetworkFilter(const QStringList &allowedHosts, QString *errorMessage)
+{
+    return commitNetworkFilter(buildNetworkFilterRuleset(allowedHosts), errorMessage);
 }
 
 void dropNetworkFilter()

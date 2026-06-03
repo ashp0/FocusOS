@@ -270,9 +270,11 @@ Item {
             loops: MediaPlayer.Infinite
 
             onDurationChanged: {
-                if (root.activeAssetType === 1 && duration > 0
+                // Reference the player's own duration property rather than the
+                // injected signal parameter (the latter is deprecated in Qt 6 QML).
+                if (root.activeAssetType === 1 && videoPlayer.duration > 0
                         && root.inspirationAssets && root.inspirationAssets.length > 1) {
-                    slideTimer.interval = Math.max(duration, root.imageHoldMs)
+                    slideTimer.interval = Math.max(videoPlayer.duration, root.imageHoldMs)
                     slideTimer.restart()
                 }
             }

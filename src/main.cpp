@@ -127,11 +127,101 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
 
 #if defined(Q_OS_MACOS)
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 
 extern char **environ;
+
+// Passwordless elevated launch. When FocusOS is started from the Dock it runs as
+// the normal user — which can't drive the pf firewall or the Endpoint Security
+// blocker. If the user has enabled it (SystemStatus::enableElevatedLaunch installs
+// a NOPASSWD sudoers rule for THIS binary), re-exec ourselves through `sudo -n` so
+// the real shell runs as root with no Terminal and no prompt. Idempotent and
+// loop-safe: it no-ops when already root or when the rule isn't installed.
+static void maybeReexecElevated(char *argv[])
+{
+    if (geteuid() == 0) {
+        return;  // already root (sudo from a Terminal, or our own re-exec)
+    }
+    if (qEnvironmentVariableIsSet("FOCUSOS_ELEVATED")) {
+        return;  // guard against an exec loop
+    }
+
+    char selfPath[PATH_MAX] = {0};
+    uint32_t size = sizeof(selfPath);
+    char resolved[PATH_MAX] = {0};
+    if (_NSGetExecutablePath(selfPath, &size) != 0 || realpath(selfPath, resolved) == nullptr) {
+        return;
+    }
+
+    // Ask sudo whether it would let us run this binary with NOPASSWD. A cached
+    // sudo timestamp can make a plain exit-code probe look passwordless, so parse
+    // the listing and require the explicit tag.
+    int outputPipe[2];
+    if (pipe(outputPipe) != 0) {
+        return;
+    }
+    const pid_t probe = fork();
+    if (probe < 0) {
+        close(outputPipe[0]);
+        close(outputPipe[1]);
+        return;
+    }
+    if (probe == 0) {
+        close(outputPipe[0]);
+        dup2(outputPipe[1], STDOUT_FILENO);
+        dup2(outputPipe[1], STDERR_FILENO);
+        close(outputPipe[1]);
+        const int devnull = ::open("/dev/null", O_RDONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+        }
+        execl("/usr/bin/sudo", "sudo", "-n", "-l", resolved, static_cast<char *>(nullptr));
+        _exit(127);
+    }
+    close(outputPipe[1]);
+    std::string sudoListing;
+    char buffer[512];
+    ssize_t n = 0;
+    while ((n = read(outputPipe[0], buffer, sizeof(buffer))) > 0) {
+        sudoListing.append(buffer, static_cast<size_t>(n));
+        if (sudoListing.size() > 65536) {
+            break;
+        }
+    }
+    close(outputPipe[0]);
+    int status = 0;
+    waitpid(probe, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+        sudoListing.find("NOPASSWD") == std::string::npos) {
+        return;  // rule not installed → stay unprivileged (degraded, still usable)
+    }
+
+    // Build `sudo -n <self> <original args…>` and replace this process with it.
+    setenv("FOCUSOS_ELEVATED", "1", 1);
+    int argc = 0;
+    while (argv[argc] != nullptr) {
+        ++argc;
+    }
+    char **sudoArgv = new char *[argc + 4];
+    int i = 0;
+    sudoArgv[i++] = const_cast<char *>("/usr/bin/sudo");
+    sudoArgv[i++] = const_cast<char *>("-n");
+    sudoArgv[i++] = resolved;
+    for (int j = 1; j < argc; ++j) {
+        sudoArgv[i++] = argv[j];
+    }
+    sudoArgv[i] = nullptr;
+    execv("/usr/bin/sudo", sudoArgv);
+    // execv only returns on failure — continue unprivileged.
+    delete[] sudoArgv;
+}
 
 // Last-ditch cleanup so a crash doesn't strand the machine behind the pf
 // outbound allowlist. Same async-signal-safe discipline as the Linux handler:
@@ -180,6 +270,13 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
     std::signal(SIGFPE, focusosMacFatalSignalHandler);
     std::signal(SIGTERM, focusosMacFatalSignalHandler);
     std::signal(SIGINT, focusosMacFatalSignalHandler);
+    // Survive the launching Terminal being quit. When FocusOS is started with
+    // `sudo focusos` from a Terminal and a routine then quits that Terminal (it's
+    // a blocked app), the kernel SIGHUPs FocusOS — the child of that tty — and it
+    // dies with the Terminal. Ignoring SIGHUP keeps the shell alive. (The Dock
+    // launch path has no controlling terminal, so this only matters for the
+    // legacy Terminal launch.)
+    std::signal(SIGHUP, SIG_IGN);
 }
 #endif
 
@@ -209,6 +306,13 @@ int main(int argc, char *argv[])
             return 0;
         }
     }
+
+#if defined(Q_OS_MACOS)
+    // Dock-launched and the user has enabled passwordless launch? Re-exec as root
+    // via sudo before any GUI init, so the firewall + blocker work without a
+    // Terminal. No-op when already root or when the rule isn't installed.
+    maybeReexecElevated(argv);
+#endif
 
     QCoreApplication::setOrganizationName(QStringLiteral("FocusOS"));
     QCoreApplication::setApplicationName(QStringLiteral("FocusOS"));

@@ -18,6 +18,10 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 
+#if defined(Q_OS_MACOS)
+#include "platform/macos/MacBackendNative.h"
+#endif
+
 ShellWindow::ShellWindow(RoutineManager *routineManager,
                          NotesStore *notesStore,
                          TOTPEngine *totpEngine,
@@ -123,6 +127,24 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
         }
     });
 #endif
+
+#if defined(Q_OS_MACOS)
+    // "Access Desktop" (TOTP-gated admin access): the backend has already lifted
+    // the kiosk presentation + blockers, but the shell window is still the
+    // fullscreen, above-the-menu-bar kiosk cover from coverScreenIncludingNotch.
+    // Step it down into an ordinary window so the rest of the system is visible.
+    connect(routineManager, &RoutineManager::desktopAccessRequested, this, [this] {
+        QTimer::singleShot(200, this, &ShellWindow::enterDesktopAccessWindow);
+    });
+    // Access ended (END ACCESS): reclaim the fullscreen kiosk cover — whether we
+    // land back on the home screen or on a still-running routine's MissionView
+    // (in both cases the shell owns the screen again on macOS).
+    connect(routineManager, &RoutineManager::accessChanged, this, [this, routineManager] {
+        if (!routineManager->accessGranted()) {
+            showFocusShell();
+        }
+    });
+#endif
 }
 
 void ShellWindow::showFocusShell()
@@ -134,11 +156,52 @@ void ShellWindow::showFocusShell()
     }
 
     setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+#if defined(Q_OS_MACOS)
+    // Native showFullScreen() drops the window into the macOS "safe area" below
+    // the notch, leaving a black bar across the top. Instead cover the whole
+    // screen as a borderless floating window (the menu bar is hidden by the kiosk
+    // presentation) and lift it over the notch strip so the starfield reaches the
+    // top edge seamlessly around the notch.
+    show();
+    raise();
+    requestActivate();
+    MacBackendNative::coverScreenIncludingNotch(reinterpret_cast<void *>(winId()));
+#else
     showFullScreen();
     raise();
     requestActivate();
+#endif
     updateProgressOverlay();
 }
+
+#if defined(Q_OS_MACOS)
+void ShellWindow::enterDesktopAccessWindow()
+{
+    // Intentionally stepping aside — keep any restore handler from dragging the
+    // shell back to fullscreen while the authorized desktop window is open.
+    m_shellShouldHide = true;
+
+    // Ordinary decorated window: titled, movable, resizable, NOT stays-on-top —
+    // a "regular, standard macOS window" the user can push aside to see the rest
+    // of the system, instead of the fullscreen kiosk cover.
+    setFlags(Qt::Window);
+    if (QScreen *screen = QGuiApplication::primaryScreen()) {
+        const QRect avail = screen->availableGeometry();
+        const int w = qRound(avail.width() * 0.6);
+        const int h = qRound(avail.height() * 0.7);
+        setGeometry(avail.x() + (avail.width() - w) / 2,
+                    avail.y() + (avail.height() - h) / 2,
+                    w, h);
+    }
+    showNormal();
+    raise();
+    requestActivate();
+
+    // Drop the above-the-menu-bar window level set by coverScreenIncludingNotch so
+    // the shell sits among normal windows rather than floating over everything.
+    MacBackendNative::restoreStandardWindowLevel(reinterpret_cast<void *>(winId()));
+}
+#endif
 
 void ShellWindow::setRootWindowBackground()
 {
@@ -170,9 +233,17 @@ void ShellWindow::updateProgressOverlay()
             m_progressOverlayWindow.setGeometry(screen->geometry());
         }
         if (!m_progressOverlayWindow.isVisible()) {
+#if defined(Q_OS_MACOS)
+            m_progressOverlayWindow.show();
+#else
             m_progressOverlayWindow.showFullScreen();
+#endif
         }
         m_progressOverlayWindow.raise();
+#if defined(Q_OS_MACOS)
+        MacBackendNative::coverScreenIncludingNotch(
+            reinterpret_cast<void *>(m_progressOverlayWindow.winId()));
+#endif
     } else if (m_progressOverlayWindow.isVisible()) {
         m_progressOverlayWindow.hide();
     }

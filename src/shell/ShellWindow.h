@@ -33,6 +33,13 @@ private:
     void setRootWindowBackground();
     void minimizeFocusShell();
     void updateProgressOverlay();
+#if defined(Q_OS_MACOS)
+    // "Access Desktop" on macOS: step the shell out of its fullscreen kiosk
+    // cover into an ordinary, movable/resizable window so the rest of the system
+    // (Dock, menu bar, other apps) is visible and usable. showFocusShell()
+    // restores the fullscreen cover when access ends.
+    void enterDesktopAccessWindow();
+#endif
 
     QQuickView m_progressOverlayWindow;
     RoutineManager *m_routineManager = nullptr;
