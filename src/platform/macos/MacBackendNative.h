@@ -60,6 +60,49 @@ void coverScreenIncludingNotch(void *nsView);
 // main thread; safe to call repeatedly. `nsView` is the QWindow's winId().
 void restoreStandardWindowLevel(void *nsView);
 
+// Native macOS fullscreen (own Space) for the active-routine window. During a
+// routine FocusOS becomes a real fullscreen window in its own Space — the
+// routine's app windows stay on the desktop Space, reachable by swiping /
+// Mission Control, instead of being buried under an above-everything kiosk
+// cover. enterNativeFullScreen() sets the FullScreenPrimary collection behavior
+// (drops the kiosk window level first) and toggles in; exitNativeFullScreen()
+// toggles back out. windowIsNativeFullScreen() reports the current state so the
+// caller can sequence the (animated) toggle. `nsView` is the QWindow's winId().
+void enterNativeFullScreen(void *nsView);
+void exitNativeFullScreen(void *nsView);
+bool windowIsNativeFullScreen(void *nsView);
+
+// Pin a window onto every Space (and above fullscreen Spaces) so the countdown
+// progress overlay keeps painting its border over the routine apps even after
+// FocusOS moves into its own fullscreen Space. onAll=false reverts to the
+// default single-Space behavior. `nsView` is the QWindow's winId().
+void setWindowJoinsAllSpaces(void *nsView, bool onAll);
+
+// Lift a window above EVERYTHING on every display — other apps, the Dock, the menu
+// bar, and native-fullscreen Spaces — by raising it to the screen-saver window
+// level and pinning it across all Spaces. Used for the global countdown progress
+// overlay so its border keeps painting on top of the routine apps (and on any
+// secondary display) instead of only inside FocusOS's own window. Stays
+// click-through (ignoresMouseEvents). `nsView` is the QWindow's winId(); runs on
+// the main thread; safe to call repeatedly.
+void raiseWindowToSystemOverlayLevel(void *nsView);
+
+// Hard-disable (true) / restore (false) Mission Control, Spaces and App Exposé via
+// the `com.apple.dock mcx-expose-disabled` preference. The CGEventTap key blocker
+// cannot stop the trackpad swipe-up gesture, so on the locked home screen this is
+// what keeps Mission Control truly unreachable until the user enters their 6-digit
+// code. A routine clears it (Spaces navigation is wanted mid-routine); the locked
+// home re-applies it. Targets the console user's domain even when running as root.
+void setMissionControlDisabled(bool disabled);
+
+// Routine Dock posture: shrink the Dock to its minimum tile size and strip every
+// pinned app / recent off it, so swiping up into Mission Control during a routine
+// never reveals a useful launch surface (the user asked for the old "fullscreen
+// Space" feel with a neutered Dock rather than disabling Mission Control). The
+// user's real Dock is snapshotted first (shared with setSystemDockHidden) so
+// neuter=false — and setSystemDockHidden(false) — fully restores it.
+void neuterDock(bool neuter);
+
 // Whether FocusOS currently has Accessibility (AXIsProcessTrusted) — required
 // for the CGEventTap key blocker to *suppress* events. When false, startInput
 // Blocker still installs a tap but it can only observe, so the system shortcuts
@@ -72,7 +115,16 @@ bool isAccessibilityTrusted();
 // app/window switchers. This is the macOS analog of the Linux launcher-killing
 // watchdog — it stops the user reaching a launcher in the first place. Installs
 // a CGEventTap on the main run loop; idempotent. stopInputBlocker() removes it.
-bool startInputBlocker(QString *errorMessage = nullptr);
+//
+// `allowNavigation` selects between two postures. On the locked home screen
+// (false) EVERYTHING is swallowed — Spotlight, Mission Control, Spaces, the
+// switchers — so there is no route off the FocusOS shell. During a routine
+// (true) the navigation keys (Mission Control, Spaces, ⌘-Tab, ⌘-`) are LET
+// THROUGH so the user can reach the routine's own app windows in the desktop
+// Space, while the launch/escape surfaces (Spotlight, Launchpad, screenshots,
+// force-quit) stay blocked; the launch-watcher reaps any disallowed app the user
+// still manages to start.
+bool startInputBlocker(bool allowNavigation, QString *errorMessage = nullptr);
 void stopInputBlocker();
 
 // Strict engage-time sweep parity with the Linux backend: terminate (or, in
@@ -98,21 +150,27 @@ void releaseDisplaySleepAssertion(quint32 assertionId);
 
 // Entitlement-free launch enforcement — the userland fallback for the AUTH_EXEC
 // exec-blocker below, which needs a signed build carrying
-// com.apple.developer.endpoint-security.client (an adhoc / SIP-on build can't run
-// it, so the media key launching Apple Music, Dock launches of Spotify/Discord/a
-// terminal, etc. otherwise slip past the lock). This subscribes to NSWorkspace's
-// didLaunchApplication notification and, the instant a *blocked* app launches,
-// terminates it and pulls FocusOS back to the front — so Apple Music never gets
-// to take focus. It deliberately mirrors the exec-blocker's blocklist semantics
-// (deny only the blocked set, never the routine's own apps / browser / system
-// dialogs) so it can't kill an allowed launch. Same argument shape as
-// startExecBlocker(); idempotent; the policy can be updated by calling it again.
+// com.apple.developer.endpoint-security.client. This subscribes to NSWorkspace's
+// didLaunchApplication notification and, during a strict routine, terminates any
+// newly launched Dock-visible GUI app that is not explicitly allowed. The deny-all
+// semantics live here (not in AUTH_EXEC) because NSWorkspace can distinguish
+// regular user apps from helper/background processes; Endpoint Security cannot do
+// that safely without breaking allowed apps' helper binaries.
 void startLaunchWatcher(const QStringList &blockedNames,
                         const QStringList &blockedBundleIdentifiers,
                         const QStringList &allowedNames,
                         const QStringList &allowedBundleIdentifiers,
                         const QStringList &allowedExecutablePaths);
 void stopLaunchWatcher();
+
+// Strong SIP-off system UI lockdown for strict routines. Disables the user's
+// launchd-managed Aqua shell agents (Dock/Mission Control/Launchpad, Finder,
+// Spotlight, menu bar/control center, notifications) and writes a restore script
+// under ~/.focusos. restoreAquaUiLockdown() re-enables only the labels FocusOS
+// disabled itself.
+bool applyAquaUiLockdown(QString *errorMessage = nullptr);
+void restoreAquaUiLockdown();
+QString aquaUiRestoreScriptPath();
 
 bool startExecBlocker(const QStringList &blockedNames,
                       const QStringList &blockedBundleIdentifiers,

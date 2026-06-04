@@ -13,6 +13,11 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#if defined(Q_OS_MACOS)
+#include <pwd.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 // On-disk container layout: MAGIC + VERSION + payload + HMAC-SHA256(of all
@@ -23,11 +28,24 @@ constexpr int kMacSize = 32; // SHA-256
 // Pin the stream version so a Qt upgrade can't change the serialized layout.
 constexpr QDataStream::Version kStreamVersion = QDataStream::Qt_6_5;
 
-QByteArray homeFocusDir()
+QString focusHomePath()
 {
-    return (QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
-            + QStringLiteral("/.focusos"))
-        .toUtf8();
+#if defined(Q_OS_MACOS)
+    const QByteArray sudoUser = qgetenv("SUDO_USER");
+    if (geteuid() == 0 && !sudoUser.isEmpty() && sudoUser != "root") {
+        if (const struct passwd *pw = getpwnam(sudoUser.constData())) {
+            if (pw->pw_dir && pw->pw_dir[0] != '\0') {
+                return QString::fromLocal8Bit(pw->pw_dir);
+            }
+        }
+    }
+#endif
+    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+}
+
+QString homeFocusDir()
+{
+    return focusHomePath() + QStringLiteral("/.focusos");
 }
 
 QByteArray computeMac(const QByteArray &signedRegion)
@@ -43,8 +61,7 @@ namespace BlockerPolicy {
 
 QString blockerDir()
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
-                        + QStringLiteral("/.focusos/blocker");
+    const QString dir = homeFocusDir() + QStringLiteral("/blocker");
     QDir().mkpath(dir);
     return dir;
 }
@@ -143,7 +160,7 @@ State read()
 
 bool sessionCheckpointActive()
 {
-    QFile file(QString::fromUtf8(homeFocusDir()) + QStringLiteral("/active.json"));
+    QFile file(homeFocusDir() + QStringLiteral("/active.json"));
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
     }

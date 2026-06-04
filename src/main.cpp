@@ -126,6 +126,8 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
 #endif
 
 #if defined(Q_OS_MACOS)
+#include "platform/macos/MacBackendNative.h"
+
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -229,6 +231,8 @@ static void maybeReexecElevated(char *argv[])
 // QProcess / malloc from inside the handler.
 static char g_pfctlPath[4096] = {0};
 static char g_pfArgDisable[] = "-d";
+static char g_restoreUiScriptPath[4096] = {0};
+static char g_shPath[] = "/bin/sh";
 
 static void focusosMacForkExec(char *const argv[])
 {
@@ -251,6 +255,10 @@ static void focusosMacFatalSignalHandler(int signum)
         char *argv[] = {g_pfctlPath, g_pfArgDisable, nullptr};
         focusosMacForkExec(argv);
     }
+    if (g_restoreUiScriptPath[0] != '\0') {
+        char *argv[] = {g_shPath, g_restoreUiScriptPath, nullptr};
+        focusosMacForkExec(argv);
+    }
     std::signal(signum, SIG_DFL);
     std::raise(signum);
 }
@@ -263,6 +271,10 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
     const char kPfctl[] = "/sbin/pfctl";
     if (sizeof(kPfctl) <= sizeof(g_pfctlPath)) {
         std::memcpy(g_pfctlPath, kPfctl, sizeof(kPfctl));
+    }
+    const QByteArray restorePath = MacBackendNative::aquaUiRestoreScriptPath().toLocal8Bit();
+    if (!restorePath.isEmpty() && static_cast<size_t>(restorePath.size() + 1) <= sizeof(g_restoreUiScriptPath)) {
+        std::memcpy(g_restoreUiScriptPath, restorePath.constData(), static_cast<size_t>(restorePath.size() + 1));
     }
     std::signal(SIGSEGV, focusosMacFatalSignalHandler);
     std::signal(SIGABRT, focusosMacFatalSignalHandler);
@@ -321,7 +333,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
 
-    const QString focusDataDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/.focusos");
+    const QString focusDataDir = RoutineManager::dataDirectory();
     QDir().mkpath(focusDataDir);
     QLockFile instanceLock(focusDataDir + QStringLiteral("/focusos.lock"));
     instanceLock.setStaleLockTime(0);

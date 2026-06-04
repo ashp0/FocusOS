@@ -20,10 +20,12 @@
 #include <QAbstractSocket>
 #include <QByteArray>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QUrl>
@@ -31,8 +33,10 @@
 #include <algorithm>
 #include <cctype>
 #include <mutex>
+#include <pwd.h>
 #include <set>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -117,6 +121,50 @@ NSString *applicationBundlePathForExecutable(NSString *executablePath)
 const QString kPfRulesetPath = QStringLiteral("/etc/pf.anchors/focusos");
 const QString kPfctl = QStringLiteral("/sbin/pfctl");
 const QString kApplePfConf = QStringLiteral("/etc/pf.conf");
+
+QString consoleUserName()
+{
+    const QByteArray sudoUser = qgetenv("SUDO_USER");
+    if (geteuid() == 0 && !sudoUser.isEmpty() && sudoUser != "root") {
+        return QString::fromLocal8Bit(sudoUser);
+    }
+    if (const struct passwd *pw = getpwuid(getuid())) {
+        return QString::fromLocal8Bit(pw->pw_name);
+    }
+    return {};
+}
+
+uint consoleUserId()
+{
+    bool ok = false;
+    const uint sudoUid = qEnvironmentVariable("SUDO_UID").toUInt(&ok);
+    if (geteuid() == 0 && ok && sudoUid > 0) {
+        return sudoUid;
+    }
+    return static_cast<uint>(getuid());
+}
+
+QString consoleHomePath()
+{
+    const QString user = consoleUserName();
+    if (!user.isEmpty()) {
+        if (const struct passwd *pw = getpwnam(user.toLocal8Bit().constData())) {
+            if (pw->pw_dir && pw->pw_dir[0] != '\0') {
+                return QString::fromLocal8Bit(pw->pw_dir);
+            }
+        }
+    }
+    const QByteArray home = qgetenv("HOME");
+    if (!home.isEmpty()) {
+        return QString::fromLocal8Bit(home);
+    }
+    return QDir::homePath();
+}
+
+QString focusosDataDir()
+{
+    return QDir(consoleHomePath()).absoluteFilePath(QStringLiteral(".focusos"));
+}
 
 QString focusosPfRulesetPath()
 {
@@ -366,6 +414,216 @@ void performOnMainThreadSync(void (^block)(void))
     dispatch_sync(dispatch_get_main_queue(), block);
 }
 
+// Resolve a QWindow winId() (an NSView* on macOS, occasionally an NSWindow*) to
+// its NSWindow. Must be called on the main thread.
+NSWindow *windowFromNsView(void *nsView)
+{
+    if (!nsView) {
+        return nil;
+    }
+    id object = (__bridge id)nsView;
+    if ([object isKindOfClass:[NSView class]]) {
+        return [(NSView *)object window];
+    }
+    if ([object isKindOfClass:[NSWindow class]]) {
+        return (NSWindow *)object;
+    }
+    return nil;
+}
+
+void runAsConsoleUser(const QString &program, const QStringList &args)
+{
+    const bool root = (geteuid() == 0);
+    const QString consoleUser = consoleUserName();
+    const bool viaUser = root && !consoleUser.isEmpty() && consoleUser != QStringLiteral("root");
+
+    if (viaUser) {
+        QStringList full {QStringLiteral("-H"), QStringLiteral("-u"), consoleUser, program};
+        full += args;
+        QProcess::execute(QStringLiteral("/usr/bin/sudo"), full);
+        return;
+    }
+    QProcess::execute(program, args);
+}
+
+QStringList aquaUiLockdownLabels()
+{
+    return {
+        QStringLiteral("com.apple.Dock.agent"),
+        QStringLiteral("com.apple.Finder"),
+        QStringLiteral("com.apple.Spotlight"),
+        QStringLiteral("com.apple.SystemUIServer.agent"),
+        QStringLiteral("com.apple.controlcenter"),
+        QStringLiteral("com.apple.notificationcenterui.agent"),
+        QStringLiteral("com.apple.Siri.agent"),
+        QStringLiteral("com.apple.talagent")
+    };
+}
+
+QString aquaStatePath()
+{
+    return QDir(focusosDataDir()).absoluteFilePath(QStringLiteral("macos-ui-lockdown.state"));
+}
+
+QString aquaRestoreScriptPathInternal()
+{
+    return QDir(focusosDataDir()).absoluteFilePath(QStringLiteral("restore-macos-ui.sh"));
+}
+
+QString launchdGuiDomain()
+{
+    return QStringLiteral("gui/%1").arg(consoleUserId());
+}
+
+bool runLaunchctl(const QStringList &arguments, QString *output = nullptr, int timeoutMs = 5000)
+{
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(QStringLiteral("/bin/launchctl"), arguments);
+    if (!process.waitForStarted(2000)) {
+        if (output) {
+            *output = QStringLiteral("Unable to start launchctl");
+        }
+        return false;
+    }
+    if (!process.waitForFinished(timeoutMs)) {
+        process.kill();
+        process.waitForFinished(200);
+        if (output) {
+            *output = QStringLiteral("launchctl timed out");
+        }
+        return false;
+    }
+    if (output) {
+        *output = QString::fromLocal8Bit(process.readAll()).trimmed();
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
+// Map a system UI launchd label to its LaunchAgent plist on disk. The filename is
+// usually the label with any trailing ".agent" stripped (com.apple.Dock.agent ->
+// com.apple.Dock.plist), but a few keep the full label (com.apple.Siri.agent ->
+// com.apple.Siri.agent.plist), so try the literal label first, then the stripped
+// form, and return whichever exists.
+QString systemAgentPlistPath(const QString &label)
+{
+    const QString dir = QStringLiteral("/System/Library/LaunchAgents/");
+    QStringList candidates;
+    candidates << dir + label + QStringLiteral(".plist");
+    if (label.endsWith(QStringLiteral(".agent"))) {
+        candidates << dir + label.left(label.size() - 6) + QStringLiteral(".plist");
+    }
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+// Whether a launchd label is currently loaded (bootstrapped) in the user's GUI
+// domain. A `bootout` leaves the label "enabled" but NOT loaded, and `kickstart`
+// alone cannot revive it — only `bootstrap` reloads it. This lets the restore path
+// tell "needs reviving" from "already healthy" so it never restarts a live agent.
+bool launchdLabelLoaded(const QString &label)
+{
+    QString discard;  // drain the (sometimes large) print output so the pipe can't fill
+    return runLaunchctl({QStringLiteral("print"),
+                         QStringLiteral("%1/%2").arg(launchdGuiDomain(), label)},
+                        &discard, 4000);
+}
+
+bool launchdLabelDisabled(const QString &label)
+{
+    QString output;
+    if (!runLaunchctl({QStringLiteral("print-disabled"), launchdGuiDomain()}, &output)) {
+        return false;
+    }
+
+    const QString escaped = QRegularExpression::escape(label);
+    const QRegularExpression pattern(QStringLiteral("\"%1\"\\s*=>\\s*([A-Za-z0-9_-]+)").arg(escaped));
+    const QRegularExpressionMatch match = pattern.match(output);
+    if (!match.hasMatch()) {
+        return false;
+    }
+    const QString value = match.captured(1).toLower();
+    return value == QStringLiteral("true") || value == QStringLiteral("disabled");
+}
+
+QStringList readAquaState()
+{
+    QFile file(aquaStatePath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    QStringList labels;
+    while (!file.atEnd()) {
+        const QString label = QString::fromUtf8(file.readLine()).trimmed();
+        if (!label.isEmpty() && !label.startsWith(QLatin1Char('#'))) {
+            labels.append(label);
+        }
+    }
+    labels.removeDuplicates();
+    return labels;
+}
+
+bool writeAquaRestoreScript(const QStringList &labels, QString *errorMessage)
+{
+    QDir().mkpath(focusosDataDir());
+
+    QSaveFile state(aquaStatePath());
+    if (!state.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Unable to write %1").arg(aquaStatePath());
+        }
+        return false;
+    }
+    for (const QString &label : labels) {
+        state.write(label.toUtf8());
+        state.write("\n");
+    }
+    if (!state.commit()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Unable to save %1").arg(aquaStatePath());
+        }
+        return false;
+    }
+
+    QSaveFile script(aquaRestoreScriptPathInternal());
+    if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Unable to write %1").arg(aquaRestoreScriptPathInternal());
+        }
+        return false;
+    }
+    const QString uid = QString::number(consoleUserId());
+    script.write("#!/bin/sh\n");
+    script.write("set +e\n");
+    script.write(QStringLiteral("UID_VALUE='%1'\n").arg(uid).toUtf8());
+    script.write(QStringLiteral("STATE='%1'\n").arg(aquaStatePath().replace(QLatin1Char('\''), QStringLiteral("'\\''"))).toUtf8());
+    script.write("if [ -f \"$STATE\" ]; then\n");
+    script.write("  while IFS= read -r label; do\n");
+    script.write("    [ -n \"$label\" ] || continue\n");
+    script.write("    case \"$label\" in \\#*) continue ;; esac\n");
+    script.write("    /bin/launchctl enable \"gui/$UID_VALUE/$label\" >/dev/null 2>&1 || true\n");
+    script.write("  done < \"$STATE\"\n");
+    script.write("  while IFS= read -r label; do\n");
+    script.write("    [ -n \"$label\" ] || continue\n");
+    script.write("    case \"$label\" in \\#*) continue ;; esac\n");
+    script.write("    /bin/launchctl kickstart -k \"gui/$UID_VALUE/$label\" >/dev/null 2>&1 || true\n");
+    script.write("  done < \"$STATE\"\n");
+    script.write("  /bin/rm -f \"$STATE\"\n");
+    script.write("fi\n");
+    if (!script.commit()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Unable to save %1").arg(aquaRestoreScriptPathInternal());
+        }
+        return false;
+    }
+    ::chmod(aquaRestoreScriptPathInternal().toLocal8Bit().constData(), 0755);
+    return true;
+}
+
 std::string lowercase(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -423,6 +681,11 @@ enum : CGKeyCode {
 // reads it without a lock (single writer on the main thread, plain bool reads in
 // the callback are fine) so it can be flipped on/off without tearing the tap up.
 std::atomic<bool> g_inputBlockActive{false};
+// When true (during a routine), let the navigation shortcuts through — Mission
+// Control, Spaces, ⌘-Tab, ⌘-` — so the user can reach the routine's app windows
+// in the desktop Space while FocusOS sits in its own fullscreen Space. The
+// launch/escape surfaces stay blocked regardless. False on the home screen.
+std::atomic<bool> g_inputAllowNavigation{false};
 CFMachPortRef g_eventTap = nullptr;
 CFRunLoopSourceRef g_eventTapSource = nullptr;
 
@@ -440,20 +703,26 @@ bool eventShouldBeBlocked(CGEventType type, CGEventRef event)
     const CGKeyCode key =
         static_cast<CGKeyCode>(CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode));
 
+    // During a routine the user navigates between FocusOS's fullscreen Space and
+    // the routine apps' desktop Space, so the navigation shortcuts are allowed; on
+    // the home screen they're swallowed so there's no route off the shell.
+    const bool allowNav = g_inputAllowNavigation.load(std::memory_order_relaxed);
+
     switch (key) {
     case kKeySpace:                 // Spotlight (⌘-Space), Finder search (⌥⌘-Space)
-        return cmd;
+        return cmd;                 // always blocked — a launch surface
     case kKeyTab:                   // app switcher (⌘-Tab / ⌥⌘-Tab)
     case kKeyGrave:                 // window switcher (⌘-`)
-        return cmd;
+        return cmd && !allowNav;    // navigation — allowed during a routine
     case kKeyUpArrow:               // Mission Control (⌃-↑)
     case kKeyDownArrow:             // App Exposé (⌃-↓)
     case kKeyLeftArrow:             // move one Space left (⌃-←)
     case kKeyRightArrow:            // move one Space right (⌃-→)
-        return ctrl;
+        return ctrl && !allowNav;   // Spaces / Mission Control — allowed in routine
     case kKeyF3:                    // Mission Control key
+        return !allowNav;           // allowed in routine so the user can swipe back
     case kKeyF4:                    // Launchpad key
-        return true;
+        return true;                // always blocked — a launch surface
     case kKeyD:                     // toggle Dock (⌥⌘D)
         return cmd && alt;
     case kKeyANSI_3:                // screenshot to file (⌘⇧3)
@@ -602,11 +871,13 @@ bool launchShouldBlockLocked(NSRunningApplication *application)
         (!bundleId.empty() && g_lwAllowedBundleIds.contains(bundleId))) {
         return false;
     }
-    // Blocklist only — anything not explicitly blocked is left alone, exactly like
-    // the AUTH_EXEC exec-blocker. This is what keeps us from killing an allowed
-    // launch (a system dialog, the routine's browser) we didn't enumerate.
-    return (!name.empty() && g_lwBlockedNames.contains(name)) ||
-           (!bundleId.empty() && g_lwBlockedBundleIds.contains(bundleId));
+    // Deny all other regular, Dock-visible GUI launches during a strict routine.
+    // This closes gaps like Notes/Photos without needing to enumerate every
+    // possible distraction. AUTH_EXEC remains blocklist-based because it cannot
+    // reliably distinguish user apps from helper/background execs.
+    Q_UNUSED(g_lwBlockedNames);
+    Q_UNUSED(g_lwBlockedBundleIds);
+    return true;
 }
 
 #if FOCUSOS_ENDPOINT_SECURITY_AVAILABLE
@@ -965,6 +1236,136 @@ void restoreStandardWindowLevel(void *nsView)
     });
 }
 
+void enterNativeFullScreen(void *nsView)
+{
+    performOnMainThreadSync(^{
+        NSWindow *window = windowFromNsView(nsView);
+        if (!window) {
+            return;
+        }
+        @try {
+            // Native fullscreen needs a normal-level, fullscreen-capable window;
+            // drop the above-the-menu-bar kiosk level coverScreenIncludingNotch set.
+            window.level = NSNormalWindowLevel;
+            window.collectionBehavior =
+                (window.collectionBehavior & ~NSWindowCollectionBehaviorFullScreenAuxiliary) |
+                NSWindowCollectionBehaviorFullScreenPrimary;
+            if ((window.styleMask & NSWindowStyleMaskFullScreen) == 0) {
+                [window toggleFullScreen:nil];
+            }
+        } @catch (NSException *) {
+        }
+    });
+}
+
+void exitNativeFullScreen(void *nsView)
+{
+    performOnMainThreadSync(^{
+        NSWindow *window = windowFromNsView(nsView);
+        if (!window) {
+            return;
+        }
+        @try {
+            if ((window.styleMask & NSWindowStyleMaskFullScreen) != 0) {
+                [window toggleFullScreen:nil];
+            }
+        } @catch (NSException *) {
+        }
+    });
+}
+
+bool windowIsNativeFullScreen(void *nsView)
+{
+    __block bool fullScreen = false;
+    performOnMainThreadSync(^{
+        NSWindow *window = windowFromNsView(nsView);
+        if (window) {
+            fullScreen = (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+        }
+    });
+    return fullScreen;
+}
+
+void setWindowJoinsAllSpaces(void *nsView, bool onAll)
+{
+    performOnMainThreadSync(^{
+        NSWindow *window = windowFromNsView(nsView);
+        if (!window) {
+            return;
+        }
+        @try {
+            const NSWindowCollectionBehavior allSpaces =
+                NSWindowCollectionBehaviorCanJoinAllSpaces |
+                NSWindowCollectionBehaviorStationary |
+                NSWindowCollectionBehaviorFullScreenAuxiliary |
+                NSWindowCollectionBehaviorIgnoresCycle;
+            if (onAll) {
+                window.collectionBehavior |= allSpaces;
+            } else {
+                window.collectionBehavior &= ~allSpaces;
+            }
+        } @catch (NSException *) {
+        }
+    });
+}
+
+void raiseWindowToSystemOverlayLevel(void *nsView)
+{
+    performOnMainThreadSync(^{
+        NSWindow *window = windowFromNsView(nsView);
+        if (!window) {
+            return;
+        }
+        @try {
+            // The progress overlay must paint over EVERYTHING on EVERY display:
+            // other apps, the Dock, the menu bar, and native-fullscreen Spaces.
+            // NSMainMenuWindowLevel+1 (what coverScreenIncludingNotch sets) is below
+            // other apps' regular windows, so the border vanished the moment a
+            // routine app took focus. Screen-saver level sits above ordinary,
+            // floating, and even most system windows, which is what "global overlay"
+            // needs. Pin it onto all Spaces (and above fullscreen Spaces) and make it
+            // click-through at the AppKit layer too, belt-and-suspenders with Qt's
+            // WindowTransparentForInput flag.
+            window.level = NSScreenSaverWindowLevel + 1;
+            window.ignoresMouseEvents = YES;
+            window.collectionBehavior |=
+                NSWindowCollectionBehaviorCanJoinAllSpaces |
+                NSWindowCollectionBehaviorStationary |
+                NSWindowCollectionBehaviorFullScreenAuxiliary |
+                NSWindowCollectionBehaviorIgnoresCycle;
+        } @catch (NSException *) {
+        }
+    });
+}
+
+void setMissionControlDisabled(bool disabled)
+{
+    // Hard-disable Mission Control / Spaces / App Exposé for the locked home screen
+    // so a routine end leaves the machine genuinely locked — the CGEventTap key
+    // blocker only swallows the F3 / ⌃-arrow KEYS and cannot stop the trackpad
+    // swipe-up gesture, so the gesture remained a route to Mission Control (and a
+    // visible Spaces strip) even on the locked shell. `mcx-expose-disabled` is the
+    // documented MDM/profile key that turns the whole Exposé/Spaces subsystem off;
+    // it kills both the gesture and the keys. Cleared again the moment the user
+    // enters their 6-digit code (Access Desktop) or a routine engages (a routine
+    // deliberately keeps Spaces navigation so the user can reach the routine apps).
+    // Targets the console user's preference domain even when FocusOS runs as root.
+    const QString defaults = QStringLiteral("/usr/bin/defaults");
+    const QString dockDomain = QStringLiteral("com.apple.dock");
+    if (disabled) {
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("mcx-expose-disabled"),
+                                    QStringLiteral("-bool"), QStringLiteral("true")});
+    } else {
+        // `mcx-expose-disabled` is not a key ordinary users set, so deleting it
+        // simply returns Mission Control to its default (enabled) state. The error
+        // path (key absent) is harmless.
+        runAsConsoleUser(defaults, {QStringLiteral("delete"), dockDomain,
+                                    QStringLiteral("mcx-expose-disabled")});
+    }
+    runAsConsoleUser(QStringLiteral("/usr/bin/killall"), {QStringLiteral("Dock")});
+}
+
 void leaveKioskPresentation()
 {
     performOnMainThreadSync(^{
@@ -978,62 +1379,180 @@ void leaveKioskPresentation()
 
 void setSystemDockHidden(bool hidden)
 {
-    // The Dock preferences and process belong to the logged-in user. When FocusOS
-    // runs as root (the usual case) we must target that user's domain, so route
-    // `defaults`/`killall` through `sudo -H -u <user>`; otherwise we are the user
-    // and run them directly.
-    const bool root = (geteuid() == 0);
-    const QString consoleUser = qEnvironmentVariable("SUDO_USER");
-    const bool viaUser = root && !consoleUser.isEmpty() && consoleUser != QStringLiteral("root");
-
-    const auto runAsUser = [&](const QString &program, const QStringList &args) {
-        if (viaUser) {
-            QStringList full {QStringLiteral("-H"), QStringLiteral("-u"), consoleUser, program};
-            full += args;
-            QProcess::execute(QStringLiteral("/usr/bin/sudo"), full);
-        } else {
-            QProcess::execute(program, args);
-        }
-    };
-
     const QString defaults = QStringLiteral("/usr/bin/defaults");
     const QString dockDomain = QStringLiteral("com.apple.dock");
     if (hidden) {
-        runAsUser(QStringLiteral("/bin/sh"),
-                  {QStringLiteral("-c"),
-                   QStringLiteral("/bin/mkdir -p \"$HOME/.focusos\"; "
-                                  "if [ ! -f \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
-                                  "/usr/bin/defaults export com.apple.dock "
-                                  "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1 "
-                                  "|| /usr/bin/touch \"$HOME/.focusos/dock-pre-focusos.plist\"; "
-                                  "fi")});
-        runAsUser(defaults, {QStringLiteral("write"), dockDomain,
-                             QStringLiteral("autohide"), QStringLiteral("-bool"), QStringLiteral("true")});
+        runAsConsoleUser(QStringLiteral("/bin/sh"),
+                         {QStringLiteral("-c"),
+                          QStringLiteral("/bin/mkdir -p \"$HOME/.focusos\"; "
+                                         "if [ ! -f \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
+                                         "/usr/bin/defaults export com.apple.dock "
+                                         "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1 "
+                                         "|| /usr/bin/touch \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                         "fi")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("autohide"), QStringLiteral("-bool"), QStringLiteral("true")});
         // A huge reveal delay means the Dock never slides in on a bottom-edge
         // hover, and a zero animation time keeps the hide instant.
-        runAsUser(defaults, {QStringLiteral("write"), dockDomain,
-                             QStringLiteral("autohide-delay"), QStringLiteral("-float"), QStringLiteral("1000")});
-        runAsUser(defaults, {QStringLiteral("write"), dockDomain,
-                             QStringLiteral("autohide-time-modifier"), QStringLiteral("-float"), QStringLiteral("0")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("autohide-delay"), QStringLiteral("-float"), QStringLiteral("1000")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("autohide-time-modifier"), QStringLiteral("-float"), QStringLiteral("0")});
     } else {
         // Restore the user's original Dock domain when we have a snapshot. If a
         // snapshot could not be written (or this is cleanup after an older build),
         // fall back to an ordinary visible Dock and remove FocusOS's delay keys.
-        runAsUser(QStringLiteral("/bin/sh"),
-                  {QStringLiteral("-c"),
-                   QStringLiteral("if [ -s \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
-                                  "/usr/bin/defaults import com.apple.dock "
-                                  "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1; "
-                                  "/bin/rm -f \"$HOME/.focusos/dock-pre-focusos.plist\"; "
-                                  "else "
-                                  "/bin/rm -f \"$HOME/.focusos/dock-pre-focusos.plist\"; "
-                                  "/usr/bin/defaults delete com.apple.dock autohide-delay >/dev/null 2>&1; "
-                                  "/usr/bin/defaults delete com.apple.dock autohide-time-modifier >/dev/null 2>&1; "
-                                  "/usr/bin/defaults write com.apple.dock autohide -bool false; "
-                                  "fi")});
+        runAsConsoleUser(QStringLiteral("/bin/sh"),
+                         {QStringLiteral("-c"),
+                          QStringLiteral("if [ -s \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
+                                         "/usr/bin/defaults import com.apple.dock "
+                                         "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1; "
+                                         "/bin/rm -f \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                         "else "
+                                         "/bin/rm -f \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                         "/usr/bin/defaults delete com.apple.dock autohide-delay >/dev/null 2>&1; "
+                                         "/usr/bin/defaults delete com.apple.dock autohide-time-modifier >/dev/null 2>&1; "
+                                         "/usr/bin/defaults write com.apple.dock autohide -bool false; "
+                                         "fi")});
     }
     // Restart the Dock so it re-reads the preference. Harmless if it isn't running.
-    runAsUser(QStringLiteral("/usr/bin/killall"), {QStringLiteral("Dock")});
+    runAsConsoleUser(QStringLiteral("/usr/bin/killall"), {QStringLiteral("Dock")});
+}
+
+void neuterDock(bool neuter)
+{
+    const QString defaults = QStringLiteral("/usr/bin/defaults");
+    const QString dockDomain = QStringLiteral("com.apple.dock");
+    if (neuter) {
+        // Snapshot the user's real Dock once — shared with setSystemDockHidden, so
+        // whichever modifies the Dock first takes the snapshot and the single
+        // restore path (setSystemDockHidden(false) / neuterDock(false)) brings the
+        // full Dock back. Guarded so we never overwrite the snapshot with a
+        // half-neutered Dock.
+        runAsConsoleUser(QStringLiteral("/bin/sh"),
+                         {QStringLiteral("-c"),
+                          QStringLiteral("/bin/mkdir -p \"$HOME/.focusos\"; "
+                                         "if [ ! -f \"$HOME/.focusos/dock-pre-focusos.plist\" ]; then "
+                                         "/usr/bin/defaults export com.apple.dock "
+                                         "\"$HOME/.focusos/dock-pre-focusos.plist\" >/dev/null 2>&1 "
+                                         "|| /usr/bin/touch \"$HOME/.focusos/dock-pre-focusos.plist\"; "
+                                         "fi")});
+        // Tiny tiles, no magnification, and an empty Dock (no pinned apps, no
+        // recents) so a Mission Control swipe-up during the routine shows nothing
+        // worth launching. Autohidden with a huge reveal delay so it never slides
+        // in on the desktop Space either.
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("tilesize"), QStringLiteral("-int"), QStringLiteral("16")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("magnification"), QStringLiteral("-bool"), QStringLiteral("false")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("persistent-apps"), QStringLiteral("-array")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("persistent-others"), QStringLiteral("-array")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("recent-apps"), QStringLiteral("-array")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("show-recents"), QStringLiteral("-bool"), QStringLiteral("false")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("autohide"), QStringLiteral("-bool"), QStringLiteral("true")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("autohide-delay"), QStringLiteral("-float"), QStringLiteral("1000")});
+        runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
+                                    QStringLiteral("autohide-time-modifier"), QStringLiteral("-float"), QStringLiteral("0")});
+        runAsConsoleUser(QStringLiteral("/usr/bin/killall"), {QStringLiteral("Dock")});
+        return;
+    }
+
+    // Restore is identical to lifting the hidden posture — delegate so there's a
+    // single Dock-restore path (imports the snapshot, or clears our override keys
+    // when no snapshot exists).
+    setSystemDockHidden(false);
+}
+
+QString aquaUiRestoreScriptPath()
+{
+    return aquaRestoreScriptPathInternal();
+}
+
+bool applyAquaUiLockdown(QString *errorMessage)
+{
+    const QString domain = launchdGuiDomain();
+    QStringList focusDisabled = readAquaState();
+    QStringList failures;
+
+    for (const QString &label : aquaUiLockdownLabels()) {
+        if (launchdLabelDisabled(label)) {
+            continue;  // pre-existing user/admin override; do not own/restore it
+        }
+
+        QString output;
+        if (!runLaunchctl({QStringLiteral("disable"), QStringLiteral("%1/%2").arg(domain, label)}, &output)) {
+            failures.append(output.isEmpty()
+                ? QStringLiteral("%1: launchctl disable failed").arg(label)
+                : QStringLiteral("%1: %2").arg(label, output.left(180)));
+            continue;
+        }
+
+        focusDisabled.append(label);
+        // Once disabled, boot it out so the already-running instance disappears
+        // now instead of waiting for the next login.
+        runLaunchctl({QStringLiteral("bootout"), QStringLiteral("%1/%2").arg(domain, label)}, nullptr, 3000);
+    }
+
+    focusDisabled.removeDuplicates();
+    if (!focusDisabled.isEmpty()) {
+        QString writeError;
+        if (!writeAquaRestoreScript(focusDisabled, &writeError)) {
+            failures.append(writeError);
+        }
+    }
+
+    if (!failures.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral(
+                "Aqua UI lockdown was not fully applied. This stronger macOS mode "
+                "requires SIP-off launchd overrides. %1")
+                .arg(failures.join(QStringLiteral(" | ")).left(700));
+        }
+        return false;
+    }
+    return true;
+}
+
+void restoreAquaUiLockdown()
+{
+    const QString domain = launchdGuiDomain();
+
+    // Heal the system UI. The legacy SIP-off lockdown could `launchctl disable`
+    // AND `bootout` the Dock / Spotlight / Mission Control agents — and a booted-out
+    // service is DEAD: `enable` + `kickstart` cannot revive it, only a fresh
+    // `bootstrap` of its plist reloads it into the domain. A dead Dock also takes
+    // down ⌘-Tab (the app switcher) and Mission Control, which is exactly the
+    // "Access Desktop doesn't bring back the Dock / app switcher" failure.
+    //
+    // So for every UI agent FocusOS could have touched (plus anything still recorded
+    // in the legacy state file), clear any disable flag and — only when the agent is
+    // not currently loaded — bootstrap its plist back and kick it. Agents that are
+    // already alive are left untouched, so a healthy launch never restarts the Dock
+    // or Finder.
+    QStringList candidates = aquaUiLockdownLabels();
+    candidates.append(readAquaState());
+    candidates.removeDuplicates();
+
+    for (const QString &label : candidates) {
+        runLaunchctl({QStringLiteral("enable"), QStringLiteral("%1/%2").arg(domain, label)}, nullptr, 3000);
+        if (launchdLabelLoaded(label)) {
+            continue;  // already running — don't churn it
+        }
+        const QString plist = systemAgentPlistPath(label);
+        if (!plist.isEmpty()) {
+            // Reload the booted-out agent into the GUI domain, then start it.
+            runLaunchctl({QStringLiteral("bootstrap"), domain, plist}, nullptr, 4000);
+        }
+        runLaunchctl({QStringLiteral("kickstart"), QStringLiteral("-k"),
+                      QStringLiteral("%1/%2").arg(domain, label)}, nullptr, 4000);
+    }
+    QFile::remove(aquaStatePath());
 }
 
 bool isAccessibilityTrusted()
@@ -1041,7 +1560,7 @@ bool isAccessibilityTrusted()
     return AXIsProcessTrusted();
 }
 
-bool startInputBlocker(QString *errorMessage)
+bool startInputBlocker(bool allowNavigation, QString *errorMessage)
 {
     __block bool installed = false;
     __block bool trusted = false;
@@ -1049,13 +1568,23 @@ bool startInputBlocker(QString *errorMessage)
     performOnMainThreadSync(^{
         trusted = AXIsProcessTrusted();
         if (!trusted) {
-            // Surface the system Accessibility prompt (shown once per app identity)
-            // so the user has a one-click path to grant access. An event tap created
-            // while untrusted exists but stays inert until access is granted AND the
-            // app is relaunched — so we still install it, but report not-trusted.
-            NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
-            AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+            // Surface the system Accessibility prompt AT MOST ONCE per process. A
+            // freshly granted permission does NOT flip AXIsProcessTrusted() for the
+            // already-running process (TCC only re-reads trust on relaunch), so a
+            // naive "prompt whenever untrusted" re-pops the dialog on every session
+            // start — engage, routine end, Access-Desktop teardown — because each of
+            // those paths calls startInputBlocker again. Gate it behind a one-shot
+            // flag so the user is asked exactly once; after they grant + relaunch,
+            // this branch is skipped entirely (trusted == true). The event tap is
+            // still installed below either way, but stays inert until access is
+            // granted and FocusOS is relaunched.
+            static std::atomic<bool> promptShown{false};
+            if (!promptShown.exchange(true)) {
+                NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+                AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+            }
         }
+        g_inputAllowNavigation.store(allowNavigation, std::memory_order_relaxed);
         g_inputBlockActive.store(true, std::memory_order_relaxed);
         installed = installEventTapLocked(&error);
     });
@@ -1232,18 +1761,14 @@ void startLaunchWatcher(const QStringList &blockedNames,
             if (!launchShouldBlockLocked(application)) {
                 return;
             }
-            // Reap it before it can settle / take focus (the media key launching
-            // Apple Music is the canonical case), then pull FocusOS back to front
-            // and re-hide the Dock/menu bar in case the launch revealed them.
+            // Reap the disallowed app before it can settle / take focus (the media
+            // key launching Apple Music is the canonical case). We deliberately do
+            // NOT force FocusOS back to front or re-assert DisableProcessSwitching
+            // here: during a routine FocusOS lives in its own fullscreen Space and
+            // the user is meant to move freely between it and the routine's allowed
+            // app windows — yanking focus would fight that navigation. Killing the
+            // launch is the enforcement; the Space the user is on stays put.
             [application terminate];
-            @try {
-                [NSApplication sharedApplication];
-                [NSApp setPresentationOptions:(NSApplicationPresentationHideDock |
-                                               NSApplicationPresentationHideMenuBar |
-                                               NSApplicationPresentationDisableProcessSwitching)];
-                [NSApp activateIgnoringOtherApps:YES];
-            } @catch (NSException *) {
-            }
         }];
     });
 }
@@ -1307,6 +1832,22 @@ QString buildNetworkFilterRuleset(const QStringList &allowedHosts)
 
 bool commitNetworkFilter(const QString &ruleset, QString *errorMessage)
 {
+    if (geteuid() != 0) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral(
+                "FocusOS is not running as root, so the pf firewall cannot be "
+                "installed. Enable elevated launch in Settings, then fully quit "
+                "and restart FocusOS from the Dock.");
+        }
+        return false;
+    }
+    if (ruleset.trimmed().isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Refusing to install an empty pf ruleset");
+        }
+        return false;
+    }
+
     // Persist the ruleset where pfctl can read it (and where it survives for the
     // duration of the routine). /etc/pf.anchors is the conventional home for
     // add-on pf rules and already exists on every macOS install.

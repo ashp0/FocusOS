@@ -12,12 +12,20 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QSet>
 #include <QStandardPaths>
 #include <QVariantMap>
+
+#if defined(Q_OS_MACOS)
+#include <pwd.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -44,6 +52,98 @@ QString activeSessionPath()
 {
     return RoutineManager::dataDirectory() + QStringLiteral("/active.json");
 }
+
+#if defined(Q_OS_MACOS)
+QString macConsoleHomePath()
+{
+    const QByteArray sudoUser = qgetenv("SUDO_USER");
+    if (geteuid() == 0 && !sudoUser.isEmpty() && sudoUser != "root") {
+        if (const struct passwd *pw = getpwnam(sudoUser.constData())) {
+            if (pw->pw_dir && pw->pw_dir[0] != '\0') {
+                return QString::fromLocal8Bit(pw->pw_dir);
+            }
+        }
+    }
+    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+}
+
+uint macLaunchdUserId()
+{
+    bool ok = false;
+    const uint sudoUid = qEnvironmentVariable("SUDO_UID").toUInt(&ok);
+    if (geteuid() == 0 && ok && sudoUid > 0) {
+        return sudoUid;
+    }
+    return static_cast<uint>(getuid());
+}
+
+qint64 currentBootTimeSeconds()
+{
+    timeval bootTime {};
+    size_t size = sizeof(bootTime);
+    if (sysctlbyname("kern.boottime", &bootTime, &size, nullptr, 0) != 0 || bootTime.tv_sec <= 0) {
+        return 0;
+    }
+    return static_cast<qint64>(bootTime.tv_sec);
+}
+
+QString currentBootId()
+{
+    const qint64 bootTime = currentBootTimeSeconds();
+    return bootTime > 0 ? QStringLiteral("macos:%1").arg(bootTime) : QString();
+}
+
+bool macRecoveryWatchdogLoaded()
+{
+    QProcess process;
+    process.start(QStringLiteral("/bin/launchctl"),
+                  {QStringLiteral("print"),
+                   QStringLiteral("gui/%1/com.focusos.watchdog").arg(macLaunchdUserId())});
+    if (!process.waitForStarted(1000)) {
+        return false;
+    }
+    if (!process.waitForFinished(1500)) {
+        process.kill();
+        process.waitForFinished(200);
+        return false;
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
+bool checkpointBelongsToCurrentBoot(const QJsonObject &object, const QFileInfo &checkpointInfo)
+{
+    const QString expectedBootId = currentBootId();
+    if (expectedBootId.isEmpty()) {
+        // Startup safety on macOS matters more than resurrecting a questionable
+        // lock. If we cannot identify the boot, do not auto-engage a routine.
+        return false;
+    }
+
+    const QString storedBootId = object.value(QStringLiteral("boot_id")).toString();
+    if (!storedBootId.isEmpty()) {
+        return storedBootId == expectedBootId && macRecoveryWatchdogLoaded();
+    }
+
+    // Legacy checkpoints did not carry boot_id. Let same-boot crash recovery keep
+    // working, but drop files left behind before a full restart.
+    const QDateTime modified = checkpointInfo.lastModified().toUTC();
+    return modified.isValid() &&
+           modified.toSecsSinceEpoch() >= currentBootTimeSeconds() &&
+           macRecoveryWatchdogLoaded();
+}
+#else
+QString currentBootId()
+{
+    return {};
+}
+
+bool checkpointBelongsToCurrentBoot(const QJsonObject &object, const QFileInfo &checkpointInfo)
+{
+    Q_UNUSED(object);
+    Q_UNUSED(checkpointInfo);
+    return true;
+}
+#endif
 
 QStringList jsonArrayToStringList(const QJsonArray &array)
 {
@@ -1834,6 +1934,10 @@ void RoutineManager::writeActiveSession(bool force) const
     object.insert(QStringLiteral("remaining_seconds"), m_routineTimer.remainingSeconds());
     object.insert(QStringLiteral("min_time_minutes"), routine.minTimeMinutes);
     object.insert(QStringLiteral("network_lock"), routine.networkLock);
+    const QString bootId = currentBootId();
+    if (!bootId.isEmpty()) {
+        object.insert(QStringLiteral("boot_id"), bootId);
+    }
     // Preserve the pause posture so a crash/respawn while paused doesn't silently
     // resume counting time the user didn't intend (Task 4 — don't mislog time).
     object.insert(QStringLiteral("paused"), m_routineTimer.paused());
@@ -1869,6 +1973,7 @@ void RoutineManager::resumeActiveSessionIfPresent()
         }
     };
 
+    const QFileInfo checkpointInfo(activeSessionPath());
     QFile file(activeSessionPath());
     if (!file.open(QIODevice::ReadOnly)) {
         if (m_backend) {
@@ -1884,6 +1989,13 @@ void RoutineManager::resumeActiveSessionIfPresent()
     }
 
     const QJsonObject object = document.object();
+    if (!checkpointBelongsToCurrentBoot(object, checkpointInfo)) {
+        // A checkpoint from a previous macOS boot is not a crash recovery signal.
+        // Treat it as stale so startup never auto-engages a routine after restart.
+        cleanupAndReturn();
+        return;
+    }
+
     const int routineIndex = indexOfRoutine(object.value(QStringLiteral("routine_id")).toString());
     if (routineIndex < 0) {
         cleanupAndReturn();
@@ -2224,5 +2336,9 @@ int RoutineManager::indexOfRoutine(const QString &routineId) const
 
 QString RoutineManager::dataDirectory()
 {
+#if defined(Q_OS_MACOS)
+    return macConsoleHomePath() + QStringLiteral("/.focusos");
+#else
     return QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/.focusos");
+#endif
 }

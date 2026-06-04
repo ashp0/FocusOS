@@ -129,18 +129,52 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 #endif
 
 #if defined(Q_OS_MACOS)
-    // "Access Desktop" (TOTP-gated admin access): the backend has already lifted
-    // the kiosk presentation + blockers, but the shell window is still the
-    // fullscreen, above-the-menu-bar kiosk cover from coverScreenIncludingNotch.
-    // Step it down into an ordinary window so the rest of the system is visible.
+    // Routine engaged/ended. During a routine FocusOS becomes a native-fullscreen
+    // window in its OWN Space, so the routine's app windows stay reachable in the
+    // desktop Space (the user swipes / Mission Controls between them). When the
+    // routine ends it drops back to the frameless home cover.
+    connect(routineManager, &RoutineManager::activeChanged, this, [this, routineManager] {
+        if (routineManager->openEnded()) {
+            // Open-ended momentum IS the FocusOS ambient screen — keep the frameless
+            // cover in front rather than a separate fullscreen Space.
+            showFocusShell();
+        } else if (routineManager->active() && routineManager->activeRoutineHasLaunchTargets()) {
+            // Defer slightly so the active-routine QML has mapped before the
+            // (animated) native-fullscreen toggle.
+            QTimer::singleShot(300, this, &ShellWindow::enterRoutineFullScreen);
+        } else if (!routineManager->active() && !routineManager->accessGranted()) {
+            // Routine fully ended → reclaim the home cover (also exits fullscreen).
+            // The completion prompt then shows on the home screen, not stranded on
+            // top of the routine apps.
+            showFocusShell();
+        }
+    });
+    // Completion prompt dismissed (Quit) with nothing else active: reclaim the cover.
+    connect(routineManager, &RoutineManager::sessionPromptChanged, this, [this, routineManager] {
+        if (!routineManager->sessionPromptVisible() && !routineManager->active() &&
+            !routineManager->accessGranted()) {
+            showFocusShell();
+        }
+    });
+    // "Access Desktop" (the explicit button): the backend has lifted the blockers,
+    // un-neutered the Dock and revived the system UI agents. Step the shell down
+    // out of its fullscreen Space / kiosk cover into an ordinary window so the rest
+    // of the system (Dock, menu bar, other apps) is visible and usable. We do NOT
+    // do this on mere accessGranted (TOTP unlock) — the Settings modal lives in
+    // this same window and must stay fullscreen until the user asks for the desktop.
     connect(routineManager, &RoutineManager::desktopAccessRequested, this, [this] {
         QTimer::singleShot(200, this, &ShellWindow::enterDesktopAccessWindow);
     });
-    // Access ended (END ACCESS): reclaim the fullscreen kiosk cover — whether we
-    // land back on the home screen or on a still-running routine's MissionView
-    // (in both cases the shell owns the screen again on macOS).
+    // Access ended (END ACCESS): reclaim the locked layout — back into the routine's
+    // fullscreen Space if one is still active, otherwise the home cover.
     connect(routineManager, &RoutineManager::accessChanged, this, [this, routineManager] {
-        if (!routineManager->accessGranted()) {
+        if (routineManager->accessGranted()) {
+            return;  // entering admin access; the button drives the window step-aside
+        }
+        if (routineManager->active() && routineManager->activeRoutineHasLaunchTargets() &&
+            !routineManager->openEnded()) {
+            enterRoutineFullScreen();
+        } else {
             showFocusShell();
         }
     });
@@ -150,13 +184,39 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 void ShellWindow::showFocusShell()
 {
     m_shellShouldHide = false;
+#if defined(Q_OS_MACOS)
+    // If we're stepping back from the routine's native-fullscreen Space, leave it
+    // first — the toggle is animated, so reclaim the frameless cover once it has
+    // settled rather than fighting the in-flight transition.
+    if (MacBackendNative::windowIsNativeFullScreen(reinterpret_cast<void *>(winId()))) {
+        MacBackendNative::exitNativeFullScreen(reinterpret_cast<void *>(winId()));
+        QTimer::singleShot(650, this, &ShellWindow::applyFramelessCover);
+        return;
+    }
+    applyFramelessCover();
+#else
+    if (QScreen *screen = QGuiApplication::primaryScreen()) {
+        setScreen(screen);
+        setGeometry(screen->geometry());
+    }
+    setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    showFullScreen();
+    raise();
+    requestActivate();
+    updateProgressOverlay();
+#endif
+}
+
+#if defined(Q_OS_MACOS)
+void ShellWindow::applyFramelessCover()
+{
+    m_shellShouldHide = false;
     if (QScreen *screen = QGuiApplication::primaryScreen()) {
         setScreen(screen);
         setGeometry(screen->geometry());
     }
 
     setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-#if defined(Q_OS_MACOS)
     // Native showFullScreen() drops the window into the macOS "safe area" below
     // the notch, leaving a black bar across the top. Instead cover the whole
     // screen as a borderless floating window (the menu bar is hidden by the kiosk
@@ -166,24 +226,66 @@ void ShellWindow::showFocusShell()
     raise();
     requestActivate();
     MacBackendNative::coverScreenIncludingNotch(reinterpret_cast<void *>(winId()));
-#else
-    showFullScreen();
-    raise();
-    requestActivate();
-#endif
     updateProgressOverlay();
 }
 
-#if defined(Q_OS_MACOS)
+void ShellWindow::enterRoutineFullScreen()
+{
+    // FocusOS owns its own fullscreen Space during a routine — it is not hidden, so
+    // clear the "stay out of the way" guard.
+    m_shellShouldHide = false;
+
+    // Already in our routine Space (e.g. END ACCESS fired while the window never
+    // left fullscreen): nothing to toggle — just keep the overlay current.
+    if (MacBackendNative::windowIsNativeFullScreen(reinterpret_cast<void *>(winId()))) {
+        updateProgressOverlay();
+        return;
+    }
+
+    // A borderless kiosk-cover window cannot enter native fullscreen (it can't
+    // become key/main), so switch to an ordinary titled window first; its title bar
+    // is hidden once fullscreen, and applyFramelessCover() restores the borderless
+    // cover when the routine ends.
+    setFlags(Qt::Window);
+    if (QScreen *screen = QGuiApplication::primaryScreen()) {
+        setScreen(screen);
+        setGeometry(screen->geometry());
+    }
+    showNormal();
+    raise();
+    requestActivate();
+
+    // Native macOS fullscreen: gives FocusOS its own Space (like the old left-most
+    // fullscreen Space), leaving the routine's app windows on the desktop Space
+    // reachable via Mission Control / a swipe. The Dock is neutered (tiny + empty)
+    // by the backend so the swipe-up never reveals a useful launch surface.
+    MacBackendNative::enterNativeFullScreen(reinterpret_cast<void *>(winId()));
+    // Keep the countdown border painting over the routine apps in the other Space.
+    updateProgressOverlay();
+}
+
 void ShellWindow::enterDesktopAccessWindow()
 {
     // Intentionally stepping aside — keep any restore handler from dragging the
     // shell back to fullscreen while the authorized desktop window is open.
     m_shellShouldHide = true;
 
+    // If we're in the routine's native-fullscreen Space, drop out of it first; the
+    // exit is animated, so finish reconfiguring into a windowed window once it has
+    // settled. Otherwise reconfigure immediately.
+    if (MacBackendNative::windowIsNativeFullScreen(reinterpret_cast<void *>(winId()))) {
+        MacBackendNative::exitNativeFullScreen(reinterpret_cast<void *>(winId()));
+        QTimer::singleShot(650, this, &ShellWindow::configureDesktopAccessWindow);
+        return;
+    }
+    configureDesktopAccessWindow();
+}
+
+void ShellWindow::configureDesktopAccessWindow()
+{
     // Ordinary decorated window: titled, movable, resizable, NOT stays-on-top —
     // a "regular, standard macOS window" the user can push aside to see the rest
-    // of the system, instead of the fullscreen kiosk cover.
+    // of the system, instead of the fullscreen kiosk cover / Space.
     setFlags(Qt::Window);
     if (QScreen *screen = QGuiApplication::primaryScreen()) {
         const QRect avail = screen->availableGeometry();
@@ -241,7 +343,16 @@ void ShellWindow::updateProgressOverlay()
         }
         m_progressOverlayWindow.raise();
 #if defined(Q_OS_MACOS)
+        // Cover the whole panel incl. the notch strip (proven path — keeps the top
+        // border at the very top edge instead of below the safe-area inset).
         MacBackendNative::coverScreenIncludingNotch(
+            reinterpret_cast<void *>(m_progressOverlayWindow.winId()));
+        // Then float it above EVERY window on EVERY Space — other apps, the Dock, the
+        // menu bar and native-fullscreen Spaces. This is the real fix for the overlay
+        // being "constrained to the FocusOS window": at the old menu-bar window level
+        // the border was buried the moment a routine app took focus; screen-saver
+        // level + all-Spaces pinning makes it a true system-wide overlay.
+        MacBackendNative::raiseWindowToSystemOverlayLevel(
             reinterpret_cast<void *>(m_progressOverlayWindow.winId()));
 #endif
     } else if (m_progressOverlayWindow.isVisible()) {

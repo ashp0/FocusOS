@@ -47,30 +47,71 @@ That script:
 Fully restart Brave/Chromium after the first setup so the browser loads the
 policy and native-host manifest.
 
-### macOS (Brave)
+### macOS (Brave) — manual install (Cold-Turkey style)
 
 Safari is not Chromium and cannot host the extension; the target is Brave (the
-user's Chromium browser). The Linux `setup-testing-machine.sh` is Linux-only, so
-on macOS run:
+user's Chromium browser). **macOS cannot use the Linux force-install pipeline.**
+
+> **The macOS wall: off-Web-Store force-install needs MDM.** Brave/Chromium on
+> macOS (and Windows) refuse to auto-install an extension whose update URL is not
+> the Web Store unless the device is *enterprise managed*. The check shells out to
+> `profiles status -type enrollment`; on a personal Mac that reports
+> `MDM enrollment: No`, so the self-hosted force-install entry is rejected — Brave
+> stamps it `[BLOCKED]` and `brave://policy` shows *"Invalid extension ID"* plus
+> *"This computer is not detected as enterprise managed."* A manually-installed
+> configuration profile is **not** MDM enrollment; no plist key flips this. (Linux
+> works because it trusts `/etc` machine policy unconditionally — macOS does not.)
+>
+> So on macOS the extension is **installed by hand once** (the same thing Cold
+> Turkey does), and FocusOS handles everything else.
+
+Run:
 
 ```bash
-scripts/focusos-blocker-setup-macos.sh   # sudo prompt for the managed policy
+scripts/focusos-blocker-setup-macos.sh   # sudo prompt for the profile swap
 ```
 
-It mirrors the Linux pipeline:
+It:
 
-- Packs the signed CRX + `updates.xml` into `~/.focusos/blocker/dist`.
-- Serves that dist at `http://127.0.0.1:48217` via a launchd user agent
-  (`~/Library/LaunchAgents/com.focusos.blocker-dist.plist`).
-- Stages the app to `~/Applications/FocusOS.app` when the repo lives under a
-  TCC-protected folder (`~/Desktop`, `~/Documents`, `~/Downloads`) — a
-  Dock-launched browser is blocked from exec'ing a native host located there —
-  and registers `com.focusos.blocker` pointing at that copy.
-- Writes Brave managed policy (`ExtensionInstallForcelist` + `ExtensionSettings`
-  + the incognito/guest clamp) to `/Library/Managed Preferences/`.
+- **Stages a clean unpacked copy** of the extension to
+  `~/.focusos/blocker/extension` (no private `.pem`, no host scripts). The
+  manifest's pinned `key` makes it load with the exact id the native host expects
+  (`gkbnapcbaflmaaoimfonclabmglfiden`), so "Load unpacked" just works and connects.
+- **Registers `com.focusos.blocker`** for every Chromium-family browser present,
+  pointing at a TCC-safe copy of the app in `~/Applications/FocusOS.app` (a
+  Dock-launched browser can't exec a native host under `~/Desktop/Documents/
+  Downloads`).
+- **Generates + opens a Brave hardening profile**
+  (`~/.focusos/blocker/FocusOS-Blocker.mobileconfig`, one payload per Brave
+  channel) that clamps Incognito/Guest off — extensions don't run in private
+  windows by default, so without this a private window would bypass the blocker.
+  `profiles install` is gone on macOS 26, so it's opened in System Settings for a
+  one-time approval (a stale force-install profile is `profiles remove`d first).
 
-Then fully quit Brave (Cmd-Q) and reopen it. Verify at `brave://policy` and
-`brave://extensions`. Undo with `scripts/focusos-blocker-uninstall-macos.sh`.
+Then the user does the one-time manual step:
+
+1. **System Settings → General → Device Management** → approve *"FocusOS Blocker —
+   Brave Hardening"*.
+2. **`brave://extensions`** → enable **Developer mode** → **Load unpacked** →
+   choose `~/.focusos/blocker/extension`.
+
+`brave://policy` then shows **no** `[BLOCKED]` entry. Undo with
+`scripts/focusos-blocker-uninstall-macos.sh` (removes the profile, host manifests,
+and staged extension; reminds you to remove the unpacked extension in Brave).
+
+**Tamper backstop.** Because a hand-loaded extension is user-removable, a
+network-locked routine arms a **presence clamp** (`MacBackend::enforceBlocker
+Extension`, parity with Linux): while a user Brave is running and the native
+host's `host-alive` heartbeat goes stale (extension disabled/removed), FocusOS
+clamps `pf` to full-deny (`block drop out all` + DNS/loopback) after a 15s
+debounce, and restores the routine allowlist the moment the extension reconnects.
+FocusOS's own kiosk browser (`--user-data-dir=focusos-kiosk-*`) is excluded.
+Escape hatch while debugging: `touch ~/.focusos/blocker/presence-check-off`.
+
+**MDM machines only.** If `profiles status -type enrollment` reports the Mac *is*
+managed, run the setup with `INCLUDE_FORCELIST=1` to also pack the signed CRX, run
+the localhost dist server, and emit the force-install policy keys — the always-on
+Linux-style pipeline, which only enforces once the device is genuinely enrolled.
 
 ## Daily Update Workflow
 
@@ -99,6 +140,7 @@ Relevant scripts:
 | Script | Purpose |
 |--------|---------|
 | `scripts/focusos-blocker-pack.sh` | Builds `focusos-blocker.crx` and `updates.xml`. |
+| `scripts/focusos-blocker-profile.sh` | (macOS) Generates the Brave force-install `.mobileconfig` (one payload per channel). |
 | `scripts/focusos-blocker-serve.sh` | Runs a user systemd service for the localhost dist server. |
 | `scripts/focusos-policy-install.sh` | Installs managed browser policy pointing at the localhost manifest. |
 | `resources/focusos-blocker/host/install-host.sh` | Registers `com.focusos.blocker` native messaging host manifests. |
@@ -144,11 +186,14 @@ While a browser is connected, the native host refreshes:
 ~/.focusos/blocker/host-alive
 ```
 
-During a network-locked routine, the Linux watchdog checks this heartbeat. If a
-Chromium-family browser is running after the extension has checked in once, but
-the heartbeat goes stale, the watchdog assumes the blocker was disabled and
-clamps network policy to full deny. Re-enabling the extension reconnects the
-host and restores the routine allowlist.
+During a network-locked routine, the watchdog checks this heartbeat — the Linux
+watchdog clamps `nftables`, and the macOS watchdog
+(`MacBackend::enforceBlockerExtension`) clamps `pf`. If a Chromium-family browser
+is running after the extension has checked in once, but the heartbeat goes stale,
+the watchdog assumes the blocker was disabled and clamps network policy to full
+deny. Re-enabling the extension reconnects the host and restores the routine
+allowlist. This matters most on macOS, where the extension is installed by hand
+and is therefore user-removable.
 
 Temporary debug escape hatch:
 
@@ -172,7 +217,9 @@ Useful files and checks:
 - `~/.focusos/blocker/host-alive` - current heartbeat.
 - `~/.focusos/blocker/policy.dat` - signed policy existence and timestamp.
 - `~/.focusos/blocker/dist/updates.xml` - CRX update manifest.
-- `systemctl --user status focusos-blocker-dist.service` - local HTTP server.
+- `launchctl print gui/$(id -u)/com.focusos.blocker-dist` on macOS, or
+  `systemctl --user status focusos-blocker-dist.service` on Linux - local HTTP
+  server.
 - Browser `extensions` page with Developer mode enabled - confirms the pinned ID.
 
 Confirm the local manifest is reachable:

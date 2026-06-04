@@ -20,13 +20,16 @@ Not everything requires disabling SIP. Know what you're paying for:
 | Quit other apps on engage | – | – | – |
 | **Network lock (pf firewall)** | ✅ | – | – |
 | Display sleep / inhibit, watchdog | – | – | – |
+| **Aqua shell lockdown (Dock/Mission Control/Finder/Spotlight off)** | ✅ | ✅ | – |
 | **App-launch blocker (Endpoint Security `AUTH_EXEC`)** | ✅ | ✅ | maybe |
 
 **Takeaway:** the kiosk, the pf firewall, app-quitting, and the watchdog all work
 on a stock Mac (SIP on) — you just run FocusOS with `sudo` for the firewall. The
-**only** thing that needs SIP off is the *pre-emptive* Endpoint Security blocker
-(deny an app's launch before it starts, instead of quitting it after). Decide
-whether that one feature is worth lowering your machine's security.
+SIP-off is what makes the strongest macOS posture possible: FocusOS can persistently
+disable the user's launchd-managed Aqua shell agents while a strict routine runs,
+then restore exactly those labels on routine end/admin unlock. Endpoint Security
+is still the pre-emptive app-launch blocker; without it, FocusOS falls back to
+terminating newly launched Dock-visible GUI apps immediately after launch.
 
 ---
 
@@ -104,6 +107,11 @@ sudo build/focusos.app/Contents/MacOS/focusos
 
 Start a routine. If the app-launch blocker is working, trying to open a blocked
 app (say, Messages) is **denied before it opens** — not opened-then-quit.
+With SIP off, a strict routine also disables the Aqua shell surface:
+`com.apple.Dock.agent`, Finder, Spotlight, SystemUIServer, Control Center,
+Notification Center, Siri, and `talagent`. FocusOS records the labels it changed
+in `~/.focusos/macos-ui-lockdown.state` and writes a helper restore script at
+`~/.focusos/restore-macos-ui.sh`.
 
 Two possible failure modes mean AMFI is still rejecting the self-signed
 entitlement — both call for Step 3:
@@ -161,6 +169,14 @@ To remove the pf firewall rules if a routine left them loaded:
 ```bash
 sudo pfctl -f /etc/pf.conf       # restore Apple's default ruleset
 sudo pfctl -d                    # disable pf
+```
+
+To restore macOS UI agents if FocusOS is killed or the machine reboots mid-routine:
+
+```bash
+scripts/focusos-restore-macos-ui.sh
+# or, if FocusOS generated it during a routine:
+~/.focusos/restore-macos-ui.sh
 ```
 
 ---

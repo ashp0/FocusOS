@@ -14,10 +14,16 @@ on a hardened, signed build.
 
 | Capability | API used | Shim entry point |
 | --- | --- | --- |
-| Kiosk / Dock / menu-bar hiding | `NSApplicationPresentationOptions` | `enterKioskPresentation` / `leaveKioskPresentation` |
+| Home-screen kiosk / Dock / menu-bar hiding | `NSApplicationPresentationOptions` | `enterKioskPresentation` / `leaveKioskPresentation` |
+| Active-routine window (own Space) | `NSWindow toggleFullScreen:` + `FullScreenPrimary` | `enterNativeFullScreen` / `exitNativeFullScreen` / `windowIsNativeFullScreen` |
+| Countdown overlay across Spaces | `NSWindowCollectionBehaviorCanJoinAllSpaces` | `setWindowJoinsAllSpaces` |
+| Routine Dock neuter (tiny + empty) | `com.apple.dock` defaults snapshot/restore | `neuterDock` / `setSystemDockHidden` |
+| Shortcut blocking (home = full, routine = navigation-aware) | `CGEventTap` | `startInputBlocker(allowNavigation)` / `stopInputBlocker` |
 | Process blocking | Endpoint Security `ES_EVENT_TYPE_AUTH_EXEC` | `startExecBlocker` / `stopExecBlocker` |
+| Launch enforcement (userland) | `NSWorkspaceDidLaunchApplicationNotification` | `startLaunchWatcher` / `stopLaunchWatcher` |
 | Display-sleep inhibition | IOKit `IOPMAssertionCreateWithName` | `createDisplaySleepAssertion` / `releaseDisplaySleepAssertion` |
-| Network policy | NetworkExtension `NEFilterManager` content filter | `applyNetworkFilter` / `dropNetworkFilter` |
+| Network policy | `pf` (`pfctl`) outbound allowlist | `applyNetworkFilter` / `dropNetworkFilter` |
+| Aqua shell lockdown (legacy / cleanup only) | SIP-off launchd overrides for Dock/Finder/Spotlight/etc. | `applyAquaUiLockdown` / `restoreAquaUiLockdown` |
 | App launch / terminate / metadata | AppKit `NSWorkspace`, `NSRunningApplication`, `NSBundle` | `launchApplicationBundle`, `terminateApplications`, etc. |
 
 ## Linked frameworks
@@ -27,7 +33,6 @@ on a hardened, signed build.
 - **AppKit** — presentation options, `NSWorkspace`, `NSRunningApplication`
 - **Foundation** — `NSString`/`NSArray` bridging, `NSRunLoop` pumping
 - **IOKit** — `IOPMAssertionCreateWithName` display-sleep assertions
-- **NetworkExtension** — `NEFilterManager` content-filter configuration
 - **EndpointSecurity** — `AUTH_EXEC` subscription (linked only when the SDK ships
   the framework; gated by the `FOCUSOS_HAS_ENDPOINT_SECURITY` compile define).
   When absent, `startExecBlocker` returns a clear error and the rest of the
@@ -60,26 +65,69 @@ Notes:
   signature. For local development, AUTH_EXEC blocking is disabled
   (`SIP`-protected) unless you disable SIP — not recommended.
 
-## Network filter system extension (open gap)
+## Network and Aqua lockdown
 
-`applyNetworkFilter` configures `NEFilterManager` to point at a content-filter
-provider with bundle identifier `<main-bundle-id>.NetworkFilter`
-(i.e. `com.focusos.shell.NetworkFilter`). **That provider target does not exist
-in this repository yet.** To make the network lock actually filter traffic you
-must add a Network Extension app/system extension target that:
+The macOS network lock is `pf`, not a Network Extension target. FocusOS resolves
+the routine allowlist, writes `/etc/pf.anchors/focusos`, loads it with `pfctl`,
+and clears it on routine end/crash cleanup. This needs root but not an Apple
+Network Extension entitlement.
 
-1. Subclasses `NEFilterDataProvider`.
-2. Reads the signed policy at `~/.focusos/blocker/policy.dat`
-   (`BlockerPolicy::policyFilePath()`, passed through `vendorConfiguration`
-   as `PolicyPath`) and the `AllowedHosts` / `DefaultAction` keys.
-3. Is embedded in `focusos.app/Contents/Library/SystemExtensions` (system
-   extension) or `PlugIns` (app extension) and signed with the matching
-   Network Extension entitlement.
+## Active-routine window layout
 
-Until that target ships, `applyNetworkFilter` will load/save preferences but the
-OS has no provider to run, so enforcement on macOS rests entirely on the
-**browser blocker extension** (see [browser-blocker.md](browser-blocker.md)),
-which is the documented macOS enforcement path.
+During a routine FocusOS becomes a **native-fullscreen window in its own Space**
+(`enterNativeFullScreen`), so the routine's app windows stay on the desktop Space
+and remain reachable — the user swipes / Mission Controls between FocusOS and
+their allowed apps, the way the old left-most fullscreen Space worked. Three
+pieces make this a focus surface rather than an escape hatch:
+
+- **Neutered Dock** (`neuterDock`): the Dock is shrunk to its minimum tile size
+  and stripped of every pinned app/recent, so a Mission Control swipe-up never
+  reveals a useful launch surface. The user's real Dock is snapshotted to
+  `~/.focusos/dock-pre-focusos.plist` and fully restored on routine end / admin
+  unlock (`setSystemDockHidden(false)`).
+- **Navigation-aware key blocker** (`startInputBlocker(allowNavigation=true)`):
+  Spotlight, Launchpad, screenshots and force-quit stay blocked, but Mission
+  Control / Spaces / ⌘-Tab are *allowed* so the user can move between FocusOS and
+  the routine apps. The home screen uses `allowNavigation=false` (everything
+  blocked — no route off the locked shell).
+- **Launch watcher** (`startLaunchWatcher`): any disallowed Dock-visible app the
+  user still manages to launch is terminated the instant it appears. This is the
+  real enforcement; it does not yank focus or re-hide surfaces, so it never fights
+  the user's Space navigation.
+
+The countdown progress overlay is pinned onto every Space
+(`setWindowJoinsAllSpaces`) so its border keeps painting over the routine apps
+even while FocusOS sits in its own fullscreen Space.
+
+When the routine ends (or admin "Access Desktop" is requested) FocusOS exits the
+fullscreen Space and reclaims the frameless home cover / steps down into an
+ordinary windowed window.
+
+## Aqua shell lockdown (legacy / cleanup)
+
+A stronger, SIP-off/research-only lockdown that disables the user's
+launchd-managed Aqua agents (`com.apple.Dock.agent`, Finder, Spotlight,
+SystemUIServer, Control Center, Notification Center, Siri, and `talagent`) still
+exists in the shim. It is **no longer applied during routines** — disabling the
+Dock/Mission Control agents is incompatible with the native-fullscreen routine
+layout above (the user could not navigate back to FocusOS), and `disable` + `bootout`
+turned out not to be cleanly reversible mid-session.
+
+The critical detail behind the old "Access Desktop doesn't bring the Dock back"
+failure: a service that was `launchctl bootout`ed is **dead**, and `enable` +
+`kickstart` cannot revive it — `kickstart` errors with "Could not find service".
+Only a fresh `launchctl bootstrap <gui-domain> <plist>` reloads it into the domain.
+A dead Dock also takes down ⌘-Tab (the app switcher) and Mission Control, which is
+why all three vanished together.
+
+`restoreAquaUiLockdown` now heals this properly. It is called on routine end /
+admin unlock / startup, and for every known UI agent it: clears any `disable`
+flag; checks whether the agent is actually **loaded** (`launchctl print`); and only
+when it is not, `bootstrap`s its `/System/Library/LaunchAgents/*.plist` back and
+`kickstart`s it. Healthy agents are left untouched (no Dock/Finder restart churn on
+a normal launch), and a machine left broken by an older build self-heals on the
+next FocusOS launch. The standalone recovery script
+`scripts/focusos-restore-macos-ui.sh` does the same and can be run by hand.
 
 ## TCC / development caveat
 
