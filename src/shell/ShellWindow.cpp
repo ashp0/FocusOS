@@ -85,9 +85,17 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
 #if defined(Q_OS_LINUX)
     connect(routineManager, &RoutineManager::activeChanged, this, [this, routineManager] {
         if (routineManager->openEnded()) {
-            // Open-ended continuation IS the FocusOS ambient screen — keep the
-            // shell in front rather than minimizing behind the routine apps.
-            showFocusShell();
+            // "Continue" handoff: if the continued routine's app is still open,
+            // step aside so that app regains focus (no relaunch) — minimizing the
+            // shell lets KWin hand focus back to it, the same path engage() uses.
+            // For a reading / no-app routine, or once the user has closed every
+            // routine window, there's nothing to switch to: keep FocusOS in front
+            // as the ambient momentum screen.
+            if (routineManager->shouldFocusAppsOnContinue()) {
+                QTimer::singleShot(350, this, &ShellWindow::minimizeFocusShell);
+            } else {
+                showFocusShell();
+            }
         } else if (routineManager->active() && routineManager->activeRoutineHasLaunchTargets()) {
             QTimer::singleShot(350, this, &ShellWindow::minimizeFocusShell);
         } else if (!routineManager->active() && !routineManager->sessionPromptVisible()) {
@@ -337,11 +345,19 @@ void ShellWindow::updateProgressOverlay()
                              m_routineManager->pauseMode() == 2);
 
     if (shouldShow) {
-        if (QScreen *screen = QGuiApplication::primaryScreen()) {
-            m_progressOverlayWindow.setScreen(screen);
-            m_progressOverlayWindow.setGeometry(screen->geometry());
-        }
+        // Only (re)apply geometry + map the surface on the hidden→visible edge.
+        // updateProgressOverlay() fires repeatedly during a routine (activeChanged,
+        // pauseModeChanged, minimize/show…); on Wayland, calling setGeometry +
+        // showFullScreen on an already-mapped Tool window re-creates its surface
+        // and leaves the previous one behind as a ghost — that's the "overlays
+        // stack on top of previous ones" artifact. Touching the surface only on
+        // the transition keeps exactly one overlay on screen; otherwise we just
+        // re-raise the existing one.
         if (!m_progressOverlayWindow.isVisible()) {
+            if (QScreen *screen = QGuiApplication::primaryScreen()) {
+                m_progressOverlayWindow.setScreen(screen);
+                m_progressOverlayWindow.setGeometry(screen->geometry());
+            }
 #if defined(Q_OS_MACOS)
             m_progressOverlayWindow.show();
 #else

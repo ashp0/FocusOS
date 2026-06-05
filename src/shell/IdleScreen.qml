@@ -19,6 +19,8 @@ Item {
     StarField {
         anchors.fill: parent
         visible: !idleMonitor.deepIdle
+        // Mirror the paused work-mode: still the warp, keep the twinkle.
+        paused: routineManager.paused
         // The screensaver must animate even when the bare-session shell doesn't
         // report itself as the active application (a routine isn't engaged here,
         // so FocusOS owns the screen anyway). Without this the field froze on the

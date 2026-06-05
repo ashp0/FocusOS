@@ -127,6 +127,8 @@ Item {
         // what is meant to be a power-saving screensaver. showMedia:false tears
         // the player down (see AmbientLayer).
         showMedia: !routineManager.active && !idleMonitor.idle
+        // Pausing a routine stills the wallpaper's fly-through (twinkle remains).
+        paused: routineManager.paused
     }
 
     Rectangle {
@@ -217,6 +219,7 @@ Item {
         // Half the stars of the full backdrop — lighter to draw over the UI and
         // keeps the drifting motion from competing with on-screen text.
         starDensity: 0.5
+        paused: routineManager.paused
     }
 
     UnlockModal {

@@ -15,6 +15,14 @@ public:
     virtual bool launchApps(const QStringList &appPaths, QString *errorMessage = nullptr) = 0;
     virtual bool openUrls(const QStringList &urls, QString *errorMessage = nullptr) = 0;
     virtual void terminateApps(const QStringList &appPaths) = 0;
+    // Continue-after-expiry focus handoff (window management): whether any of the
+    // apps this backend launched for the active routine are still alive. When the
+    // user picks "Continue" the shell uses this to decide whether to yield focus
+    // back to the routine's app (apps still open) or stay in front (a reading /
+    // no-app routine, or the user already closed every window). No relaunch — this
+    // only reports liveness; the shell yields by minimizing. False where
+    // unsupported.
+    virtual bool hasLiveRoutineApps() const { return false; }
     // Stop the routine lockdown watchdog (the launcher / spotlight kill sweep)
     // WITHOUT terminating the routine's own apps. Called when a routine ends or
     // admin (TOTP) access is granted, so launchers and the "Access Desktop"

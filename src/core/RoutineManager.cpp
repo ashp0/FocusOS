@@ -635,7 +635,7 @@ QString RoutineManager::finishedSessionResult() const
 
 bool RoutineManager::paused() const
 {
-    return m_routineTimer.paused();
+    return m_routineTimer.paused() || m_openEndedPaused;
 }
 
 bool RoutineManager::editMode() const
@@ -654,6 +654,13 @@ void RoutineManager::setEditMode(bool enabled)
 
 int RoutineManager::pauseMode() const
 {
+    // Open-ended momentum tracks its own pause flag (no countdown timer to pause).
+    if (m_openEnded) {
+        if (!m_openEndedPaused) {
+            return 0;
+        }
+        return m_manualPause ? 2 : 1;
+    }
     if (!m_routineTimer.paused()) {
         return 0;
     }
@@ -665,7 +672,7 @@ void RoutineManager::togglePause()
     if (!active()) {
         return;
     }
-    if (m_routineTimer.paused()) {
+    if (paused()) {
         // A single click resumes from either pause mode (this is how the user
         // manually unpauses a manual pause).
         resumeRoutine();
@@ -676,6 +683,14 @@ void RoutineManager::togglePause()
     // doesn't require remembering to unpause. Idleness itself never pauses —
     // this is always a deliberate click.
     m_manualPause = false;
+    if (m_openEnded) {
+        // Open-ended momentum keeps no checkpoint (see continueFinishedSession),
+        // so its pause is in-memory only — don't write active.json here.
+        m_openEndedPaused = true;
+        emit pausedChanged();
+        emit pauseModeChanged();
+        return;
+    }
     m_routineTimer.pause();
     emit pauseModeChanged();
     writeActiveSession(true);
@@ -689,6 +704,16 @@ void RoutineManager::manualPause()
     // Double click = manual pause: never auto-resumes. Upgrades an existing idle
     // pause in place. The persistent banner (QML) makes sure the user can't
     // forget it's paused — that's how logged time used to get lost.
+    if (m_openEnded) {
+        // In-memory only — open-ended momentum has no checkpoint to update.
+        if (!m_openEndedPaused) {
+            m_openEndedPaused = true;
+            emit pausedChanged();
+        }
+        m_manualPause = true;
+        emit pauseModeChanged();
+        return;
+    }
     if (!m_routineTimer.paused()) {
         m_routineTimer.pause();
     }
@@ -701,10 +726,16 @@ void RoutineManager::manualPause()
 
 void RoutineManager::resumeRoutine()
 {
-    if (!active() || !m_routineTimer.paused()) {
+    if (!active() || !paused()) {
         return;
     }
     m_manualPause = false;
+    if (m_openEnded) {
+        m_openEndedPaused = false;
+        emit pausedChanged();
+        emit pauseModeChanged();
+        return;
+    }
     m_routineTimer.resume();
     emit pauseModeChanged();
     writeActiveSession(true);
@@ -713,7 +744,7 @@ void RoutineManager::resumeRoutine()
 void RoutineManager::onResumeHint()
 {
     // Idle pause only: a manual pause is deliberate and stays put.
-    if (active() && m_routineTimer.paused() && !m_manualPause) {
+    if (active() && paused() && !m_manualPause) {
         resumeRoutine();
     }
 }
@@ -848,6 +879,9 @@ void RoutineManager::endActiveRoutine()
     // session was logged at expiry). Just stand down to the console.
     if (m_openEnded) {
         m_openEnded = false;
+        const bool wasPaused = m_openEndedPaused;
+        m_openEndedPaused = false;
+        m_manualPause = false;
         m_activeRoutineId.clear();
         m_activeStartedAt = {};
         if (m_backend) {
@@ -857,6 +891,10 @@ void RoutineManager::endActiveRoutine()
             m_backend->restoreShellPlacement();
         }
         updateDisplaySleepInhibit();
+        if (wasPaused) {
+            emit pausedChanged();
+            emit pauseModeChanged();
+        }
         emit activeChanged();
         emitRowsChanged();
         return;
@@ -1266,6 +1304,8 @@ void RoutineManager::continueFinishedSession()
     }
 
     m_openEnded = true;
+    m_openEndedPaused = false;
+    m_manualPause = false;
     m_activeRoutineId = routineId;
     m_activeStartedAt = QDateTime::currentDateTimeUtc();
     // No checkpoint / respawn watchdog: open-ended momentum is not a strict
@@ -1273,6 +1313,14 @@ void RoutineManager::continueFinishedSession()
     updateDisplaySleepInhibit();
     emit activeChanged();
     emitRowsChanged();
+}
+
+bool RoutineManager::shouldFocusAppsOnContinue() const
+{
+    // Only yield focus when the continued routine actually has a launch target
+    // (so it's a "digital app" routine, not a reading/no-app one) AND at least one
+    // of those windows is still alive. Otherwise the shell stays in front.
+    return activeRoutineHasLaunchTargets() && m_backend && m_backend->hasLiveRoutineApps();
 }
 
 void RoutineManager::quitFinishedSession()

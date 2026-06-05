@@ -13,7 +13,9 @@ layout(location = 0) out vec4 fragColor;
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
-    float iTime;          // seconds, advanced on the render thread
+    float iTime;          // warp/motion clock — FROZEN by QML while paused
+    float twinkleTime;    // twinkle clock — keeps advancing even while paused, so
+                          // a halted (paused) field still shimmers
     vec2  iResolution;    // pixel size, used only for aspect correction (DPI-safe)
     float fieldOpacity;   // master brightness (dims the thin overlay field)
     float density;        // 0.04..1 — thins stars for the lighter overlay layer
@@ -84,7 +86,9 @@ void main() {
         float z = fract(fi + t);
         // Fade each slice in as it appears far off and out as it sweeps past.
         float fade = smoothstep(0.0, 0.12, z) * smoothstep(1.0, 0.70, z);
-        col += starSlice(uv, z, fi + 1.0, iTime * (0.8 + fi), density) * fade;
+        // Twinkle phase comes from the twinkle clock (not iTime), so the per-star
+        // shimmer keeps going even when the warp motion is frozen mid-pause.
+        col += starSlice(uv, z, fi + 1.0, twinkleTime * (0.8 + fi), density) * fade;
     }
 
     float r = length(uv);

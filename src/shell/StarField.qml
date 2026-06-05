@@ -49,6 +49,11 @@ Item {
     // 60 while halving render cost on the idle screen.
     property real frameInterval: 1.0 / 30.0
 
+    // Paused work-mode: halt the fly-through/zoom motion but keep the per-star
+    // twinkle alive (the warp clock freezes, the twinkle clock keeps ticking).
+    // Wired to routineManager.paused by the ambient/idle wallpaper layers.
+    property bool paused: false
+
     // Drop the Qt.application.active term from the animation gate when set. On the
     // bare kwin_wayland session the shell often never registers as "active" (the
     // same unreliability that made IdleMonitor stop gating on applicationState —
@@ -81,6 +86,7 @@ Item {
 
         // Uniforms — matched to starfield.frag by property name.
         property real iTime: 0
+        property real twinkleTime: 0
         property size iResolution: Qt.size(Math.max(1, width), Math.max(1, height))
         property real fieldOpacity: root.fieldOpacity
         property real density: Math.max(0.04, Math.min(1.0, root.densityScale))
@@ -99,7 +105,19 @@ Item {
     FrameAnimation {
         running: root.animationActive
         property real pending: 0
+        property real twinklePending: 0
         onTriggered: {
+            // The twinkle clock always advances while the field is visible — even
+            // mid-pause — so a halted field keeps shimmering.
+            twinklePending += frameTime * root.warpSpeed
+            if (twinklePending >= root.frameInterval) {
+                sky.twinkleTime += twinklePending
+                twinklePending = 0
+            }
+            // The warp/motion clock freezes while paused, stilling the fly-through.
+            if (root.paused) {
+                return
+            }
             pending += frameTime * root.warpSpeed
             if (pending >= root.frameInterval) {
                 sky.iTime += pending

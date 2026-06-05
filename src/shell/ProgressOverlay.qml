@@ -9,6 +9,48 @@ Item {
     property real pulsePhase: 0
     property bool live: routineManager.active && routineManager.overlayProgressEnabled
 
+    // The overlay window is mapped whenever a routine is active and either the
+    // progress border is enabled OR the timer is (manually) paused (so the paused
+    // reminder still reaches over the apps). The border modes below key off these.
+    property bool showBorder: routineManager.active &&
+                              (routineManager.overlayProgressEnabled || routineManager.paused)
+    // Indefinite "Continue" work mode: no countdown, just a breathing border that
+    // signals active momentum (pulsing transparency + cycling yellow shades).
+    property bool workMode: routineManager.active && routineManager.openEnded && !routineManager.paused
+    // Paused (idle or manual): the border becomes an indeterminate loading sweep
+    // to prompt the user to unpause. A manual pause (pauseMode 2) is the headline
+    // case but an idle-click pause shows it too.
+    property bool pausedMode: routineManager.active && routineManager.paused
+
+    // ── Work-mode breathing (Task: indefinite session) ──
+    property real workOpacity: 0.5
+    property color workColor: "#E8A020"
+    SequentialAnimation {
+        running: root.workMode
+        loops: Animation.Infinite
+        ParallelAnimation {
+            NumberAnimation { target: root; property: "workOpacity"; from: 0.30; to: 0.72; duration: 2000; easing.type: Easing.InOutSine }
+            ColorAnimation { target: root; property: "workColor"; from: "#E8A020"; to: "#F4D03F"; duration: 2000 }
+        }
+        ParallelAnimation {
+            NumberAnimation { target: root; property: "workOpacity"; from: 0.72; to: 0.30; duration: 2000; easing.type: Easing.InOutSine }
+            ColorAnimation { target: root; property: "workColor"; from: "#F4D03F"; to: "#C8821A"; duration: 2000 }
+        }
+        ParallelAnimation {
+            NumberAnimation { target: root; property: "workOpacity"; from: 0.30; to: 0.72; duration: 2000; easing.type: Easing.InOutSine }
+            ColorAnimation { target: root; property: "workColor"; from: "#C8821A"; to: "#E8A020"; duration: 2000 }
+        }
+    }
+
+    // ── Paused flashing (Task: manual pause indeterminate state) ──
+    property real pausedFlash: 0.5
+    SequentialAnimation {
+        running: root.pausedMode
+        loops: Animation.Infinite
+        NumberAnimation { target: root; property: "pausedFlash"; from: 0.14; to: 0.78; duration: 620; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: root; property: "pausedFlash"; from: 0.78; to: 0.14; duration: 620; easing.type: Easing.InOutQuad }
+    }
+
     property real progressValue: sampledTotalSeconds > 0
                                  ? Math.max(0, Math.min(1, sampledElapsedSeconds / sampledTotalSeconds))
                                  : 0
@@ -63,37 +105,47 @@ Item {
     property real trackWidth: 5
     property real trackOpacity: 0.34
 
+    // Mode-resolved perimeter look, shared by all four edge tracks:
+    //  • work mode  → breathing opacity + cycling yellow shades
+    //  • paused     → flashing (indeterminate "unpause me" pulse)
+    //  • countdown  → the steady faint track
+    property color trackColor: root.workMode ? root.workColor : "#E8A020"
+    property real trackDrawOpacity: !root.showBorder
+                                    ? 0
+                                    : (root.workMode ? root.workOpacity
+                                       : (root.pausedMode ? root.pausedFlash : root.trackOpacity))
+
     Rectangle {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         height: root.trackWidth
-        color: "#E8A020"
-        opacity: root.live ? root.trackOpacity : 0
+        color: root.trackColor
+        opacity: root.trackDrawOpacity
     }
     Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         height: root.trackWidth
-        color: "#E8A020"
-        opacity: root.live ? root.trackOpacity : 0
+        color: root.trackColor
+        opacity: root.trackDrawOpacity
     }
     Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         width: root.trackWidth
-        color: "#E8A020"
-        opacity: root.live ? root.trackOpacity : 0
+        color: root.trackColor
+        opacity: root.trackDrawOpacity
     }
     Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.right: parent.right
         width: root.trackWidth
-        color: "#E8A020"
-        opacity: root.live ? root.trackOpacity : 0
+        color: root.trackColor
+        opacity: root.trackDrawOpacity
     }
 
     Rectangle {
@@ -101,8 +153,8 @@ Item {
         anchors.top: parent.top
         width: root.barWidth
         height: parent.height * root.progressValue
-        color: "#E8A020"
-        opacity: root.live ? root.barOpacity : 0
+        color: root.trackColor
+        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
     }
 
     Rectangle {
@@ -110,8 +162,8 @@ Item {
         anchors.top: parent.top
         width: parent.width * root.progressValue
         height: root.barWidth
-        color: "#E8A020"
-        opacity: root.live ? root.barOpacity : 0
+        color: root.trackColor
+        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
     }
 
     Rectangle {
@@ -119,8 +171,8 @@ Item {
         anchors.bottom: parent.bottom
         width: root.barWidth
         height: parent.height * root.progressValue
-        color: "#E8A020"
-        opacity: root.live ? root.barOpacity : 0
+        color: root.trackColor
+        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
     }
 
     Rectangle {
@@ -128,8 +180,68 @@ Item {
         anchors.bottom: parent.bottom
         width: parent.width * root.progressValue
         height: root.barWidth
-        color: "#E8A020"
-        opacity: root.live ? root.barOpacity : 0
+        color: root.trackColor
+        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
+    }
+
+    // Indeterminate "loading" sweep while paused. A bright segment tracks back
+    // and forth along the top and bottom edges — the unmistakable "this is paused,
+    // unpause to continue" cue (paired with the flashing perimeter above). The
+    // top and bottom segments travel in opposition so the motion reads clearly.
+    Item {
+        id: sweepTop
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.trackWidth + 1
+        visible: root.pausedMode
+        clip: true
+
+        Rectangle {
+            id: sweepTopSeg
+            width: Math.max(140, sweepTop.width * 0.22)
+            height: parent.height
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 0.5; color: "#F4D03F" }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+            SequentialAnimation on x {
+                running: root.pausedMode
+                loops: Animation.Infinite
+                NumberAnimation { from: -sweepTopSeg.width; to: sweepTop.width; duration: 1500; easing.type: Easing.InOutSine }
+                NumberAnimation { from: sweepTop.width; to: -sweepTopSeg.width; duration: 1500; easing.type: Easing.InOutSine }
+            }
+        }
+    }
+
+    Item {
+        id: sweepBottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.trackWidth + 1
+        visible: root.pausedMode
+        clip: true
+
+        Rectangle {
+            id: sweepBottomSeg
+            width: Math.max(140, sweepBottom.width * 0.22)
+            height: parent.height
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 0.5; color: "#F4D03F" }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+            SequentialAnimation on x {
+                running: root.pausedMode
+                loops: Animation.Infinite
+                NumberAnimation { from: sweepBottom.width; to: -sweepBottomSeg.width; duration: 1500; easing.type: Easing.InOutSine }
+                NumberAnimation { from: -sweepBottomSeg.width; to: sweepBottom.width; duration: 1500; easing.type: Easing.InOutSine }
+            }
+        }
     }
 
     // Manual-pause reminder (Task 4). This window is always-on-top and stays

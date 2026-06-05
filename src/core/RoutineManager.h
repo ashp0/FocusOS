@@ -194,6 +194,12 @@ public:
     Q_INVOKABLE void unlockOtherAccess();
     Q_INVOKABLE void continueFinishedSession();
     Q_INVOKABLE void quitFinishedSession();
+    // Window-management handoff for "Continue" (open-ended momentum): true when
+    // the continued routine launched a digital app that is STILL open, so the
+    // shell should step aside and let that app regain focus instead of staying in
+    // front. False for a reading / no-app routine, or once the user has closed
+    // every routine window — in those cases FocusOS keeps focus.
+    Q_INVOKABLE bool shouldFocusAppsOnContinue() const;
     Q_INVOKABLE QVariantList routinesForEditing() const;
     Q_INVOKABLE bool saveRoutines(const QVariantList &routines);
     Q_INVOKABLE bool updateRoutineDescription(const QString &routineId, const QString &description);
@@ -357,6 +363,11 @@ private:
     // Open-ended continuation state (Task 5): active() stays true with no
     // countdown timer running. Holds the id of the routine being continued.
     bool m_openEnded = false;
+    // Open-ended momentum has no countdown timer, so its pause state can't live in
+    // m_routineTimer. This flag carries pause for the indefinite "Continue" mode:
+    // it's purely a work-mode signal (drives the pulsing/indeterminate overlay and
+    // the twinkling background), since there's no logged time to actually hold.
+    bool m_openEndedPaused = false;
     // Smart pause (Task 4): true while the current pause is a manual pause (no
     // auto-resume). Meaningless when the timer isn't paused.
     bool m_manualPause = false;

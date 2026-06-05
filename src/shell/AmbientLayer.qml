@@ -21,6 +21,9 @@ Item {
     property bool showCircles: false   // legacy slot — circles removed for space feel
     property real circleOpacityScale: 0
     property real starOpacityScale: 1
+    // Halt the starfield's fly-through motion (keep twinkle) while a routine is
+    // paused — forwarded to the shared StarField.
+    property bool paused: false
     // Star-count multiplier passed to the shared StarField (the thin overlay
     // field over the panels runs at a lower density to save power).
     property real starDensity: 1
@@ -289,6 +292,7 @@ Item {
         showDust: root.showStars && root.showDust
         fieldOpacity: root.starOpacityScale
         densityScale: root.starDensity
+        paused: root.paused
     }
 
     Timer {

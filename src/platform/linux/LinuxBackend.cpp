@@ -800,6 +800,20 @@ void LinuxBackend::terminateApps(const QStringList &appPaths)
     m_sessionAllowedProcessNames.clear();
 }
 
+bool LinuxBackend::hasLiveRoutineApps() const
+{
+    // The routine's apps are exactly the PIDs we tracked from launchApps /
+    // openUrls. kill(pid, 0) probes for liveness without sending a signal: 0 means
+    // the process still exists (or is a zombie we can signal), ESRCH means it's
+    // gone. One survivor is enough to say "the app the user was in is still open".
+    for (qint64 pid : m_sessionPids) {
+        if (pid > 0 && ::kill(static_cast<pid_t>(pid), 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void LinuxBackend::endRoutineLockdown()
 {
     // Stand down the launcher-killing sweep without touching the routine's apps

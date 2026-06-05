@@ -58,6 +58,10 @@ Item {
         opacity: 0.55
 
         property var points: []
+        // Twinkle clock — advances every tick even when the drift is frozen, so a
+        // paused field keeps a subtle shimmer (distant stars breathing) instead of
+        // going dead-still.
+        property real twinklePhase: 0
 
         // Only animate while the screen can actually be seen — paused when the app
         // is unfocused or no routine is active (MissionView is hidden on the home
@@ -96,15 +100,20 @@ Item {
                 seed()
                 return
             }
-            for (let i = 0; i < points.length; ++i) {
-                const p = points[i]
-                p.x += p.vx
-                p.y += p.vy
-                // Wrap softly around the edges so the field never drains away.
-                if (p.x < -0.05) p.x = 1.05
-                else if (p.x > 1.05) p.x = -0.05
-                if (p.y < -0.05) p.y = 1.05
-                else if (p.y > 1.05) p.y = -0.05
+            twinklePhase += 0.12
+            // While paused the field stops drifting (halt the zoom/move) but keeps
+            // twinkling — the static-but-alive look the paused state calls for.
+            if (!routineManager.paused) {
+                for (let i = 0; i < points.length; ++i) {
+                    const p = points[i]
+                    p.x += p.vx
+                    p.y += p.vy
+                    // Wrap softly around the edges so the field never drains away.
+                    if (p.x < -0.05) p.x = 1.05
+                    else if (p.x > 1.05) p.x = -0.05
+                    if (p.y < -0.05) p.y = 1.05
+                    else if (p.y > 1.05) p.y = -0.05
+                }
             }
             requestPaint()
         }
@@ -132,14 +141,20 @@ Item {
                 ctx.stroke()
             }
             // Stars
+            const paused = routineManager.paused
             for (let i = 0; i < points.length; ++i) {
                 const p = points[i]
-                ctx.fillStyle = "rgba(232, 220, 200, " + p.alpha + ")"
+                // When paused, modulate each star's alpha on its own phase so the
+                // frozen field shimmers; running, leave the alpha steady.
+                const alpha = paused
+                    ? p.alpha * (0.45 + 0.55 * (0.5 + 0.5 * Math.sin(constellation.twinklePhase + i * 1.7)))
+                    : p.alpha
+                ctx.fillStyle = "rgba(232, 220, 200, " + alpha + ")"
                 ctx.beginPath()
                 ctx.arc(p.x * width, p.y * height, p.r, 0, Math.PI * 2)
                 ctx.fill()
                 // diffraction spike
-                ctx.strokeStyle = "rgba(232, 220, 200, " + (p.alpha * 0.35) + ")"
+                ctx.strokeStyle = "rgba(232, 220, 200, " + (alpha * 0.35) + ")"
                 const reach = p.r * 4.5
                 ctx.beginPath()
                 ctx.moveTo(p.x * width - reach, p.y * height)
@@ -174,18 +189,18 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: statusText.implicitWidth + 28
                 height: 22
-                color: root.openEnded ? "#33e8a020" : (routineManager.paused ? "#33d0c068" : "#33c0392b")
+                color: routineManager.paused ? "#33d0c068" : (root.openEnded ? "#33e8a020" : "#33c0392b")
                 border.width: 1
-                border.color: root.openEnded ? Theme.gold : (routineManager.paused ? Theme.gold : Theme.crimsonHot)
+                border.color: (root.openEnded || routineManager.paused) ? Theme.gold : Theme.crimsonHot
                 radius: 2
 
                 Text {
                     id: statusText
                     anchors.centerIn: parent
-                    text: root.openEnded
-                          ? "∞ MOMENTUM SUSTAINED"
-                          : (routineManager.paused ? "▮▮ MISSION PAUSED" : "● MISSION ACTIVE")
-                    color: root.openEnded ? Theme.gold : (routineManager.paused ? Theme.gold : Theme.crimsonHot)
+                    text: routineManager.paused
+                          ? "▮▮ MISSION PAUSED"
+                          : (root.openEnded ? "∞ MOMENTUM SUSTAINED" : "● MISSION ACTIVE")
+                    color: (root.openEnded || routineManager.paused) ? Theme.gold : Theme.crimsonHot
                     font.family: root.headerFont
                     font.pixelSize: 11
                     font.letterSpacing: 0
@@ -301,8 +316,10 @@ Item {
                         GradientStop { position: 1.0; color: "transparent" }
                     }
 
+                    // Forward motion halts while paused — the band freezes to
+                    // match the stilled starfield behind it.
                     SequentialAnimation on x {
-                        running: root.openEnded
+                        running: root.openEnded && !routineManager.paused
                         loops: Animation.Infinite
                         NumberAnimation {
                             from: -flowComet.width
@@ -326,7 +343,7 @@ Item {
                 x: 20
 
                 SequentialAnimation on opacity {
-                    running: root.openEnded
+                    running: root.openEnded && !routineManager.paused
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.25; duration: 1400; easing.type: Easing.InOutQuad }
                     NumberAnimation { to: 0.8; duration: 1400; easing.type: Easing.InOutQuad }
@@ -490,7 +507,9 @@ Item {
             spacing: 14
 
             Rectangle {
-                visible: !root.openEnded
+                // Visible in open-ended momentum too: "Continue" enters an
+                // indefinite work mode the user still needs to pause (the pause
+                // button used to vanish here — that was the bug).
                 width: 196
                 height: 40
                 color: pauseHover.containsMouse ? Theme.steel : "#33141420"
