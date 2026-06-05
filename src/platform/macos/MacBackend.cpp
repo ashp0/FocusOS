@@ -356,6 +356,32 @@ QString watchdogPlistPath()
     return QDir(focusosDataDir()).absoluteFilePath(QStringLiteral("com.focusos.watchdog.plist"));
 }
 
+// The persistent kiosk LaunchAgent (launch-at-login + KeepAlive respawn). Unlike
+// the crash-recovery watchdog — which is deliberately kept OUT of
+// ~/Library/LaunchAgents so a stale checkpoint can't auto-launch FocusOS after a
+// reboot — this one is MEANT to auto-load every login, so it lives in the
+// standard per-user LaunchAgents directory launchd bootstraps at login.
+const QString kLoginAgentLabel = QStringLiteral("com.focusos.login");
+
+QString loginAgentPlistPath()
+{
+    return QDir(consoleHomePath())
+        .absoluteFilePath(QStringLiteral("Library/LaunchAgents/com.focusos.login.plist"));
+}
+
+// KeepAlive gate for the login agent. The agent's KeepAlive is conditional on this
+// file existing (PathState), NOT an unconditional `true`. That is what makes the
+// respawn lock instantly switchable WITHOUT booting out the loaded job (which would
+// SIGTERM the running FocusOS): launchd re-checks the file each time FocusOS exits,
+// so removing it stops respawn for the current session too. FocusOS re-creates the
+// file at every launch while the agent is installed (see ensureKioskRespawnArmed),
+// which also gives crash-loop safety — a build that dies before arming the flag is
+// not respawned into a loop.
+QString loginAgentKeepAlivePath()
+{
+    return QDir(focusosDataDir()).absoluteFilePath(QStringLiteral("kiosk-active"));
+}
+
 QString legacyWatchdogPlistPath()
 {
     return QDir(consoleHomePath()).absoluteFilePath(
@@ -493,6 +519,9 @@ QString xmlEscaped(const QString &value)
 MacBackend::MacBackend()
 {
     removeLegacyWatchdogLaunchAgent();
+    // Re-arm the launch-at-login respawn lock for this session if the kiosk agent
+    // is installed (covers RunAtLoad launches and respawns; no-op when disabled).
+    ensureKioskRespawnArmed();
 }
 
 MacBackend::~MacBackend()
@@ -1109,6 +1138,22 @@ void MacBackend::restoreShellPlacement()
     applyBaselineKioskPosture();
 }
 
+void MacBackend::applyHomeScreenLock()
+{
+    // Fresh launch: launching FocusOS is itself the lock. Until now the locked
+    // home posture (Dock hidden, Spotlight/Mission-Control/launcher blocker, no
+    // Spaces) was only raised when a routine *ended* — at first launch the Dock
+    // and Mission Control stayed reachable, which defeated the "looking to lock
+    // in" intent. Raise the baseline lock now. If a crashed/killed routine is
+    // about to be resumed, RoutineManager's deferred resumeActiveSessionIfPresent
+    // runs after this (inside the event loop) and prepareRoutineSession() steps
+    // the posture down to the routine layout, so this is safe to apply blindly.
+    if (m_lockdownActive || m_desktopAccessOpen) {
+        return;
+    }
+    applyBaselineKioskPosture();
+}
+
 void MacBackend::setAlwaysAllowedApps(const QStringList &commandLines)
 {
     m_alwaysAllowedCommandLines = commandLines;
@@ -1382,6 +1427,134 @@ bool MacBackend::signOut(QString *errorMessage)
         QCoreApplication::quit();
     }
     return true;
+}
+
+bool MacBackend::persistentKioskEnabled() const
+{
+    // The next-login state is exactly "is the agent plist on disk": launchd
+    // auto-loads ~/Library/LaunchAgents/*.plist at login, so the file's presence
+    // is what makes FocusOS launch-at-login + KeepAlive-respawned.
+    return QFileInfo::exists(loginAgentPlistPath());
+}
+
+bool MacBackend::setPersistentKiosk(bool enabled, QString *errorMessage)
+{
+    const QString plistPath = loginAgentPlistPath();
+    const QString flagPath = loginAgentKeepAlivePath();
+
+    if (!enabled) {
+        // Removing the KeepAlive flag stops respawn for the CURRENT session too —
+        // launchd re-evaluates the PathState gate when FocusOS next exits, sees the
+        // file gone, and does not relaunch. No `bootout` (which would SIGTERM the
+        // running app) is needed. Also boot the job out to clean up any LEGACY agent
+        // that used unconditional KeepAlive=true (it ignores the flag); the running
+        // app survives because, if it is the agent's instance, bootout only removes
+        // the KeepAlive contract — FocusOS keeps running until the user quits it.
+        QFile::remove(flagPath);
+        if (QFile::exists(plistPath) && !QFile::remove(plistPath)) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Could not remove %1").arg(plistPath);
+            }
+            return false;
+        }
+        QProcess::execute(QStringLiteral("/bin/launchctl"),
+                          {QStringLiteral("bootout"),
+                           QStringLiteral("%1/%2").arg(launchdGuiDomain(), kLoginAgentLabel)});
+        return true;
+    }
+
+    // The binary launchd should relaunch. canonicalFilePath resolves symlinks so it
+    // matches the real app binary; that binary self-elevates via `sudo -n` when the
+    // NOPASSWD rule is installed (execv preserves the PID, so KeepAlive still tracks
+    // it after the elevation re-exec).
+    const QString self = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+    const QString binaryPath = self.isEmpty() ? QCoreApplication::applicationFilePath() : self;
+
+    QDir().mkpath(QFileInfo(plistPath).absolutePath());
+    QSaveFile file(plistPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Could not write %1").arg(plistPath);
+        }
+        return false;
+    }
+    QTextStream out(&file);
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        << "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+        << "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+        << "<plist version=\"1.0\">\n"
+        << "<dict>\n"
+        << "  <key>Label</key><string>" << kLoginAgentLabel << "</string>\n"
+        << "  <key>ProgramArguments</key>\n"
+        << "  <array><string>" << xmlEscaped(binaryPath) << "</string></array>\n"
+        << "  <key>RunAtLoad</key><true/>\n"
+        // KeepAlive ONLY while the flag file exists (PathState), never unconditional —
+        // so the respawn lock can be lifted instantly by deleting the flag (authorized
+        // quit / disable) without booting out the job.
+        << "  <key>KeepAlive</key>\n"
+        << "  <dict>\n"
+        << "    <key>PathState</key>\n"
+        << "    <dict><key>" << xmlEscaped(flagPath) << "</key><true/></dict>\n"
+        << "  </dict>\n"
+        << "  <key>ProcessType</key><string>Interactive</string>\n"
+        << "</dict>\n"
+        << "</plist>\n";
+    if (!file.commit()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Could not save %1").arg(plistPath);
+        }
+        return false;
+    }
+
+    // Arm the KeepAlive gate now so the lock is live as soon as the agent loads.
+    ensureKioskRespawnArmed();
+
+    // Deliberately NOT bootstrapped now. Bootstrapping a RunAtLoad job in this live
+    // session would start a SECOND FocusOS, which hits the single-instance lock and
+    // exits — and KeepAlive would then throttle-respawn that doomed instance every
+    // ~10s. Instead launchd auto-loads the agent at the NEXT login, where it owns
+    // the one true instance. So enabling ARMS launch-at-login + un-quittable for the
+    // next login; it never spawns a duplicate now. Re-`enable` in case a prior
+    // disable left the label flagged off.
+    QProcess::execute(QStringLiteral("/bin/launchctl"),
+                      {QStringLiteral("enable"),
+                       QStringLiteral("%1/%2").arg(launchdGuiDomain(), kLoginAgentLabel)});
+    return true;
+}
+
+void MacBackend::ensureKioskRespawnArmed()
+{
+    // Re-create the KeepAlive flag on every launch while the agent is installed, so
+    // a fresh login (RunAtLoad) or a respawn comes back un-quittable. Only when the
+    // plist exists — otherwise the kiosk is disabled and we must not re-arm it.
+    if (!QFileInfo::exists(loginAgentPlistPath())) {
+        return;
+    }
+    const QString flagPath = loginAgentKeepAlivePath();
+    QDir().mkpath(QFileInfo(flagPath).absolutePath());
+    if (!QFileInfo::exists(flagPath)) {
+        QFile flag(flagPath);
+        if (flag.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            flag.write("1\n");
+        }
+    }
+}
+
+void MacBackend::prepareForAuthorizedQuit()
+{
+    // The 6-digit-gated quit. Just lift the KeepAlive gate (delete the flag) and the
+    // crash watchdog — then the caller's QCoreApplication::quit() exits cleanly and
+    // launchd does NOT respawn (PathState gate is now false). No bootout / SIGTERM
+    // race. The login agent plist stays installed, so FocusOS still launches at the
+    // next login (where ensureKioskRespawnArmed re-arms the lock).
+    QFile::remove(loginAgentKeepAlivePath());
+    bootoutWatchdog(watchdogPlistPath());
+    removeLegacyWatchdogLaunchAgent();
+    // Belt-and-suspenders for any legacy unconditional-KeepAlive agent still loaded
+    // from a previous login (it ignores the flag): boot it out so it can't respawn.
+    QProcess::execute(QStringLiteral("/bin/launchctl"),
+                      {QStringLiteral("bootout"),
+                       QStringLiteral("%1/%2").arg(launchdGuiDomain(), kLoginAgentLabel)});
 }
 
 void MacBackend::setMissionControlDisabled(bool disabled)

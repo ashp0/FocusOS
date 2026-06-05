@@ -2561,7 +2561,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         visible: systemStatus.elevatedLaunchSupported
-                        text: "DOCK LAUNCH"
+                        text: "PASSWORDLESS FIREWALL"
                         color: Theme.goldDim
                         font.family: root.headerFont
                         font.pixelSize: 13
@@ -2572,8 +2572,8 @@ Item {
                         Layout.fillWidth: true
                         visible: systemStatus.elevatedLaunchSupported
                         text: systemStatus.elevatedLaunchEnabled
-                              ? (systemStatus.runningAsRoot ? "ENABLED - RUNNING AS ROOT" : "ENABLED - RESTART FROM THE DOCK")
-                              : "DISABLED - ROUTINES NEED A TERMINAL SUDO LAUNCH FOR FULL MACOS LOCKDOWN"
+                              ? "ENABLED - THE NETWORK LOCK INSTALLS WITHOUT A PASSWORD"
+                              : "DISABLED - ROUTINES THAT USE A NETWORK LOCK WILL FAIL TO ENGAGE"
                         color: systemStatus.elevatedLaunchEnabled ? Theme.gold : Theme.textGhost
                         wrapMode: Text.WordWrap
                         font.family: root.bodyFont
@@ -2584,7 +2584,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         visible: systemStatus.elevatedLaunchSupported
-                        text: systemStatus.elevatedBinaryPath()
+                        text: "GRANTS: sudo /sbin/pfctl (firewall only — FocusOS keeps running as you)"
                         color: Theme.textDim
                         wrapMode: Text.WrapAnywhere
                         font.family: root.bodyFont
@@ -2624,7 +2624,7 @@ Item {
                                 const error = systemStatus.enableElevatedLaunch(root.elevatedLaunchPassword)
                                 systemStatus.refreshElevatedLaunch()
                                 root.elevatedLaunchStatus = error.length === 0
-                                    ? "ENABLED - RESTART FROM THE DOCK"
+                                    ? "ENABLED - NETWORK LOCK READY"
                                     : error.toUpperCase()
                                 if (error.length === 0) {
                                     root.elevatedLaunchPassword = ""
@@ -2664,6 +2664,68 @@ Item {
                             font.pixelSize: 10
                             font.letterSpacing: 0
                         }
+                    }
+
+                    // ── Kiosk lock: launch-at-login + un-quittable ──
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                        visible: routineManager.persistentKioskSupported
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.persistentKioskSupported
+                        text: "KIOSK LOCK"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    SettingsToggleRow {
+                        visible: routineManager.persistentKioskSupported
+                        label: "LAUNCH AT LOGIN + UN-QUITTABLE"
+                        detail: "FocusOS starts automatically every login and respawns if killed. It can then only be left with your 6-digit code (QUIT below). Changes take effect at the next login."
+                        checked: routineManager.persistentKioskEnabled
+                        onToggled: routineManager.setPersistentKiosk(!routineManager.persistentKioskEnabled)
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.persistentKioskSupported
+                        text: "QUIT FOCUSOS — type QUIT to confirm. Drops the network lock and stops the respawn agent for this session. FocusOS returns at the next login while the lock stays enabled."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: routineManager.persistentKioskSupported
+                        spacing: 10
+
+                        AdminTextField {
+                            id: quitConfirmField
+                            Layout.preferredWidth: 128
+                            Layout.preferredHeight: 34
+                            placeholderText: "QUIT"
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 160
+                            Layout.preferredHeight: 34
+                            label: "⏻ QUIT FOCUSOS"
+                            danger: true
+                            actionEnabled: quitConfirmField.text === "QUIT"
+                            onClicked: routineManager.quitFocusOS()
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
 
                     Rectangle {

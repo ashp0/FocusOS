@@ -13,10 +13,14 @@ Item {
                                  ? Math.max(0, Math.min(1, sampledElapsedSeconds / sampledTotalSeconds))
                                  : 0
     property real lateProgress: progressValue <= 0.8 ? 0 : Math.min(1, (progressValue - 0.8) / 0.2)
+    // Bright progress fill: clearly visible from the start (floor 0.55), ramping to
+    // near-solid, then pulsing in the final 20%. The old 0.18 floor on a 3px line
+    // was effectively invisible at the screen edge — this is the "I actually see it"
+    // version the global overlay is supposed to be.
     property real barOpacity: progressValue <= 0.8
-                              ? 0.18 + (0.55 - 0.18) * (progressValue / 0.8)
-                              : 0.55 + Math.sin(pulsePhase) * 0.15
-    property real barWidth: 3 + lateProgress * 2
+                              ? 0.55 + (0.9 - 0.55) * (progressValue / 0.8)
+                              : 0.9 + Math.sin(pulsePhase) * 0.1
+    property real barWidth: 6 + lateProgress * 4
 
     function sampleProgress() {
         sampledElapsedSeconds = routineManager.elapsedSeconds
@@ -48,6 +52,48 @@ Item {
         running: root.live && root.progressValue >= 0.8
         repeat: true
         onTriggered: root.pulsePhase += Math.PI / 10
+    }
+
+    // Always-visible faint perimeter track. Without it the only thing drawn is the
+    // progress fill below, whose length is proportional to elapsed time — so the
+    // border was a near-invisible sliver early in a routine, and entirely invisible
+    // for open-ended momentum (which has no total, hence progressValue === 0). The
+    // track makes the global indicator visible the instant a routine is live, on
+    // every Space; the bright fill grows over it as the countdown advances.
+    property real trackWidth: 5
+    property real trackOpacity: 0.34
+
+    Rectangle {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.trackWidth
+        color: "#E8A020"
+        opacity: root.live ? root.trackOpacity : 0
+    }
+    Rectangle {
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.trackWidth
+        color: "#E8A020"
+        opacity: root.live ? root.trackOpacity : 0
+    }
+    Rectangle {
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        width: root.trackWidth
+        color: "#E8A020"
+        opacity: root.live ? root.trackOpacity : 0
+    }
+    Rectangle {
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: root.trackWidth
+        color: "#E8A020"
+        opacity: root.live ? root.trackOpacity : 0
     }
 
     Rectangle {

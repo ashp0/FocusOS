@@ -41,12 +41,21 @@ public:
     void terminateDesktopShell() override;
     bool desktopShellSupported() const override { return true; }
     void restoreShellPlacement() override;
+    void applyHomeScreenLock() override;
     void setAlwaysAllowedApps(const QStringList &commandLines) override;
     void startWatchdog(const QString &binaryPath) override;
     bool restoreLoginSessions(QString *errorMessage = nullptr) override;
     void setDisplaySleepInhibited(bool inhibited) override;
     void releaseDisplaySleepInhibitors() override;
     void runSessionStartupItems() override;
+    bool persistentKioskSupported() const override { return true; }
+    bool persistentKioskEnabled() const override;
+    bool setPersistentKiosk(bool enabled, QString *errorMessage = nullptr) override;
+    void prepareForAuthorizedQuit() override;
+    // Re-create the login agent's KeepAlive flag at launch (when the agent is
+    // installed) so a fresh login / respawn comes back un-quittable. Called once
+    // from the constructor.
+    void ensureKioskRespawnArmed();
     bool signOutSupported() const override { return true; }
     bool signOut(QString *errorMessage = nullptr) override;
 

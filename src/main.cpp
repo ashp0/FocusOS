@@ -233,6 +233,13 @@ static char g_pfctlPath[4096] = {0};
 static char g_pfArgDisable[] = "-d";
 static char g_restoreUiScriptPath[4096] = {0};
 static char g_shPath[] = "/bin/sh";
+// FocusOS normally runs as the normal user and drives pfctl through `sudo -n`
+// (the NOPASSWD rule scoped to pfctl). The signal handler must elevate the same
+// way, so a crash mid-routine can still tear the firewall down. Decided once at
+// install time (geteuid) — no syscalls beyond fork/execve happen in the handler.
+static bool g_pfNeedsSudo = false;
+static char g_sudoPath[] = "/usr/bin/sudo";
+static char g_sudoNonInteractive[] = "-n";
 
 static void focusosMacForkExec(char *const argv[])
 {
@@ -252,8 +259,14 @@ static void focusosMacFatalSignalHandler(int signum)
     // LaunchAgent respawns FocusOS, which re-applies the lock on resume if the
     // routine is still armed — so dropping it here is safe, not a security hole.)
     if (g_pfctlPath[0] != '\0') {
-        char *argv[] = {g_pfctlPath, g_pfArgDisable, nullptr};
-        focusosMacForkExec(argv);
+        if (g_pfNeedsSudo) {
+            char *argv[] = {g_sudoPath, g_sudoNonInteractive, g_pfctlPath,
+                            g_pfArgDisable, nullptr};
+            focusosMacForkExec(argv);
+        } else {
+            char *argv[] = {g_pfctlPath, g_pfArgDisable, nullptr};
+            focusosMacForkExec(argv);
+        }
     }
     if (g_restoreUiScriptPath[0] != '\0') {
         char *argv[] = {g_shPath, g_restoreUiScriptPath, nullptr};
@@ -272,6 +285,8 @@ static void installCrashCleanupHandlers(PlatformBackend *backend)
     if (sizeof(kPfctl) <= sizeof(g_pfctlPath)) {
         std::memcpy(g_pfctlPath, kPfctl, sizeof(kPfctl));
     }
+    // Unprivileged process → the handler must elevate pfctl via `sudo -n`.
+    g_pfNeedsSudo = (geteuid() != 0);
     const QByteArray restorePath = MacBackendNative::aquaUiRestoreScriptPath().toLocal8Bit();
     if (!restorePath.isEmpty() && static_cast<size_t>(restorePath.size() + 1) <= sizeof(g_restoreUiScriptPath)) {
         std::memcpy(g_restoreUiScriptPath, restorePath.constData(), static_cast<size_t>(restorePath.size() + 1));
@@ -525,6 +540,13 @@ int main(int argc, char *argv[])
                        &updater,
                        &idleMonitor);
     window.showFocusShell();
+
+    // Launching FocusOS acts like a lock. Raise the locked home-screen posture
+    // immediately (macOS: Dock hidden, Spotlight/launcher/Mission-Control blocker
+    // on) so the user can't reach the Dock or a launcher the moment the app is up.
+    // Runs before app.exec(), so a resumed routine's deferred prepareRoutineSession
+    // still overrides it with the routine posture. No-op on Linux.
+    backend.applyHomeScreenLock();
 
     // Run the user's editable ~/.focusos/startup.sh once the shell is up, so the
     // few agents they want on the bare session — input remappers like Toshy, tray

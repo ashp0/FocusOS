@@ -92,6 +92,15 @@ public:
     // Return the FocusOS shell to its home workspace + clean up any routine
     // window-management state. Called when a routine ends.
     virtual void restoreShellPlacement() {}
+    // Put the machine into the locked home-screen posture for a fresh launch:
+    // launching FocusOS itself acts like a lock ("you're looking to lock in").
+    // On macOS this hides the Dock, starts the system-shortcut/Spotlight blocker
+    // and disables Mission Control / Spaces, so the user can't reach the Dock or
+    // a launcher the moment the app is up — the lock holds until a routine
+    // engages or the 6-digit code lifts it. Called once at startup, before the
+    // event loop, so a resumed routine's prepareRoutineSession() still overrides
+    // it. No-op on Linux (the bare kwin session is already a locked shell).
+    virtual void applyHomeScreenLock() {}
     // Keep the display awake (inhibit screen blanking / sleep) for the
     // duration of a routine. Idempotent — call with true to hold the display
     // on, false to release. No-op on platforms without a power-management hook.
@@ -133,6 +142,32 @@ public:
     // how the user brings up input remappers (Toshy), tray agents, etc. that a
     // normal desktop session would have started for them. No-op where unsupported.
     virtual void runSessionStartupItems() {}
+
+    // --- Persistent kiosk: launch at login + un-quittable ---------------------
+    // Whether this platform can install a launch-at-login agent that also respawns
+    // FocusOS on any quit/kill (so it can only be left via the 6-digit-gated quit
+    // path). macOS uses a KeepAlive+RunAtLoad LaunchAgent. False where unsupported.
+    virtual bool persistentKioskSupported() const { return false; }
+    // Whether that agent is currently installed.
+    virtual bool persistentKioskEnabled() const { return false; }
+    // Install (true) or remove (false) the persistent kiosk agent. On macOS this
+    // writes/removes ~/Library/LaunchAgents/com.focusos.login.plist; launchd loads
+    // it at the next login (RunAtLoad) and KeepAlive respawns FocusOS on exit.
+    // Returns false (with errorMessage) on failure / where unsupported.
+    virtual bool setPersistentKiosk(bool enabled, QString *errorMessage = nullptr)
+    {
+        Q_UNUSED(enabled);
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Persistent kiosk is not supported on this platform");
+        }
+        return false;
+    }
+    // Stand down the respawn machinery (the persistent login agent AND the
+    // crash-recovery watchdog) so the imminent quit is NOT relaunched by launchd.
+    // Called only from the 6-digit-gated "Quit FocusOS" path. The login agent is
+    // reloaded by launchd at the next login, so this lifts the lock for THIS
+    // session only. No-op where unsupported.
+    virtual void prepareForAuthorizedQuit() {}
 
     // Whether this platform can log the user out of their account / session.
     virtual bool signOutSupported() const { return false; }

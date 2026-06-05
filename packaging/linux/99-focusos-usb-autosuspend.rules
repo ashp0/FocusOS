@@ -1,0 +1,24 @@
+# FocusOS — let the Samsung Portable SSD T7 sleep when the machine is idle.
+#
+# The T7 is a USB SSD with a bright always-on blue activity LED. On macOS the
+# drive (and its LED) went dark when the Mac slept and woke on the next access.
+# Linux keeps the USB link fully powered by default, so the LED stays lit and the
+# bus never quiesces. These rules allow USB runtime power management on the T7 so
+# its link drops to low power (LED off) after sustained inactivity and resumes
+# transparently on the next read/write — the closest match to the old macOS
+# behaviour that's possible while the OS is still booted from the drive.
+#
+# Scoped narrowly to the T7's USB VID:PID so no other device is affected. The 20s
+# autosuspend delay means the link only sleeps after real inactivity; during
+# normal use the boot drive is touched far more often than that, so it stays
+# powered and only sleeps when FocusOS is genuinely idle — e.g. the home screen /
+# the post-session "MISSION COMPLETE" screen once the screensaver + deep-idle
+# process-freeze have quieted the disk.
+#
+# To revert: delete this file and run `sudo udevadm control --reload`, then
+# `echo on | sudo tee /sys/bus/usb/devices/*/power/control` (or just reboot).
+#
+# 04e8:4001 — Samsung Portable SSD T7 / T7 Touch
+# 04e8:61f5 — Samsung Portable SSD T7 Shield
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", ATTR{idProduct}=="4001", TEST=="power/control", ATTR{power/autosuspend_delay_ms}="20000", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", ATTR{idProduct}=="61f5", TEST=="power/control", ATTR{power/autosuspend_delay_ms}="20000", ATTR{power/control}="auto"

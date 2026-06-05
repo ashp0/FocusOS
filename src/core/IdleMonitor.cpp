@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QMouseEvent>
 
 IdleMonitor::IdleMonitor(QObject *parent)
     : QObject(parent)
@@ -97,7 +98,25 @@ bool IdleMonitor::eventFilter(QObject *watched, QEvent *event)
         // of input that should reset the idle-screen countdown on its own.
         emit resumeHint();
         break;
-    case QEvent::MouseMove:
+    case QEvent::MouseMove: {
+        // Ignore sub-threshold cursor jitter: a mouse trembling on the desk emits
+        // a steady drip of 1px MouseMoves that would otherwise reset the idle
+        // countdown forever, so the screensaver / display-sleep never fired on a
+        // machine the user had actually walked away from. Only a real move (cursor
+        // travels past kMouseJitterPx from where we last counted one) is activity.
+        const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        const QPointF pos = mouseEvent->globalPosition();
+        if (m_haveLastMousePos) {
+            const QPointF delta = pos - m_lastCountedMousePos;
+            if (qAbs(delta.x()) + qAbs(delta.y()) < kMouseJitterPx) {
+                break; // jitter — not activity
+            }
+        }
+        m_lastCountedMousePos = pos;
+        m_haveLastMousePos = true;
+        noteActivity();
+        break;
+    }
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonRelease:
     case QEvent::Wheel:

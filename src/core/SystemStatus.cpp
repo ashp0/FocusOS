@@ -514,19 +514,28 @@ bool SystemStatus::writeStartupScript(const QString &contents)
     return true;
 }
 
-// ───────────────────────── Elevated launch (macOS) ─────────────────────────
+// ──────────────────── Passwordless firewall access (macOS) ─────────────────
 //
-// Goal: let the user start FocusOS from the Dock — no Terminal, no `sudo` typed —
-// yet still get root (needed for the pf firewall and the Endpoint Security
-// blocker). We do that with a single NOPASSWD sudoers rule scoped to *this exact*
-// FocusOS binary and *this user*; main.cpp's maybeReexecElevated() then re-execs
-// the Dock-launched (unprivileged) process through `sudo -n` at startup. The
-// admin password is only ever needed once, here, to install that rule.
+// Goal: let the pf network lock work when FocusOS is launched from the Dock as a
+// normal user — no Terminal, no `sudo` typed at engage time. pf (`pfctl`) is the
+// only thing that genuinely needs root, so we install a single NOPASSWD sudoers
+// rule scoped to *`/sbin/pfctl`* for *this user* and drive pfctl through `sudo -n`
+// (see MacBackendNative::runPfctl). The admin password is only ever needed once,
+// here, to install that rule.
+//
+// We deliberately do NOT re-exec the whole GUI app as root: a sudo-launched root
+// process loses the TCC identity that the Accessibility grant (and therefore the
+// CGEventTap key blocker) is tied to, which is what made macOS re-pop the
+// Accessibility prompt on every launch. Keeping the app unprivileged and elevating
+// only pfctl fixes that while still installing the firewall.
 
 #if defined(Q_OS_MACOS)
 namespace {
 
 const QString kSudoersFile = QStringLiteral("/etc/sudoers.d/focusos");
+// The single command the NOPASSWD rule authorises. pf is the only thing FocusOS
+// needs root for; everything else runs fine as the normal user.
+const QString kPfctlPath = QStringLiteral("/sbin/pfctl");
 
 QString elevatedRealUser()
 {
@@ -647,21 +656,21 @@ void SystemStatus::refreshElevatedLaunchState()
 #if defined(Q_OS_MACOS)
     bool enabled = false;
     if (geteuid() == 0) {
-        // We can read the rule file directly; confirm it names our binary.
+        // We can read the rule file directly; confirm it grants NOPASSWD pfctl.
         QFile file(kSudoersFile);
         if (file.open(QIODevice::ReadOnly)) {
             const QString contents = QString::fromUtf8(file.readAll());
             enabled = contents.contains(QStringLiteral("NOPASSWD:"))
-                && contents.contains(sudoersEscape(elevatedSelfPath()));
+                && contents.contains(kPfctlPath);
         }
     } else {
-        // sudoers.d is root-only; instead ask sudo whether it would let us run the
-        // binary with NOPASSWD. A cached sudo timestamp can make the exit code
+        // sudoers.d is root-only; instead ask sudo whether it would let us run
+        // pfctl with NOPASSWD. A cached sudo timestamp can make the exit code
         // succeed for password-required entries, so require the explicit tag.
         QProcess probe;
         probe.setProcessChannelMode(QProcess::MergedChannels);
         probe.start(QStringLiteral("/usr/bin/sudo"),
-                    {QStringLiteral("-n"), QStringLiteral("-l"), elevatedSelfPath()});
+                    {QStringLiteral("-n"), QStringLiteral("-l"), kPfctlPath});
         if (probe.waitForFinished(5000)) {
             const QString listing = QString::fromLocal8Bit(probe.readAll());
             enabled = probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0
@@ -684,18 +693,18 @@ QString SystemStatus::enableElevatedLaunch(const QString &adminPassword)
 {
 #if defined(Q_OS_MACOS)
     const QString user = elevatedRealUser();
-    const QString binary = elevatedSelfPath();
-    if (user.isEmpty() || binary.isEmpty()) {
-        return QStringLiteral("Could not determine the user or FocusOS binary path.");
+    if (user.isEmpty()) {
+        return QStringLiteral("Could not determine the current user.");
     }
     if (geteuid() != 0 && adminPassword.isEmpty()) {
         return QStringLiteral("Enter your macOS admin password to enable this.");
     }
 
-    // The rule: this user may run THIS binary as root with no password. Validate
-    // it with visudo before installing so a bad path never breaks sudo entirely.
+    // The rule: this user may run pfctl as root with no password (FocusOS drives
+    // it via `sudo -n /sbin/pfctl …` to install the network lock). Validate it
+    // with visudo before installing so a bad rule never breaks sudo entirely.
     const QString rule = QStringLiteral("%1 ALL=(root) NOPASSWD: %2\n")
-                             .arg(user, sudoersEscape(binary));
+                             .arg(user, sudoersEscape(kPfctlPath));
 
     QTemporaryFile temp(QDir::tempPath() + QStringLiteral("/focusos-sudoers.XXXXXX"));
     temp.setAutoRemove(true);

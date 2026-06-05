@@ -93,6 +93,11 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(QString networkLockRoutineName READ networkLockRoutineName NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QStringList alwaysAllowedApps READ alwaysAllowedApps NOTIFY alwaysAllowedAppsChanged)
     Q_PROPERTY(bool overlayProgressEnabled READ overlayProgressEnabled WRITE setOverlayProgressEnabled NOTIFY overlayProgressEnabledChanged)
+    // Persistent kiosk (macOS): launch FocusOS at every login and respawn it on
+    // any quit/kill, so it can only be left via the 6-digit-gated QUIT path.
+    // supported is platform-constant; enabled reflects the next-login state.
+    Q_PROPERTY(bool persistentKioskSupported READ persistentKioskSupported CONSTANT)
+    Q_PROPERTY(bool persistentKioskEnabled READ persistentKioskEnabled NOTIFY persistentKioskChanged)
     Q_PROPERTY(bool displayStaysAwake READ displayStaysAwake WRITE setDisplayStaysAwake NOTIFY displayStaysAwakeChanged)
     // Whether the deep-idle stage (after the screensaver) suspends the whole
     // machine (S3) in addition to turning the display off + pausing music.
@@ -234,6 +239,18 @@ public:
     // Log the user out of their account / session (returns to the login
     // screen). Admin-gated by the caller (settings access).
     Q_INVOKABLE void signOut();
+    // Persistent kiosk getters (see the Q_PROPERTYs).
+    bool persistentKioskSupported() const;
+    bool persistentKioskEnabled() const;
+    // Arm/disarm launch-at-login + un-quittable. Admin-gated by the caller
+    // (settings access). Returns an empty string on success, else an error.
+    Q_INVOKABLE QString setPersistentKiosk(bool enabled);
+    // Authorized quit: the ONLY way to leave FocusOS when the persistent kiosk is
+    // armed. Drops the network lock, retires the active routine checkpoint, stands
+    // down the respawn agents (so launchd won't relaunch this session), then quits.
+    // Admin-gated by the caller (the 6-digit Settings unlock). FocusOS still
+    // launches again at the next login while the kiosk is enabled.
+    Q_INVOKABLE void quitFocusOS();
     Q_INVOKABLE QString applicationDisplayName(const QString &path) const;
     Q_INVOKABLE bool addAlwaysAllowedApp(const QString &commandLine);
     Q_INVOKABLE void removeAlwaysAllowedApp(int index);
@@ -279,6 +296,7 @@ signals:
     void networkLockPromptChanged();
     void alwaysAllowedAppsChanged();
     void overlayProgressEnabledChanged();
+    void persistentKioskChanged();
     void displayStaysAwakeChanged();
     void screenLockedChanged();
     void desktopAccessRequested();

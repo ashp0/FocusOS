@@ -59,6 +59,7 @@ LOCAL_X_SESSIONS="/usr/local/share/xsessions"
 SDDM_CONF_DIR="/etc/sddm.conf.d"
 LOGIND_CONF_DIR="/etc/systemd/logind.conf.d"
 SLEEP_CONF_DIR="/etc/systemd/sleep.conf.d"
+UDEV_RULES_DIR="/etc/udev/rules.d"
 SUDOERS_FILE="/etc/sudoers.d/focusos"
 SESSION_BIN="/usr/local/bin/focusos-session"
 
@@ -227,7 +228,7 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
         FEAT_LOGIND_LOCK="$(ask_yn "  Lock down power/lid/suspend keys (logind)?" "$FEAT_LOGIND_LOCK")"
         FEAT_MASK_VT="$(ask_yn "  Mask the virtual terminals (Ctrl+Alt+F<n>)?" "$FEAT_MASK_VT")"
         FEAT_NET_CAP="$(ask_yn "  Grant CAP_NET_ADMIN to nft (network allowlist)?" "$FEAT_NET_CAP")"
-        FEAT_SLEEP_CONF="$(ask_yn "  Install the safe-suspend (s2idle) sleep config?" "$FEAT_SLEEP_CONF")"
+        FEAT_SLEEP_CONF="$(ask_yn "  Install safe-suspend (s2idle) + T7 USB-autosuspend?" "$FEAT_SLEEP_CONF")"
         FEAT_RECOVERY_SUDOERS="$(ask_yn "  Install the scoped TOTP-recovery sudoers rule?" "$FEAT_RECOVERY_SUDOERS")"
     fi
 fi
@@ -378,6 +379,17 @@ if [[ "$FEAT_SLEEP_CONF" -eq 1 ]]; then
     echo "── installing safe-suspend (s2idle) sleep config ────────"
     install -d "$SLEEP_CONF_DIR"
     install -m 0644 "$SCRIPT_DIR/90-focusos-sleep.conf" "$SLEEP_CONF_DIR/90-focusos-sleep.conf"
+
+    # Let the Samsung T7 USB SSD sleep its link (blue LED off) when idle, the way
+    # macOS did — scoped by VID:PID so nothing else is touched. The rule fires on
+    # the next plug/boot; reload + trigger so it also applies to the live session.
+    echo "── installing T7 USB-autosuspend udev rule ──────────────"
+    install -m 0644 "$SCRIPT_DIR/99-focusos-usb-autosuspend.rules" "$UDEV_RULES_DIR/99-focusos-usb-autosuspend.rules"
+    udevadm control --reload 2>/dev/null || true
+    udevadm trigger --action=add --subsystem-match=usb 2>/dev/null || true
+else
+    rm -f "$UDEV_RULES_DIR/99-focusos-usb-autosuspend.rules" 2>/dev/null || true
+    udevadm control --reload 2>/dev/null || true
 fi
 
 if [[ "$FEAT_MASK_VT" -eq 1 ]]; then

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointF>
 #include <Qt>
 #include <QTimer>
 
@@ -76,6 +77,15 @@ private:
     bool m_idle = false;
     bool m_deepIdle = false;
     bool m_suppressed = false;
+    // Last cursor position a MouseMove was *counted* at. Sub-threshold jitter
+    // (a Magic Mouse trembling on the desk, a bumped table) is ignored so it
+    // can't perpetually re-arm the idle countdown — otherwise the screensaver /
+    // display-sleep never fires on a machine that's actually been left alone.
+    // Mirrors how desktop screensavers treat tiny pointer noise as "no input".
+    QPointF m_lastCountedMousePos;
+    bool m_haveLastMousePos = false;
+    // Manhattan-distance the cursor must travel before a move counts as activity.
+    static constexpr qreal kMouseJitterPx = 12.0;
     int m_timeoutMs = 5 * 60 * 1000;       // 5 minutes to the starfield screensaver
     int m_deepTimeoutMs = 2 * 60 * 1000;   // 2 more minutes to deep sleep (panel off)
     // 23 more minutes after deep sleep → 30 minutes total idle → lock the screen.

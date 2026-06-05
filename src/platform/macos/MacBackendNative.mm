@@ -118,7 +118,6 @@ NSString *applicationBundlePathForExecutable(NSString *executablePath)
 // FocusOS already runs as root for the Endpoint Security exec-blocker, so the
 // same privilege covers the firewall.
 
-const QString kPfRulesetPath = QStringLiteral("/etc/pf.anchors/focusos");
 const QString kPfctl = QStringLiteral("/sbin/pfctl");
 const QString kApplePfConf = QStringLiteral("/etc/pf.conf");
 
@@ -164,11 +163,6 @@ QString consoleHomePath()
 QString focusosDataDir()
 {
     return QDir(consoleHomePath()).absoluteFilePath(QStringLiteral(".focusos"));
-}
-
-QString focusosPfRulesetPath()
-{
-    return kPfRulesetPath;
 }
 
 bool hostMatchesAny(const QString &host, const QStringList &needles)
@@ -360,18 +354,39 @@ QString buildPfRuleset(const QStringList &allowedHosts)
 }
 
 // Run pfctl with the given args, capturing a human-readable error. Translates
-// the unprivileged failure (FocusOS not running as root) into actionable text.
-bool runPfctl(const QStringList &arguments, QString *errorMessage)
+// the unprivileged failure (no passwordless pfctl rule) into actionable text.
+//
+// pfctl needs root, but we deliberately do NOT run the whole GUI app as root:
+// a sudo-launched root process loses its TCC identity, which re-breaks the
+// Accessibility grant the CGEventTap blocker relies on. Instead the app stays
+// the normal user and drives ONLY pfctl through a NOPASSWD sudoers rule scoped
+// to /sbin/pfctl (installed by SystemStatus::enableElevatedLaunch). `sudo -n`
+// never prompts, so a missing rule fails fast here rather than hanging the UI.
+// `stdinData` feeds `pfctl -f -` so the ruleset never has to be written to a
+// root-owned file.
+bool runPfctl(const QStringList &arguments, QString *errorMessage,
+              const QByteArray &stdinData = {})
 {
+    const bool root = (geteuid() == 0);
     QProcess pfctl;
     pfctl.setProcessChannelMode(QProcess::MergedChannels);
-    pfctl.start(kPfctl, arguments);
+    if (root) {
+        pfctl.start(kPfctl, arguments);
+    } else {
+        QStringList sudoArgs { QStringLiteral("-n"), kPfctl };
+        sudoArgs += arguments;
+        pfctl.start(QStringLiteral("/usr/bin/sudo"), sudoArgs);
+    }
     if (!pfctl.waitForStarted(3000)) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Unable to start /sbin/pfctl");
         }
         return false;
     }
+    if (!stdinData.isEmpty()) {
+        pfctl.write(stdinData);
+    }
+    pfctl.closeWriteChannel();
     if (!pfctl.waitForFinished(5000)) {
         pfctl.kill();
         pfctl.waitForFinished(200);
@@ -384,16 +399,25 @@ bool runPfctl(const QStringList &arguments, QString *errorMessage)
     // "ALTQ" warnings are noise. Treat a non-zero exit as the real failure.
     if (pfctl.exitStatus() != QProcess::NormalExit || pfctl.exitCode() != 0) {
         QString output = QString::fromUtf8(pfctl.readAll()).trimmed();
-        const bool unprivileged =
+        // `sudo -n` with no matching NOPASSWD rule prints "a password is required"
+        // / "sudo: ..." and never runs pfctl — that's the "I enabled it but it
+        // still fails" case: the rule was never installed (or names a different
+        // user/binary).
+        const bool noSudoRule = !root &&
+            (output.contains(QStringLiteral("password is required"), Qt::CaseInsensitive) ||
+             output.contains(QStringLiteral("a terminal is required"), Qt::CaseInsensitive) ||
+             output.contains(QStringLiteral("sudo:"), Qt::CaseInsensitive));
+        const bool unprivileged = noSudoRule ||
             output.contains(QStringLiteral("Permission denied"), Qt::CaseInsensitive) ||
             output.contains(QStringLiteral("Operation not permitted"), Qt::CaseInsensitive) ||
             output.contains(QStringLiteral("/dev/pf"), Qt::CaseInsensitive);
         if (errorMessage) {
             if (unprivileged) {
                 *errorMessage = QStringLiteral(
-                    "FocusOS needs root to drive the pf firewall. Launch it with sudo:\n"
-                    "  sudo /Applications/FocusOS.app/Contents/MacOS/focusos\n"
-                    "Strict mode will not start until the network lock can be installed.");
+                    "FocusOS can't drive the pf firewall yet. Open Settings → SYSTEM, "
+                    "enter your Mac admin password and tap \"Enable passwordless "
+                    "firewall\" — that grants FocusOS passwordless pfctl access. No "
+                    "restart needed; engage the routine again afterwards.");
             } else {
                 *errorMessage = output.isEmpty()
                     ? QStringLiteral("pfctl refused the ruleset (unknown error)")
@@ -1018,6 +1042,87 @@ EndpointSecurityExecBlocker &execBlocker()
 
 #endif
 
+// ---------------------------------------------------------------------------
+// Home-screen kiosk activation guard. NSApplicationPresentationOptions
+// (HideDock, DisableProcessSwitching=⌘-Tab, HideMenuBar, DisableForceQuit …)
+// ONLY take effect while FocusOS is the *active* (frontmost) app — when another
+// app is frontmost the system ignores them entirely. That is why the lock used
+// to require a CLICK on the FocusOS window after a routine ended or at launch:
+// until the click made FocusOS active, the Dock / ⌘-Tab / Mission Control were
+// all reachable. The fix is two-fold: (1) actually land activation (the old
+// activateIgnoringOtherApps: alone is unreliable on modern macOS), and (2) keep
+// FocusOS frontmost on the locked home screen by re-activating + re-asserting the
+// options the instant it resigns active. The home screen has nothing else to
+// focus (the engage sweep closed the user's apps; the launch watcher reaps new
+// ones), so reclaiming focus there is correct and makes the lock un-bypassable.
+// The guard is installed by enterKioskPresentation and removed by
+// leaveKioskPresentation, so it is OFF during a routine / admin desktop access
+// (where the user is meant to move focus to the allowed apps).
+id g_resignActiveObserver = nil;
+
+void applyKioskPresentationAndActivate()
+{
+    // Caller guarantees the main thread.
+    [NSApplication sharedApplication];
+    const NSApplicationPresentationOptions options =
+        NSApplicationPresentationHideDock |
+        NSApplicationPresentationHideMenuBar |
+        NSApplicationPresentationDisableAppleMenu |
+        NSApplicationPresentationDisableProcessSwitching |
+        NSApplicationPresentationDisableForceQuit |
+        NSApplicationPresentationDisableSessionTermination |
+        NSApplicationPresentationDisableHideApplication;
+    @try {
+        [NSApp setPresentationOptions:options];
+    } @catch (NSException *) {
+    }
+    // Become frontmost so the options above are honored. activateIgnoringOtherApps:
+    // is deprecated and frequently ignored on macOS 14+, so also drive the
+    // NSRunningApplication API (the documented modern path) and pull every window
+    // forward — the cover window becomes key, the click-through overlay panel does
+    // not (it is non-activating).
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [NSApp activateIgnoringOtherApps:YES];
+    [[NSRunningApplication currentApplication]
+        activateWithOptions:NSApplicationActivateAllWindows |
+                            NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+}
+
+void installKioskActivationGuardLocked()
+{
+    if (g_resignActiveObserver != nil) {
+        return;
+    }
+    g_resignActiveObserver = [[NSNotificationCenter defaultCenter]
+        addObserverForName:NSApplicationDidResignActiveNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *) {
+        // FocusOS just lost frontmost while the home-screen lock is up → the kiosk
+        // presentation options went inert (Dock / ⌘-Tab / Mission Control would
+        // reappear). Reclaim focus and re-assert them so the lock holds without a
+        // click. A short delay lets the system settle and prevents a tight
+        // activation loop if something briefly contends for focus.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            if (g_resignActiveObserver == nil) {
+                return;  // guard was lifted (routine engaged / desktop access) meanwhile
+            }
+            applyKioskPresentationAndActivate();
+        });
+    }];
+}
+
+void removeKioskActivationGuardLocked()
+{
+    if (g_resignActiveObserver != nil) {
+        [[NSNotificationCenter defaultCenter] removeObserver:g_resignActiveObserver];
+        g_resignActiveObserver = nil;
+    }
+}
+
 } // namespace
 
 namespace MacBackendNative {
@@ -1149,17 +1254,12 @@ bool enterKioskPresentation(QString *errorMessage)
     __block QString error;
     performOnMainThreadSync(^{
         @try {
-            [NSApplication sharedApplication];
-            const NSApplicationPresentationOptions options =
-                NSApplicationPresentationHideDock |
-                NSApplicationPresentationHideMenuBar |
-                NSApplicationPresentationDisableAppleMenu |
-                NSApplicationPresentationDisableProcessSwitching |
-                NSApplicationPresentationDisableForceQuit |
-                NSApplicationPresentationDisableSessionTermination |
-                NSApplicationPresentationDisableHideApplication;
-            [NSApp setPresentationOptions:options];
-            [NSApp activateIgnoringOtherApps:YES];
+            // Apply the kiosk presentation options AND reliably become frontmost
+            // (the options are inert unless FocusOS is the active app), then install
+            // the resign-active guard so the lock re-asserts itself automatically if
+            // focus ever slips — no click on the FocusOS window required.
+            applyKioskPresentationAndActivate();
+            installKioskActivationGuardLocked();
         } @catch (NSException *exception) {
             error = QStringLiteral("Unable to enter macOS kiosk presentation mode: %1")
                 .arg(fromNSString([exception reason]));
@@ -1328,11 +1428,43 @@ void raiseWindowToSystemOverlayLevel(void *nsView)
             // WindowTransparentForInput flag.
             window.level = NSScreenSaverWindowLevel + 1;
             window.ignoresMouseEvents = YES;
+            // Guarantee the panel is actually drawable + transparent (not an opaque
+            // black fill, not alpha 0): defensive against any state that would render
+            // the border invisible. Matches the verified standalone overlay setup.
+            window.opaque = NO;
+            window.backgroundColor = [NSColor clearColor];
+            window.hasShadow = NO;
+            if (window.alphaValue < 0.99) {
+                window.alphaValue = 1.0;
+            }
+            window.contentView.wantsLayer = YES;
             window.collectionBehavior |=
                 NSWindowCollectionBehaviorCanJoinAllSpaces |
                 NSWindowCollectionBehaviorStationary |
                 NSWindowCollectionBehaviorFullScreenAuxiliary |
                 NSWindowCollectionBehaviorIgnoresCycle;
+            // The overlay is a Qt::Tool window → an NSPanel, which defaults to
+            // hidesOnDeactivate=YES: it disappears the instant FocusOS is no longer
+            // the active app (i.e. the moment a routine app takes focus on the
+            // desktop Space). That's why the countdown border was "not on all
+            // workspaces". Pin it visible regardless of which app is frontmost.
+            window.hidesOnDeactivate = NO;
+            if ([window isKindOfClass:[NSPanel class]]) {
+                NSPanel *panel = (NSPanel *)window;
+                panel.floatingPanel = YES;
+                panel.becomesKeyOnlyIfNeeded = YES;
+                // Non-activating: the overlay must never become key/main, even
+                // momentarily, or macOS pulls FocusOS forward and the panel sticks
+                // to FocusOS's Space instead of floating across all of them. This
+                // is the difference between "shows only on the FocusOS window" and
+                // a true system-wide overlay.
+                panel.styleMask |= NSWindowStyleMaskNonactivatingPanel;
+            }
+            // orderFrontRegardless ignores the "app is not active" gate that the
+            // ordinary orderFront:/Qt show() path honors — so the border keeps
+            // painting on top even while a routine app on the desktop Space is the
+            // frontmost application.
+            [window orderFrontRegardless];
         } @catch (NSException *) {
         }
     });
@@ -1352,16 +1484,50 @@ void setMissionControlDisabled(bool disabled)
     // Targets the console user's preference domain even when FocusOS runs as root.
     const QString defaults = QStringLiteral("/usr/bin/defaults");
     const QString dockDomain = QStringLiteral("com.apple.dock");
+    // The trackpad/Magic-Mouse swipe-up that opens Mission Control / App Exposé is
+    // separate from the keyboard route the CGEventTap already swallows, and from
+    // mcx-expose-disabled (which macOS 26 no longer honors live). It's driven by the
+    // multitouch gesture prefs, so flip those off too on the locked home screen.
+    // Three- and four-finger vertical swipes cover whichever the user has bound to
+    // Mission Control. Both the built-in and Bluetooth trackpad domains are written.
+    const QStringList trackpadDomains {
+        QStringLiteral("com.apple.AppleMultitouchTrackpad"),
+        QStringLiteral("com.apple.driver.AppleBluetoothMultitouch.trackpad")
+    };
+    // Vertical = Mission Control / App Exposé (swipe up). Horizontal = switch between
+    // Spaces / full-screen apps (swipe sideways) — without disabling this the user
+    // could swipe to an adjacent Space and get stranded there (the swipe-back is the
+    // same blocked gesture, and ⌃-arrow is swallowed by the CGEventTap). Kill both
+    // axes for three- and four-finger swipes so the locked home screen is a dead end
+    // in every direction.
+    const QStringList swipeKeys {
+        QStringLiteral("TrackpadThreeFingerVertSwipeGesture"),
+        QStringLiteral("TrackpadFourFingerVertSwipeGesture"),
+        QStringLiteral("TrackpadThreeFingerHorizSwipeGesture"),
+        QStringLiteral("TrackpadFourFingerHorizSwipeGesture")
+    };
     if (disabled) {
         runAsConsoleUser(defaults, {QStringLiteral("write"), dockDomain,
                                     QStringLiteral("mcx-expose-disabled"),
                                     QStringLiteral("-bool"), QStringLiteral("true")});
+        for (const QString &domain : trackpadDomains) {
+            for (const QString &key : swipeKeys) {
+                runAsConsoleUser(defaults, {QStringLiteral("write"), domain, key,
+                                            QStringLiteral("-int"), QStringLiteral("0")});
+            }
+        }
     } else {
         // `mcx-expose-disabled` is not a key ordinary users set, so deleting it
         // simply returns Mission Control to its default (enabled) state. The error
-        // path (key absent) is harmless.
+        // path (key absent) is harmless. Likewise delete the swipe-gesture overrides
+        // so the trackpad reverts to the user's System Settings defaults.
         runAsConsoleUser(defaults, {QStringLiteral("delete"), dockDomain,
                                     QStringLiteral("mcx-expose-disabled")});
+        for (const QString &domain : trackpadDomains) {
+            for (const QString &key : swipeKeys) {
+                runAsConsoleUser(defaults, {QStringLiteral("delete"), domain, key});
+            }
+        }
     }
     runAsConsoleUser(QStringLiteral("/usr/bin/killall"), {QStringLiteral("Dock")});
 }
@@ -1370,6 +1536,10 @@ void leaveKioskPresentation()
 {
     performOnMainThreadSync(^{
         @try {
+            // Lift the self-reactivation guard FIRST so dropping the presentation
+            // options (and letting a routine app take focus) doesn't trigger a
+            // re-grab. Then restore the default presentation.
+            removeKioskActivationGuardLocked();
             [NSApplication sharedApplication];
             [NSApp setPresentationOptions:NSApplicationPresentationDefault];
         } @catch (NSException *) {
@@ -1832,15 +2002,6 @@ QString buildNetworkFilterRuleset(const QStringList &allowedHosts)
 
 bool commitNetworkFilter(const QString &ruleset, QString *errorMessage)
 {
-    if (geteuid() != 0) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral(
-                "FocusOS is not running as root, so the pf firewall cannot be "
-                "installed. Enable elevated launch in Settings, then fully quit "
-                "and restart FocusOS from the Dock.");
-        }
-        return false;
-    }
     if (ruleset.trimmed().isEmpty()) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Refusing to install an empty pf ruleset");
@@ -1848,34 +2009,14 @@ bool commitNetworkFilter(const QString &ruleset, QString *errorMessage)
         return false;
     }
 
-    // Persist the ruleset where pfctl can read it (and where it survives for the
-    // duration of the routine). /etc/pf.anchors is the conventional home for
-    // add-on pf rules and already exists on every macOS install.
-    QDir().mkpath(QFileInfo(focusosPfRulesetPath()).absolutePath());
-    QSaveFile file(focusosPfRulesetPath());
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("Unable to write the pf ruleset to %1 (run FocusOS as root)")
-                .arg(focusosPfRulesetPath());
-        }
-        return false;
-    }
-    file.write(ruleset.toUtf8());
-    if (!file.commit()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("Unable to save the pf ruleset to %1")
-                .arg(focusosPfRulesetPath());
-        }
-        return false;
-    }
-
-    // Load our ruleset and enable pf in one step. `-E` is reference-counted, so
-    // it composes with any pf already running and hands back a token; we don't
-    // track the token because dropNetworkFilter() restores Apple's default
-    // ruleset and disables pf outright at routine end.
-    return runPfctl({QStringLiteral("-E"),
-                     QStringLiteral("-f"), focusosPfRulesetPath()},
-                    errorMessage);
+    // Load our ruleset and enable pf in one step, piping the rules in on stdin
+    // (`-f -`) so we never have to write a root-owned file from an unprivileged
+    // process — runPfctl runs pfctl as root directly or via the scoped `sudo -n`
+    // rule. `-E` is reference-counted, so it composes with any pf already running
+    // and hands back a token; we don't track the token because dropNetworkFilter()
+    // restores Apple's default ruleset and disables pf outright at routine end.
+    return runPfctl({QStringLiteral("-E"), QStringLiteral("-f"), QStringLiteral("-")},
+                    errorMessage, ruleset.toUtf8());
 }
 
 bool applyNetworkFilter(const QStringList &allowedHosts, QString *errorMessage)

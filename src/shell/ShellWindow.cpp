@@ -262,6 +262,13 @@ void ShellWindow::enterRoutineFullScreen()
     MacBackendNative::enterNativeFullScreen(reinterpret_cast<void *>(winId()));
     // Keep the countdown border painting over the routine apps in the other Space.
     updateProgressOverlay();
+    // The native-fullscreen toggle is animated (~0.5–0.7s) and macOS reconfigures
+    // the overlay panel as the Space changes under it — which resets the
+    // all-Spaces collection behavior and screen-saver level we just set, so the
+    // border falls back to FocusOS's own Space. Re-assert after the transition has
+    // settled (and once more, belt-and-suspenders) so it floats across every Space.
+    QTimer::singleShot(750, this, &ShellWindow::updateProgressOverlay);
+    QTimer::singleShot(1200, this, &ShellWindow::updateProgressOverlay);
 }
 
 void ShellWindow::enterDesktopAccessWindow()

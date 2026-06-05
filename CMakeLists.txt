@@ -242,3 +242,62 @@ set_target_properties(focusos PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
 )
+
+if(APPLE)
+    # Stable codesigning so TCC permission grants survive a rebuild.
+    #
+    # The default Qt/linker signature is *ad-hoc* (`codesign --sign -`), whose
+    # Designated Requirement is just the binary's cdhash. macOS pins an
+    # Accessibility (and Screen-Recording, etc.) grant to that exact cdhash, so
+    # every `cmake --build` relinks the binary, changes the cdhash, and silently
+    # invalidates the grant — AXIsProcessTrusted() flips back to false and the
+    # system re-pops the "FocusOS wants to control this computer" prompt on every
+    # launch and every routine engage (and the CGEventTap key blocker, which needs
+    # Accessibility, goes inert — so the Mission-Control keys stop being swallowed).
+    #
+    # Signing with a real certificate (even a free "Apple Development" one) gives an
+    # identifier+team based Designated Requirement that does NOT change across
+    # rebuilds, so the grant sticks: the user authorises Accessibility once and it
+    # stays authorised. We auto-detect an available identity at configure time;
+    # override with -DFOCUSOS_CODESIGN_IDENTITY=... (a name or SHA-1 hash), or set it
+    # to "-" to fall back to ad-hoc. NOTE: switching identity changes the binary's
+    # identity once, so the FIRST launch after this change still needs a single
+    # re-grant; it is stable from then on.
+    if(NOT DEFINED FOCUSOS_CODESIGN_IDENTITY)
+        execute_process(
+            COMMAND security find-identity -v -p codesigning
+            OUTPUT_VARIABLE _focusos_identities
+            ERROR_QUIET)
+        # Prefer a Developer ID, else an Apple Development cert; capture its hash.
+        string(REGEX MATCH "([0-9A-F]+) \"Developer ID Application" _m "${_focusos_identities}")
+        if(NOT _m)
+            string(REGEX MATCH "([0-9A-F]+) \"Apple Development" _m "${_focusos_identities}")
+        endif()
+        if(_m)
+            set(FOCUSOS_CODESIGN_IDENTITY "${CMAKE_MATCH_1}" CACHE STRING "codesign identity for FocusOS.app")
+        else()
+            set(FOCUSOS_CODESIGN_IDENTITY "-" CACHE STRING "codesign identity for FocusOS.app")
+        endif()
+    endif()
+    if(FOCUSOS_CODESIGN_IDENTITY STREQUAL "-")
+        message(WARNING "FocusOS: no codesigning identity found — signing ad-hoc. "
+                        "TCC grants (Accessibility) will be invalidated on every rebuild. "
+                        "Create a self-signed cert or use an Apple Development identity and "
+                        "re-run cmake with -DFOCUSOS_CODESIGN_IDENTITY=<name-or-hash>.")
+    else()
+        message(STATUS "FocusOS codesign identity: ${FOCUSOS_CODESIGN_IDENTITY}")
+    endif()
+    # Re-sign the finished bundle after every build. --identifier keeps the bundle ID
+    # stable regardless of the cert; no --options runtime (hardened runtime) so the
+    # external Homebrew Qt frameworks still load (library validation stays off), and
+    # no entitlements (the restricted Endpoint-Security entitlement needs the ad-hoc
+    # SIP-off path in packaging/macos/build-and-sign.sh, which still works on top).
+    add_custom_command(TARGET focusos POST_BUILD
+        COMMAND /usr/bin/codesign --force
+                --sign "${FOCUSOS_CODESIGN_IDENTITY}"
+                --identifier com.focusos.shell
+                --timestamp=none
+                "$<TARGET_BUNDLE_DIR:focusos>"
+        COMMENT "Codesigning FocusOS.app (stable identity → TCC grants survive rebuilds)"
+        VERBATIM)
+endif()

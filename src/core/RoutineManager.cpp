@@ -325,6 +325,25 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     // wired before a resumed routine fires them. Resumes a locked routine left
     // behind by a kill/crash via the active.json checkpoint.
     QTimer::singleShot(0, this, &RoutineManager::resumeActiveSessionIfPresent);
+
+    // Persistent kiosk defaults ON: the very first time FocusOS runs on a machine
+    // that supports it, arm launch-at-login + un-quittable. A marker records that
+    // the default has been applied so we never re-enable it after the user turns it
+    // off in Settings → SYSTEM. (Enabling only writes the LaunchAgent plist; it does
+    // not spawn a second instance — see MacBackend::setPersistentKiosk.)
+    if (m_backend && m_backend->persistentKioskSupported()) {
+        const QString marker = QDir(dataDirectory()).absoluteFilePath(
+            QStringLiteral("kiosk-default-applied"));
+        if (!QFileInfo::exists(marker)) {
+            QString kioskError;
+            m_backend->setPersistentKiosk(true, &kioskError);
+            QFile flag(marker);
+            if (flag.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                flag.write("1\n");
+            }
+            emit persistentKioskChanged();
+        }
+    }
 }
 
 int RoutineManager::rowCount(const QModelIndex &parent) const
@@ -1182,6 +1201,53 @@ void RoutineManager::signOut()
     }
 }
 
+bool RoutineManager::persistentKioskSupported() const
+{
+    return m_backend && m_backend->persistentKioskSupported();
+}
+
+bool RoutineManager::persistentKioskEnabled() const
+{
+    return m_backend && m_backend->persistentKioskEnabled();
+}
+
+QString RoutineManager::setPersistentKiosk(bool enabled)
+{
+    if (!m_backend) {
+        return QStringLiteral("Unsupported on this platform.");
+    }
+    QString error;
+    const bool ok = m_backend->setPersistentKiosk(enabled, &error);
+    emit persistentKioskChanged();
+    if (!ok && !error.isEmpty()) {
+        setStatusMessage(error);
+        return error;
+    }
+    return {};
+}
+
+void RoutineManager::quitFocusOS()
+{
+    // Mirror signOut()'s teardown so a quit never strands the machine behind the
+    // network lock or leaves a checkpoint the watchdog would respawn from.
+    if (m_backend) {
+        m_backend->dropNetworkPolicy();
+    }
+    clearActiveSession();
+    m_inactivityTimer.stop();
+    m_accessTimer.stop();
+
+    if (m_backend) {
+        // Stand down the respawn agents (login agent + watchdog) for this session.
+        // If FocusOS is itself the login-agent instance this terminates us via
+        // launchd (the crash-cleanup signal handler then restores the system UI);
+        // otherwise the quit() below does it. The login agent stays installed, so
+        // FocusOS still launches at the next login while the kiosk is enabled.
+        m_backend->prepareForAuthorizedQuit();
+    }
+    QCoreApplication::quit();
+}
+
 void RoutineManager::continueFinishedSession()
 {
     // Task 5 — "Continue" after the timer expires keeps the momentum: re-enter
@@ -1966,11 +2032,25 @@ void RoutineManager::resumeActiveSessionIfPresent()
     // crash handler tears the nft table down, but the BlockerPolicy file or a
     // partial state could linger). dropNetworkPolicy is idempotent / no-op when
     // nothing is active, so it's safe to run on every clean launch.
-    const auto cleanupAndReturn = [this]() {
+    // Genuine fresh launch (nothing to resume): close every other GUI app so
+    // FocusOS starts from a clean surface, the same sweep a strict engage does.
+    // Only on a fresh launch — the resume path below keeps the routine's own apps
+    // open via prepareRoutineSession. macOS-only: the Linux bare session has no
+    // user apps to sweep and we don't want to perturb the primary target.
+    const auto sweepForFreshLaunch = [this]() {
+#if defined(Q_OS_MACOS)
+        if (m_backend) {
+            m_backend->quitBackgroundApps({});
+        }
+#endif
+    };
+
+    const auto cleanupAndReturn = [this, &sweepForFreshLaunch]() {
         clearActiveSession();
         if (m_backend) {
             m_backend->dropNetworkPolicy();
         }
+        sweepForFreshLaunch();
     };
 
     const QFileInfo checkpointInfo(activeSessionPath());
@@ -1979,6 +2059,7 @@ void RoutineManager::resumeActiveSessionIfPresent()
         if (m_backend) {
             m_backend->dropNetworkPolicy();
         }
+        sweepForFreshLaunch();
         return;
     }
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
