@@ -268,8 +268,6 @@ public:
     // their own machine before trusting it. Empty where unsupported.
     Q_INVOKABLE QStringList previewBackgroundAppQuit() const;
 
-    static QString dataDirectory();
-
 public slots:
     // Task 6 — turn the screen off / show a black lock overlay. Any input
     // calls unlockScreen() to restore. Declared as slots (not just Q_INVOKABLE)

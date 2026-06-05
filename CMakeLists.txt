@@ -46,6 +46,10 @@ set(FOCUSOS_SOURCES
     src/blocker/BlockerPolicy.h
     src/blocker/BlockerHost.cpp
     src/blocker/BlockerHost.h
+    src/core/AppPaths.cpp
+    src/core/AppPaths.h
+    src/core/FilePicker.cpp
+    src/core/FilePicker.h
     src/core/NotesStore.cpp
     src/core/NotesStore.h
     src/core/MusicEngine.cpp

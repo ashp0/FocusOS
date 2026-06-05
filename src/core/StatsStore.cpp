@@ -1,6 +1,6 @@
 #include "core/StatsStore.h"
 
-#include "core/RoutineManager.h"
+#include "core/AppPaths.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -19,7 +19,7 @@ constexpr qint64 kProgressSaveIntervalMs = 45 * 1000;
 
 QString statsPath()
 {
-    return RoutineManager::dataDirectory() + QStringLiteral("/stats.json");
+    return AppPaths::filePath(QStringLiteral("stats.json"));
 }
 
 QString normalizedResult(const QString &result)
@@ -43,7 +43,7 @@ QDate localDateForSession(const RoutineSession &session)
 StatsStore::StatsStore(QObject *parent)
     : QObject(parent)
 {
-    QDir().mkpath(RoutineManager::dataDirectory());
+    QDir().mkpath(AppPaths::dataDirectory());
     load();
     importInterruptedActiveSession();
     save();

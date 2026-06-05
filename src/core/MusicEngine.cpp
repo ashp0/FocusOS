@@ -1,6 +1,6 @@
 #include "core/MusicEngine.h"
 
-#include "core/RoutineManager.h"
+#include "core/AppPaths.h"
 
 #include <QAudioBuffer>
 #include <QAudioDevice>
@@ -31,12 +31,12 @@ namespace {
 
 QString configPath()
 {
-    return RoutineManager::dataDirectory() + QStringLiteral("/config.json");
+    return AppPaths::filePath(QStringLiteral("config.json"));
 }
 
 QString musicDirectory()
 {
-    return RoutineManager::dataDirectory() + QStringLiteral("/music");
+    return AppPaths::filePath(QStringLiteral("music"));
 }
 
 QString fallbackTrackPath()

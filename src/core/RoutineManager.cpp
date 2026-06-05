@@ -1,12 +1,13 @@
 #include "core/RoutineManager.h"
 
+#include "core/AppPaths.h"
+#include "core/FilePicker.h"
 #include "platform/PlatformBackend.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -21,7 +22,6 @@
 #include <QVariantMap>
 
 #if defined(Q_OS_MACOS)
-#include <pwd.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -36,12 +36,12 @@ constexpr qint64 kCheckpointWriteIntervalMs = 30 * 1000;
 
 QString routinesPath()
 {
-    return RoutineManager::dataDirectory() + QStringLiteral("/routines.json");
+    return AppPaths::filePath(QStringLiteral("routines.json"));
 }
 
 QString configPath()
 {
-    return RoutineManager::dataDirectory() + QStringLiteral("/config.json");
+    return AppPaths::filePath(QStringLiteral("config.json"));
 }
 
 // Live-session checkpoint. Its mere existence means a routine is "armed" —
@@ -50,23 +50,10 @@ QString configPath()
 // legitimate end (expiry, or TOTP-unlock past the min-time floor).
 QString activeSessionPath()
 {
-    return RoutineManager::dataDirectory() + QStringLiteral("/active.json");
+    return AppPaths::filePath(QStringLiteral("active.json"));
 }
 
 #if defined(Q_OS_MACOS)
-QString macConsoleHomePath()
-{
-    const QByteArray sudoUser = qgetenv("SUDO_USER");
-    if (geteuid() == 0 && !sudoUser.isEmpty() && sudoUser != "root") {
-        if (const struct passwd *pw = getpwnam(sudoUser.constData())) {
-            if (pw->pw_dir && pw->pw_dir[0] != '\0') {
-                return QString::fromLocal8Bit(pw->pw_dir);
-            }
-        }
-    }
-    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-}
-
 uint macLaunchdUserId()
 {
     bool ok = false;
@@ -289,7 +276,7 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     : QAbstractListModel(parent)
     , m_backend(backend)
 {
-    QDir().mkpath(dataDirectory());
+    QDir().mkpath(AppPaths::dataDirectory());
     loadConfig();
     loadRoutines();
 
@@ -332,7 +319,7 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     // off in Settings → SYSTEM. (Enabling only writes the LaunchAgent plist; it does
     // not spawn a second instance — see MacBackend::setPersistentKiosk.)
     if (m_backend && m_backend->persistentKioskSupported()) {
-        const QString marker = QDir(dataDirectory()).absoluteFilePath(
+        const QString marker = QDir(AppPaths::dataDirectory()).absoluteFilePath(
             QStringLiteral("kiosk-default-applied"));
         if (!QFileInfo::exists(marker)) {
             QString kioskError;
@@ -1511,139 +1498,23 @@ void RoutineManager::updateDisplaySleepInhibit()
 
 QString RoutineManager::pickApplication()
 {
-#if defined(Q_OS_MACOS)
-    return QFileDialog::getOpenFileName(
-        nullptr,
-        QStringLiteral("Select Allowed Application"),
-        QStringLiteral("/Applications"),
-        QStringLiteral("Applications (*.app)"));
-#elif defined(Q_OS_LINUX)
-    // Apps live in lots of places on Linux: system .desktop files, per-user and
-    // Flatpak/Snap exports (under dotted/hidden dirs), and standalone binaries /
-    // AppImages anywhere in $HOME. The old picker started in /usr/share and used
-    // the native dialog, which hid dotfolders — so apps like Obsidian (Flatpak,
-    // or an AppImage in ~/Applications) were unreachable. Use a Qt dialog with
-    // hidden files revealed, shortcuts to the common app dirs, and a filter that
-    // also matches AppImages / plain executables.
-    static const QStringList appDirs {
-        QDir::homePath() + QStringLiteral("/.local/share/applications"),
-        QDir::homePath() + QStringLiteral("/.local/share/flatpak/exports/share/applications"),
-        QStringLiteral("/var/lib/flatpak/exports/share/applications"),
-        QStringLiteral("/var/lib/snapd/desktop/applications"),
-        QStringLiteral("/usr/share/applications"),
-        QDir::homePath() + QStringLiteral("/Applications"),
-    };
-
-    QString startDir = QDir::homePath();
-    for (const QString &dir : appDirs) {
-        if (QFileInfo::exists(dir)) {
-            startDir = dir;
-            break;
-        }
+    // UI lives in FilePicker; the manager only relays the validation hint to its
+    // status line (the one bit of domain coupling the picker can't own).
+    const FilePicker::AppResult result = FilePicker::pickApplication();
+    if (!result.error.isEmpty()) {
+        setStatusMessage(result.error);
     }
-
-    QFileDialog dialog(nullptr, QStringLiteral("Select Allowed Application"), startDir);
-    dialog.setFileMode(QFileDialog::ExistingFile);
-    // Qt-drawn dialog so the hidden-files filter and sidebar shortcuts below are
-    // actually honored (the native portal dialog ignores them).
-    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
-    dialog.setFilter(dialog.filter() | QDir::Hidden);
-    dialog.setNameFilters({
-        QStringLiteral("Apps & executables (*.desktop *.AppImage *.appimage *.sh *)"),
-        QStringLiteral("Desktop entries (*.desktop)"),
-        QStringLiteral("AppImages (*.AppImage *.appimage)"),
-        QStringLiteral("All files (*)"),
-    });
-
-    QList<QUrl> shortcuts { QUrl::fromLocalFile(QDir::homePath()) };
-    for (const QString &dir : appDirs) {
-        if (QFileInfo::exists(dir)) {
-            shortcuts.append(QUrl::fromLocalFile(dir));
-        }
-    }
-    dialog.setSidebarUrls(shortcuts);
-
-    if (dialog.exec() != QDialog::Accepted) {
-        return {};
-    }
-    const QStringList selected = dialog.selectedFiles();
-    const QString path = selected.isEmpty() ? QString() : selected.first();
-    const QFileInfo info(path);
-    if (!path.isEmpty() &&
-        info.suffix().compare(QStringLiteral("desktop"), Qt::CaseInsensitive) != 0 &&
-        !info.isExecutable()) {
-        setStatusMessage(QStringLiteral("THAT FILE ISN'T EXECUTABLE — chmod +x IT, OR TYPE A COMMAND LIKE: flatpak run md.obsidian.Obsidian"));
-        return {};
-    }
-    return path;
-#else
-    return {};
-#endif
+    return result.path;
 }
 
 QString RoutineManager::pickFile()
 {
-    // A generic file picker for the "Open File" workflow. The selected path is
-    // added to a routine like any app entry, or opened straight away mid-session;
-    // either way the backend hands the file to its default application (PDF
-    // reader, image viewer, office suite, video player, …) rather than exec'ing
-    // it. Any file type is allowed — no executable check.
-    const QString documentFilter =
-        QStringLiteral("Books & documents (*.pdf *.epub *.mobi *.azw3 *.djvu *.fb2 *.cbz *.cbr *.chm)");
-#if defined(Q_OS_MACOS)
-    return QFileDialog::getOpenFileName(
-        nullptr,
-        QStringLiteral("Open File"),
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
-        QStringLiteral("All files (*);;") + documentFilter);
-#elif defined(Q_OS_LINUX)
-    const QString documentsDir =
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    const QString startDir = QFileInfo::exists(documentsDir) ? documentsDir : QDir::homePath();
-
-    QFileDialog dialog(nullptr, QStringLiteral("Open File"), startDir);
-    dialog.setFileMode(QFileDialog::ExistingFile);
-    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
-    dialog.setFilter(dialog.filter() | QDir::Hidden);
-    dialog.setNameFilters({ QStringLiteral("All files (*)"), documentFilter });
-    dialog.setSidebarUrls({
-        QUrl::fromLocalFile(QDir::homePath()),
-        QUrl::fromLocalFile(startDir),
-    });
-
-    if (dialog.exec() != QDialog::Accepted) {
-        return {};
-    }
-    const QStringList selected = dialog.selectedFiles();
-    return selected.isEmpty() ? QString() : selected.first();
-#else
-    return {};
-#endif
+    return FilePicker::pickFile();
 }
 
 QString RoutineManager::pickFolder()
 {
-    // Editor-side picker for a routine's optional extra access folder. Qt-drawn so
-    // hidden folders are reachable and the start dir is honoured.
-    const QString startDir = QDir::homePath();
-#if defined(Q_OS_MACOS)
-    return QFileDialog::getExistingDirectory(
-        nullptr, QStringLiteral("Select Access Folder"), startDir);
-#elif defined(Q_OS_LINUX)
-    QFileDialog dialog(nullptr, QStringLiteral("Select Access Folder"), startDir);
-    dialog.setFileMode(QFileDialog::Directory);
-    dialog.setOption(QFileDialog::ShowDirsOnly, true);
-    dialog.setOption(QFileDialog::DontUseNativeDialog, true);
-    dialog.setFilter(dialog.filter() | QDir::Hidden);
-    dialog.setSidebarUrls({ QUrl::fromLocalFile(QDir::homePath()) });
-    if (dialog.exec() != QDialog::Accepted) {
-        return {};
-    }
-    const QStringList selected = dialog.selectedFiles();
-    return selected.isEmpty() ? QString() : selected.first();
-#else
-    return {};
-#endif
+    return FilePicker::pickFolder();
 }
 
 QList<QPair<QString, QString>> RoutineManager::browseRootsInternal() const
@@ -2463,11 +2334,3 @@ int RoutineManager::indexOfRoutine(const QString &routineId) const
     return -1;
 }
 
-QString RoutineManager::dataDirectory()
-{
-#if defined(Q_OS_MACOS)
-    return macConsoleHomePath() + QStringLiteral("/.focusos");
-#else
-    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/.focusos");
-#endif
-}

@@ -76,7 +76,6 @@ private:
     bool draftIsForToday() const;
     void rolloverStaleDraft();
     void scheduleMidnightRollover();
-    static QString dataDirectory();
     static QString sessionsDirectory();
     static QString draftPath();
     static QString sessionFilePath(const QDate &date, const QString &sessionId);

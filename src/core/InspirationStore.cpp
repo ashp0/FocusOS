@@ -1,6 +1,6 @@
 #include "core/InspirationStore.h"
 
-#include "core/RoutineManager.h"
+#include "core/AppPaths.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -41,7 +41,7 @@ QString mediaTypeForSuffix(const QString &suffix)
 
 InspirationStore::InspirationStore(QObject *parent)
     : QObject(parent)
-    , m_directory(RoutineManager::dataDirectory() + QStringLiteral("/inspiration"))
+    , m_directory(AppPaths::filePath(QStringLiteral("inspiration")))
 {
     QDir().mkpath(m_directory);
     ensureReadme();

@@ -1,5 +1,7 @@
 #include "core/NotesStore.h"
 
+#include "core/AppPaths.h"
+
 #include <QDate>
 #include <QDir>
 #include <QFile>
@@ -45,7 +47,7 @@ QString safeSlug(const QString &text)
 NotesStore::NotesStore(QObject *parent)
     : QObject(parent)
 {
-    QDir().mkpath(dataDirectory());
+    QDir().mkpath(AppPaths::dataDirectory());
     QDir().mkpath(sessionsDirectory());
     m_saveTimer.setInterval(500);
     m_saveTimer.setSingleShot(true);
@@ -579,19 +581,14 @@ void NotesStore::writeSessionFile(const SessionNote &note) const
     }
 }
 
-QString NotesStore::dataDirectory()
-{
-    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/.focusos");
-}
-
 QString NotesStore::sessionsDirectory()
 {
-    return dataDirectory() + QStringLiteral("/sessions");
+    return AppPaths::filePath(QStringLiteral("sessions"));
 }
 
 QString NotesStore::draftPath()
 {
-    return dataDirectory() + QStringLiteral("/notes.json");
+    return AppPaths::filePath(QStringLiteral("notes.json"));
 }
 
 QString NotesStore::sessionFilePath(const QDate &date, const QString &sessionId)

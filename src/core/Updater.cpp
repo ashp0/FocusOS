@@ -1,5 +1,7 @@
 #include "core/Updater.h"
 
+#include "core/AppPaths.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -107,19 +109,14 @@ void Updater::appendLog(const QString &chunk)
     emit logChanged();
 }
 
-QString Updater::dataDirectory()
-{
-    return QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + QStringLiteral("/.focusos");
-}
-
 QString Updater::pendingPath()
 {
-    return dataDirectory() + QStringLiteral("/update-pending.json");
+    return AppPaths::filePath(QStringLiteral("update-pending.json"));
 }
 
 QString Updater::snapshotPointerPath()
 {
-    return dataDirectory() + QStringLiteral("/pending-snapshot");
+    return AppPaths::filePath(QStringLiteral("pending-snapshot"));
 }
 
 QString Updater::binaryPath() const

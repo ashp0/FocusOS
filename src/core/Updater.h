@@ -60,7 +60,6 @@ private:
 
     QString repoDirectory() const;
     QString scriptPath(const QString &scriptName) const;
-    static QString dataDirectory();
     static QString pendingPath();
     static QString snapshotPointerPath();
     QString binaryPath() const;

@@ -1,3 +1,4 @@
+#include "core/AppPaths.h"
 #include "core/InspirationStore.h"
 #include "core/IdleMonitor.h"
 #include "core/MediaKeys.h"
@@ -348,7 +349,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
 
-    const QString focusDataDir = RoutineManager::dataDirectory();
+    const QString focusDataDir = AppPaths::dataDirectory();
     QDir().mkpath(focusDataDir);
     QLockFile instanceLock(focusDataDir + QStringLiteral("/focusos.lock"));
     instanceLock.setStaleLockTime(0);

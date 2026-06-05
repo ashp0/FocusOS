@@ -2,7 +2,7 @@
 
 This is the **research / personal-machine** setup. It trades away some of your
 Mac's built-in security to get FocusOS's full enforcement without paying Apple's
-$99/yr Developer Program fee. Read [`../../macos.md`](../../macos.md) first for the
+$99/yr Developer Program fee. Read [`../../docs/macos.md`](../../docs/macos.md) first for the
 capability background; this file is the hands-on procedure.
 
 > **Tested target:** Apple Silicon (M-series), macOS 26. Intel Macs use a
