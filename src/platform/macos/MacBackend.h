@@ -58,6 +58,9 @@ public:
     void ensureKioskRespawnArmed();
     bool signOutSupported() const override { return true; }
     bool signOut(QString *errorMessage = nullptr) override;
+    bool powerControlSupported() const override { return true; }
+    bool restartMachine(QString *errorMessage = nullptr) override;
+    bool shutdownMachine(QString *errorMessage = nullptr) override;
 
     // Public so the free helpers in MacBackend.cpp's anonymous namespace can
     // match tracked processes against routine entries.
@@ -71,6 +74,9 @@ public:
     };
 
 private:
+    // Shared teardown + osascript hand-off for restartMachine()/shutdownMachine().
+    // appleEvent is the 4-char loginwindow event suffix ("rest" / "shut").
+    bool powerControl(const QString &appleEvent, QString *errorMessage);
     void startLockdown();
     void stopLockdown();
     void applyAquaUiLockdown();

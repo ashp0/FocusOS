@@ -47,6 +47,9 @@ public:
     bool restoreLoginSessions(QString *errorMessage = nullptr) override;
     bool signOutSupported() const override { return true; }
     bool signOut(QString *errorMessage = nullptr) override;
+    bool powerControlSupported() const override { return true; }
+    bool restartMachine(QString *errorMessage = nullptr) override;
+    bool shutdownMachine(QString *errorMessage = nullptr) override;
     void setDisplaySleepInhibited(bool inhibited) override;
     void releaseDisplaySleepInhibitors() override;
     void ensureGlobalShortcutsDaemon() override;
@@ -68,6 +71,11 @@ private:
     void tickLockdownWatchdog();
     QStringList alwaysAllowedProcessNames() const;
     QString watchdogScriptPath() const;
+    // Drop the ~/.focusos/session-exit marker that tells the kiosk respawn chain
+    // (watchdog + focusos-session.sh) this exit is intentional. intent is one of
+    // "signout" / "restart" / "shutdown" (informational; the file's presence is
+    // what matters).
+    void writeSessionExitMarker(const QString &intent);
 
     // While a network lock is live: if a browser is running but the blocker
     // extension stopped talking to its native host (i.e. it was disabled or

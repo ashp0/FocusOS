@@ -245,6 +245,11 @@ public:
     // Log the user out of their account / session (returns to the login
     // screen). Admin-gated by the caller (settings access).
     Q_INVOKABLE void signOut();
+    // Whether the machine can be restarted / shut down from here.
+    Q_INVOKABLE bool powerControlSupported() const;
+    // Reboot / power off the machine. Admin-gated by the caller (settings access).
+    Q_INVOKABLE void restartMachine();
+    Q_INVOKABLE void shutdownMachine();
     // Persistent kiosk getters (see the Q_PROPERTYs).
     bool persistentKioskSupported() const;
     bool persistentKioskEnabled() const;

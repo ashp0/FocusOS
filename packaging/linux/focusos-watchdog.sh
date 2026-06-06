@@ -26,6 +26,12 @@ set -uo pipefail
 
 FOCUS_DIR="${FOCUSOS_DIR:-$HOME/.focusos}"
 ACTIVE_FILE="$FOCUS_DIR/active.json"
+# Cross-process "this exit is intentional, stop respawning" marker. FocusOS drops
+# it on sign out / restart / shut down (LinuxBackend::writeSessionExitMarker).
+# When present we exit the supervise loop in BOTH modes — in kiosk mode that ends
+# kwin's --exit-with-session command, handing control back to focusos-session.sh
+# which then ends the login session (greeter) instead of respawning the shell.
+EXIT_MARKER="$FOCUS_DIR/session-exit"
 BINARY_FILE="$FOCUS_DIR/watchdog-binary"
 LOCK_FILE="$FOCUS_DIR/watchdog.lock"
 LOG_FILE="$FOCUS_DIR/watchdog.log"
@@ -110,6 +116,12 @@ record_spawn_and_check_loop() {
 }
 
 while true; do
+    # Intentional exit (sign out / restart / shut down): stop respawning and let
+    # the loop end. Checked first so it wins over a respawn in either mode.
+    if [[ -e "$EXIT_MARKER" ]]; then
+        log "session-exit marker present — watchdog exiting (mode=$MODE)"
+        break
+    fi
     if [[ "$MODE" == "kiosk" ]]; then
         if ! focus_running; then
             if record_spawn_and_check_loop; then

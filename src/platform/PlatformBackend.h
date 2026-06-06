@@ -190,4 +190,25 @@ public:
         }
         return false;
     }
+
+    // Whether this platform can restart / shut down the whole machine. Same kiosk
+    // caveat as signOut(): a plain quit would be respawned, so these must hand off
+    // to the OS power machinery (logind / loginwindow) rather than just exiting.
+    virtual bool powerControlSupported() const { return false; }
+    // Reboot the machine. Returns false (with errorMessage) when unsupported/fails.
+    virtual bool restartMachine(QString *errorMessage = nullptr)
+    {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Restart is not supported on this platform");
+        }
+        return false;
+    }
+    // Power the machine off. Returns false (with errorMessage) when unsupported/fails.
+    virtual bool shutdownMachine(QString *errorMessage = nullptr)
+    {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Shut down is not supported on this platform");
+        }
+        return false;
+    }
 };

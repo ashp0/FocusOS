@@ -131,6 +131,13 @@ session_command() {
     fi
 }
 
+# Clear any stale intentional-exit marker from a previous session so a fresh
+# login never starts already "wanting to exit". FocusOS rewrites it (via
+# LinuxBackend::writeSessionExitMarker) only when the user actually signs out /
+# restarts / shuts down during THIS session; we check for it after kwin exits.
+SESSION_EXIT_MARKER="$FOCUS_DIR/session-exit"
+rm -f "$SESSION_EXIT_MARKER" 2>/dev/null || true
+
 case "$FOCUSOS_MODE" in
     kwin)
         # kwin_wayland's --exit-with-session takes a SINGLE value that it
@@ -145,6 +152,11 @@ case "$FOCUSOS_MODE" in
         dbus-run-session -- kwin_wayland "${KWIN_ARGS[@]}" \
             --exit-with-session="$(session_command)"
         rc=$?
+        if [[ -e "$SESSION_EXIT_MARKER" ]]; then
+            rm -f "$SESSION_EXIT_MARKER" 2>/dev/null || true
+            echo "FocusOS: intentional session exit (sign out / power) — ending session." >&2
+            exit 0
+        fi
         exec_fallback "kwin/session exited (rc=$rc)"
         ;;
     direct)
@@ -152,6 +164,11 @@ case "$FOCUSOS_MODE" in
             bash "$WATCHDOG" --kiosk --binary "$FOCUSOS_BIN"
         else
             "$FOCUSOS_BIN"
+        fi
+        if [[ -e "$SESSION_EXIT_MARKER" ]]; then
+            rm -f "$SESSION_EXIT_MARKER" 2>/dev/null || true
+            echo "FocusOS: intentional session exit (sign out / power) — ending session." >&2
+            exit 0
         fi
         exec_fallback "FocusOS session exited"
         ;;

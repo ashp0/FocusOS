@@ -2832,6 +2832,71 @@ Item {
                         Item { Layout.fillWidth: true }
                     }
 
+                    Text {
+                        Layout.fillWidth: true
+                        visible: routineManager.powerControlSupported()
+                        text: "Restarts or powers off the whole machine. The fade cycle restarts on your next login."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: routineManager.powerControlSupported()
+                        spacing: 10
+
+                        AdminTextField {
+                            id: restartConfirmField
+                            Layout.preferredWidth: 128
+                            Layout.preferredHeight: 34
+                            placeholderText: "RESTART"
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 150
+                            Layout.preferredHeight: 34
+                            label: "↻ RESTART"
+                            danger: true
+                            actionEnabled: restartConfirmField.text === "RESTART"
+                            onClicked: {
+                                inspirationStore.resetFadeCycle()
+                                routineManager.restartMachine()
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: routineManager.powerControlSupported()
+                        spacing: 10
+
+                        AdminTextField {
+                            id: shutdownConfirmField
+                            Layout.preferredWidth: 128
+                            Layout.preferredHeight: 34
+                            placeholderText: "SHUT DOWN"
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 150
+                            Layout.preferredHeight: 34
+                            label: "⏻ SHUT DOWN"
+                            danger: true
+                            actionEnabled: shutdownConfirmField.text === "SHUT DOWN"
+                            onClicked: {
+                                inspirationStore.resetFadeCycle()
+                                routineManager.shutdownMachine()
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 1

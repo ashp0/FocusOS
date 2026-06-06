@@ -1226,6 +1226,49 @@ void RoutineManager::signOut()
     }
 }
 
+bool RoutineManager::powerControlSupported() const
+{
+    return m_backend && m_backend->powerControlSupported();
+}
+
+void RoutineManager::restartMachine()
+{
+    // Mirror signOut()'s teardown so the imminent reboot doesn't strand the box
+    // behind the network lock or leave a checkpoint the watchdog respawns from.
+    if (m_backend) {
+        m_backend->dropNetworkPolicy();
+    }
+    clearActiveSession();
+    m_inactivityTimer.stop();
+    m_accessTimer.stop();
+
+    if (!m_backend) {
+        return;
+    }
+    QString error;
+    if (!m_backend->restartMachine(&error) && !error.isEmpty()) {
+        setStatusMessage(error);
+    }
+}
+
+void RoutineManager::shutdownMachine()
+{
+    if (m_backend) {
+        m_backend->dropNetworkPolicy();
+    }
+    clearActiveSession();
+    m_inactivityTimer.stop();
+    m_accessTimer.stop();
+
+    if (!m_backend) {
+        return;
+    }
+    QString error;
+    if (!m_backend->shutdownMachine(&error) && !error.isEmpty()) {
+        setStatusMessage(error);
+    }
+}
+
 bool RoutineManager::persistentKioskSupported() const
 {
     return m_backend && m_backend->persistentKioskSupported();

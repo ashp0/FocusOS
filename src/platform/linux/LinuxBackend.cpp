@@ -1851,22 +1851,89 @@ bool LinuxBackend::restoreLoginSessions(QString *errorMessage)
     return true;
 }
 
+// Drop the cross-process "stop respawning, this exit is intentional" marker that
+// the kiosk respawn chain watches. Both the --kiosk watchdog and the session
+// wrapper (focusos-session.sh) poll ~/.focusos/session-exit: the watchdog stops
+// respawning FocusOS when it appears, and the wrapper, once kwin exits, ends the
+// login session (back to the SDDM greeter) instead of falling through to the
+// stock Plasma desktop. Without this marker a plain quit is simply respawned by
+// the watchdog — which is why sign out / restart / shut down appeared to do
+// nothing in the permanent kiosk install. Best-effort: a dev run outside the
+// kiosk chain just exits the process normally and ignores the (harmless) file.
+void LinuxBackend::writeSessionExitMarker(const QString &intent)
+{
+    const QString focusDir = QDir::homePath() + QStringLiteral("/.focusos");
+    QDir().mkpath(focusDir);
+    QFile marker(focusDir + QStringLiteral("/session-exit"));
+    if (marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        marker.write(intent.toUtf8());
+        marker.write("\n");
+        marker.close();
+    }
+}
+
 bool LinuxBackend::signOut(QString *errorMessage)
 {
     // Drop any network policy first so a failed/partial sign-out doesn't strand
     // the machine behind nftables.
     dropNetworkPolicy();
 
-    // Just quit FocusOS. When it is the session shell (launched
-    // --exit-with-session), exiting ends the login session and the display
-    // manager reclaims the VT and shows the greeter / user login screen — which
-    // is exactly what the user wants. The older path tried to escalate through
-    // loginctl terminate-session/terminate-user and pkill kwin, but when those
-    // didn't take cleanly the user was left stranded on a blank screen with no
-    // greeter. A plain quit is more reliable here.
+    // Signal the respawn chain that this quit is intentional, THEN quit. When
+    // FocusOS is the session shell (launched via the --kiosk watchdog under
+    // kwin's --exit-with-session), the marker makes the watchdog stop respawning
+    // and makes focusos-session.sh end the login session — the display manager
+    // reclaims the VT and shows the greeter. The older path tried to escalate
+    // through loginctl terminate-session/terminate-user and pkill kwin, but when
+    // those didn't take cleanly the user was stranded on a blank screen with no
+    // greeter; routing the exit back out through the session wrapper is cleaner.
     Q_UNUSED(errorMessage);
+    writeSessionExitMarker(QStringLiteral("signout"));
     QCoreApplication::quit();
     return true;
+}
+
+// Hand the machine to logind for reboot / poweroff. systemctl is the portable
+// path (it delegates to logind, already configured for this session); fall back
+// to loginctl, which gained the same verbs in modern systemd. Detached +
+// fire-and-forget: the kernel tears the session down, so the respawn watchdog
+// dies with it — no need to stand it down first. Drop the network policy so a
+// failed/partial power action never strands the box behind nftables.
+bool LinuxBackend::restartMachine(QString *errorMessage)
+{
+    dropNetworkPolicy();
+    // Stop the respawn chain so FocusOS isn't relaunched in the seconds between
+    // issuing the reboot and the kernel taking the machine down.
+    writeSessionExitMarker(QStringLiteral("restart"));
+    const QString systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    if (!systemctl.isEmpty()) {
+        return QProcess::startDetached(systemctl, {QStringLiteral("reboot")});
+    }
+    const QString loginctl = QStandardPaths::findExecutable(QStringLiteral("loginctl"));
+    if (!loginctl.isEmpty()) {
+        return QProcess::startDetached(loginctl, {QStringLiteral("reboot")});
+    }
+    if (errorMessage) {
+        *errorMessage = QStringLiteral("Neither systemctl nor loginctl is available to restart");
+    }
+    return false;
+}
+
+bool LinuxBackend::shutdownMachine(QString *errorMessage)
+{
+    dropNetworkPolicy();
+    writeSessionExitMarker(QStringLiteral("shutdown"));
+    const QString systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    if (!systemctl.isEmpty()) {
+        return QProcess::startDetached(systemctl, {QStringLiteral("poweroff")});
+    }
+    const QString loginctl = QStandardPaths::findExecutable(QStringLiteral("loginctl"));
+    if (!loginctl.isEmpty()) {
+        return QProcess::startDetached(loginctl, {QStringLiteral("poweroff")});
+    }
+    if (errorMessage) {
+        *errorMessage = QStringLiteral("Neither systemctl nor loginctl is available to shut down");
+    }
+    return false;
 }
 
 QString LinuxBackend::watchdogScriptPath() const

@@ -1429,6 +1429,37 @@ bool MacBackend::signOut(QString *errorMessage)
     return true;
 }
 
+// Reboot / power off. Same teardown as signOut(): drop pf, lift the lockdown
+// surfaces, and boot out the respawn watchdog so a loaded recovery job can't
+// relaunch FocusOS while the machine is going down. The raw 'rest'/'shut' Apple
+// events power off without the confirmation dialog the kiosk would otherwise hide.
+bool MacBackend::powerControl(const QString &appleEvent, QString *errorMessage)
+{
+    Q_UNUSED(errorMessage);
+    dropNetworkPolicy();
+    endRoutineLockdown();
+    const QString domain = launchdGuiDomain();
+    const QString plistPath = watchdogPlistPath();
+    QProcess::execute(QStringLiteral("/bin/launchctl"),
+                      {QStringLiteral("bootout"), domain, plistPath});
+    removeLegacyWatchdogLaunchAgent();
+
+    return QProcess::startDetached(
+        QStringLiteral("/usr/bin/osascript"),
+        {QStringLiteral("-e"),
+         QStringLiteral("tell application \"loginwindow\" to «event aevt%1»").arg(appleEvent)});
+}
+
+bool MacBackend::restartMachine(QString *errorMessage)
+{
+    return powerControl(QStringLiteral("rest"), errorMessage);
+}
+
+bool MacBackend::shutdownMachine(QString *errorMessage)
+{
+    return powerControl(QStringLiteral("shut"), errorMessage);
+}
+
 bool MacBackend::persistentKioskEnabled() const
 {
     // The next-login state is exactly "is the agent plist on disk": launchd
