@@ -3012,18 +3012,18 @@ Item {
                         border.color: Theme.goldDim
 
                         Flickable {
-                            id: logFlick
+                            id: diagLogFlick
                             anchors.fill: parent
                             anchors.margins: 8
                             clip: true
                             contentWidth: width
-                            contentHeight: logText.implicitHeight
+                            contentHeight: diagLogText.implicitHeight
                             // Stick to the newest lines as the tail refreshes.
                             onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
 
                             Text {
-                                id: logText
-                                width: logFlick.width
+                                id: diagLogText
+                                width: diagLogFlick.width
                                 text: root.diagnosticsTail.length > 0
                                       ? root.diagnosticsTail
                                       : "(no log activity yet)"
