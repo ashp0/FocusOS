@@ -1446,6 +1446,11 @@ void LinuxBackend::maybeStopWatchdogTimer()
 void LinuxBackend::startLockdownWatchdog()
 {
     m_lockdownActive = true;
+    // Prime the distraction-attempt edge so anything left running from *before*
+    // the routine (e.g. a launcher the engage sweep is about to clear) isn't
+    // miscounted as the user reaching for a distraction — only fresh
+    // appearances after this point count.
+    m_outlawPresentLastTick = true;
     ensureWatchdogTimer();
     // Fire once immediately so the first kill happens before the user can
     // open the spotlight.
@@ -1455,6 +1460,7 @@ void LinuxBackend::startLockdownWatchdog()
 void LinuxBackend::stopLockdownWatchdog()
 {
     m_lockdownActive = false;
+    m_outlawPresentLastTick = false;
     maybeStopWatchdogTimer();
 }
 
@@ -1596,22 +1602,41 @@ void LinuxBackend::tickLockdownWatchdog()
     // sweep every ~20 ticks (~30s) is a belt-and-suspenders backstop so a process
     // that somehow evades the comm pre-check can't survive longer than that.
     const bool forceSweep = (m_lockdownSweepCounter++ % 20 == 0);
-    if (!forceSweep) {
-        QSet<QByteArray> denyComms;
-        denyComms.reserve(exactNames.size() + longNames.size());
-        for (const QString &name : exactNames) {
-            denyComms.insert(name.toLatin1().left(15));
-        }
-        for (const QString &name : longNames) {
-            denyComms.insert(name.toLatin1().left(15));
-        }
-        if (!anyOutlawedProcessPresent(denyComms)) {
-            return; // nothing to kill — skip the fork+exec entirely
-        }
+
+    // In-process /proc scan for any outlawed launcher/time-sink. This serves two
+    // purposes: the cheap pre-check that lets non-forced ticks skip the fork+exec
+    // when there's nothing to kill, and the signal for the distraction counter.
+    QSet<QByteArray> denyComms;
+    denyComms.reserve(exactNames.size() + longNames.size());
+    for (const QString &name : exactNames) {
+        denyComms.insert(name.toLatin1().left(15));
+    }
+    for (const QString &name : longNames) {
+        denyComms.insert(name.toLatin1().left(15));
+    }
+    const bool present = anyOutlawedProcessPresent(denyComms);
+
+    // Edge-trigger the distraction-attempt counter: one call per fresh
+    // appearance, not once per 1.5s tick the process survives until the kill
+    // lands. This is the "you reached for a launcher mid-routine" signal.
+    if (present && !m_outlawPresentLastTick && m_distractionCallback) {
+        m_distractionCallback();
+    }
+    m_outlawPresentLastTick = present;
+
+    // Steady-state fast path: nothing to kill, so skip the fork+exec entirely
+    // unless the periodic forced full sweep (a backstop) is due this tick.
+    if (!present && !forceSweep) {
+        return;
     }
 
     QProcess::startDetached(QStringLiteral("sh"),
                             {QStringLiteral("-c"), commands.join(QStringLiteral("; "))});
+}
+
+void LinuxBackend::setDistractionAttemptCallback(std::function<void()> callback)
+{
+    m_distractionCallback = std::move(callback);
 }
 
 // The native host rewrites ~/.focusos/blocker/host-alive every ~1.5s while a

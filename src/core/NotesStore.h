@@ -42,6 +42,12 @@ public:
 
     Q_INVOKABLE QString sessionNoteText(const QString &sessionId) const;
     Q_INVOKABLE QVariantMap sessionNote(const QString &sessionId) const;
+    // Full-text recall across every archived session (and today's live draft).
+    // Space-separated terms are ANDed, case-insensitively, against the routine
+    // name + result + note body. Each hit carries the same shape as a
+    // sessionHistory row plus a `snippet`/`snippetHtml` context window so the
+    // user can find "that thing I noted last week" without scrolling the log.
+    Q_INVOKABLE QVariantList searchNotes(const QString &query) const;
     Q_INVOKABLE bool updateSessionNote(const QString &sessionId, const QString &text);
     Q_INVOKABLE bool recordSessionReflection(const QString &reflection);
     Q_INVOKABLE QString combinedNotesForDate(const QString &date) const;

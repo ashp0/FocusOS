@@ -122,6 +122,12 @@ public:
     // processor, etc. The backend exempts them from the lockdown watchdog
     // and won't terminate them between routines.
     virtual void setAlwaysAllowedApps(const QStringList &commandLines) { Q_UNUSED(commandLines); }
+    // Invoked (on the main thread) each time the lockdown watchdog *newly*
+    // detects a blocked launcher / time-sink the user reached for during a
+    // routine — i.e. a distraction attempt. Edge-triggered: one call per
+    // reach-for-the-launcher, not once per tick the process lingers. Backends
+    // without a lockdown watchdog never fire it.
+    virtual void setDistractionAttemptCallback(std::function<void()> callback) { Q_UNUSED(callback); }
     // Ensure the respawn watchdog is running for the current process. The
     // watchdog respawns FocusOS while a routine checkpoint is armed
     // (~/.focusos/active.json), making a kill / crash recoverable. No-op on

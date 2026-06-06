@@ -21,6 +21,9 @@ Item {
     // and edited in the SYSTEM tab.
     property string startupScriptDraft: ""
     property string startupSaveStatus: ""
+    // Live tail of ~/.focusos/logs/focusos.log, shown in the SYSTEM tab so the
+    // user can see what FocusOS has been doing without a terminal.
+    property string diagnosticsTail: ""
     property string elevatedLaunchPassword: ""
     property string elevatedLaunchStatus: ""
     // Dry-run result of the strict engage-time app sweep (H3): the apps that a
@@ -136,6 +139,15 @@ Item {
         elevatedLaunchPassword = ""
         elevatedLaunchStatus = ""
         systemStatus.refreshElevatedLaunch()
+        refreshDiagnostics()
+    }
+
+    function refreshDiagnostics() {
+        // diagnostics is a context property set in main(); guard defensively so a
+        // build wired without it degrades to an empty panel instead of erroring.
+        diagnosticsTail = (typeof diagnostics !== "undefined" && diagnostics)
+                          ? diagnostics.tail(240)
+                          : ""
     }
 
     function allowedUrlsText(routine) {
@@ -2915,7 +2927,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
-                        text: "Shell commands run once at login, after the shell comes up — for autostart helpers a bare session skips (input remappers like Toshy, tray agents). Standard ~/.config/autostart entries run too. Runs once per login, not on a respawn."
+                        text: "Shell commands run once at login, after the shell comes up — list the few helpers a bare session needs (input remappers like Toshy, tray agents). FocusOS does NOT replay ~/.config/autostart entries — a stray one can drag in the whole Plasma desktop — so put exactly what you want here. Runs once per login, not on a respawn."
                         color: Theme.textGhost
                         wrapMode: Text.WordWrap
                         font.family: root.bodyFont
@@ -2963,6 +2975,106 @@ Item {
                             font.pixelSize: 10
                             font.letterSpacing: 0
                         }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.goldDim
+                        opacity: 0.7
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "DIAGNOSTICS"
+                        color: Theme.goldDim
+                        font.family: root.headerFont
+                        font.pixelSize: 13
+                        font.letterSpacing: 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Live tail of the FocusOS log — every routine engage, warning and error lands here. The full rotating log is at " +
+                              ((typeof diagnostics !== "undefined" && diagnostics) ? diagnostics.logFilePath : "~/.focusos/logs/focusos.log") + "."
+                        color: Theme.textGhost
+                        wrapMode: Text.WordWrap
+                        font.family: root.bodyFont
+                        font.pixelSize: 10
+                        font.letterSpacing: 0
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 200
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: Theme.goldDim
+
+                        Flickable {
+                            id: logFlick
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            clip: true
+                            contentWidth: width
+                            contentHeight: logText.implicitHeight
+                            // Stick to the newest lines as the tail refreshes.
+                            onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
+
+                            Text {
+                                id: logText
+                                width: logFlick.width
+                                text: root.diagnosticsTail.length > 0
+                                      ? root.diagnosticsTail
+                                      : "(no log activity yet)"
+                                color: Theme.textDim
+                                wrapMode: Text.WrapAnywhere
+                                font.family: root.bodyFont
+                                font.pixelSize: 9
+                                lineHeight: 1.3
+                            }
+
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        }
+
+                        // Refresh the tail every couple of seconds while the SYSTEM
+                        // tab is the one on screen — cheap (reads the file tail) and
+                        // only runs when actually visible.
+                        Timer {
+                            interval: 2000
+                            repeat: true
+                            running: root.modalOpen && root.activeTab === 5
+                            triggeredOnStart: true
+                            onTriggered: root.refreshDiagnostics()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        AdminButton {
+                            Layout.preferredWidth: 120
+                            Layout.preferredHeight: 34
+                            label: "↻ REFRESH"
+                            danger: false
+                            onClicked: root.refreshDiagnostics()
+                        }
+
+                        AdminButton {
+                            Layout.preferredWidth: 120
+                            Layout.preferredHeight: 34
+                            label: "🗑 CLEAR LOG"
+                            danger: true
+                            onClicked: {
+                                if (typeof diagnostics !== "undefined" && diagnostics) {
+                                    diagnostics.clear()
+                                }
+                                root.refreshDiagnostics()
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
 
                     // Bottom padding so the SAVE button clears the modal edge

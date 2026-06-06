@@ -22,7 +22,12 @@ cmake --build build          # reconfigure-free incremental build (build/ alread
 ```
 
 The build links `Qt6::DBus` on Linux. QML is AOT-compiled into the binary, so a
-successful build also validates QML syntax. `totp_tests` is the only test target.
+successful build also validates QML syntax. Test targets: `totp_tests`,
+`notes_tests` (NotesStore search, day-grouping + draft rollover) and `stats_tests`
+(StatsStore counts/streaks/best-day/averages, focus-rating + distraction-tally
+round-trip through stats.json). Each test points `$HOME` at a throwaway dir. Run
+all with `ctest --test-dir build`. Adding a test target needs a one-time
+`cmake -S . -B build` reconfigure.
 
 ## Layout
 
@@ -30,14 +35,31 @@ successful build also validates QML syntax. `totp_tests` is the only test target
   Also handles the `--native-host` arg (browser blocker stdio host).
 - `src/core/` — backend services, each exposed to QML as a context property under
   its lowercased name (`routineManager`, `statsStore`, `notesStore`, `totpEngine`,
-  `musicEngine`, `systemStatus`, `inspirationStore`, `updater`, `idleMonitor`):
+  `musicEngine`, `systemStatus`, `inspirationStore`, `updater`, `idleMonitor`,
+  `diagnostics`):
   - `RoutineManager` — routine model, engage/end/pause, Other-Access mode,
     min-time floor. The `pickApplication`/`pickFile`/`pickFolder` invokables now
-    forward to `core/FilePicker` (the QFileDialog plumbing lives there).
+    forward to `core/FilePicker` (the QFileDialog plumbing lives there). Exposes a
+    live `sessionDistractionsBlocked` (reset each engage) fed by the backend's
+    lockdown-watchdog `setDistractionAttemptCallback` (edge-triggered: one count
+    per launcher reach); re-broadcasts each hit via `distractionAttemptBlocked`.
   - `StatsStore` — per-session focus log, streak, daily target (`dailyTargetMinutes`
-    is read/write from QML), today's progress.
-  - `NotesStore` — live draft + archived per-session notes & timeline.
+    is read/write from QML), today's progress. Also derives progress analytics
+    (`weekFocusMinutes`, `bestDayMinutes`/`bestDayLabel`, `longestStreakDays`,
+    `averageSessionMinutes`, `totalSessions`) surfaced in InfoPanel's MISSION
+    INSIGHTS card, a 1–5 `focusRating` per session (`recordLastSessionFocusRating`,
+    `averageFocusRating`) captured by the MISSION COMPLETE prompt, and a persisted
+    lifetime `totalDistractionsBlocked` tally (`noteDistractionBlocked` slot).
+  - `NotesStore` — live draft + archived per-session notes & timeline. Full-text
+    recall via `searchNotes(query)` (terms ANDed over name/result/body, returns
+    rows with highlighted `snippetHtml`); surfaced as the MISSION LOG search box.
+    History/search rows also carry a `dateGroup` (TODAY/YESTERDAY/weekday+date)
+    and `dayKey` so the log renders as dated sections with outcome filter chips.
   - `TOTPEngine` — gates all admin actions; first-launch QR enrollment.
+  - `Logger` — process-wide singleton (`Logger::install()` in `main()`) that tees
+    every Qt message to a rotating `~/.focusos/logs/focusos.log` while keeping
+    stderr. Exposed to QML as `diagnostics` (tail/clear/reveal) for the SYSTEM tab
+    log viewer.
   - others: `MusicEngine`, `SystemStatus`, `InspirationStore`, `Updater`,
     `IdleMonitor`, `MediaKeys`, `Timer`.
   - non-QObject helpers: `AppPaths` (single source for `~/.focusos` paths —

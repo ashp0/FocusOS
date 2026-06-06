@@ -43,6 +43,7 @@ public:
     bool desktopShellSupported() const override { return true; }
     void restoreShellPlacement() override;
     void setAlwaysAllowedApps(const QStringList &commandLines) override;
+    void setDistractionAttemptCallback(std::function<void()> callback) override;
     void startWatchdog(const QString &binaryPath) override;
     bool restoreLoginSessions(QString *errorMessage = nullptr) override;
     bool signOutSupported() const override { return true; }
@@ -103,6 +104,11 @@ private:
     // tick (a safety backstop) while the in-process comm pre-check skips the
     // pkill fork+exec on the other ticks. See tickLockdownWatchdog.
     int m_lockdownSweepCounter = 0;
+    // Edge-trigger state for distraction-attempt counting: true while an
+    // outlawed launcher/time-sink was present on the previous tick, so we fire
+    // the callback once per fresh appearance rather than every 1.5s it lingers.
+    bool m_outlawPresentLastTick = false;
+    std::function<void()> m_distractionCallback;
     // Network-lock state, tracked so the watchdog can restore the routine
     // allowlist after an extension-disabled full-deny clamp.
     bool m_networkLockActive = false;

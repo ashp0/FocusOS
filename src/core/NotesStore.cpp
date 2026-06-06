@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -40,6 +41,108 @@ QString safeSlug(const QString &text)
         slug.chop(1);
     }
     return slug.isEmpty() ? QStringLiteral("routine") : slug;
+}
+
+// Collapse runs of whitespace/newlines so a multi-line note reads as a tidy
+// one-line snippet in the search results.
+QString flattenWhitespace(const QString &text)
+{
+    return text.simplified();
+}
+
+// A short context window around the first term hit, with each matched term
+// wrapped in sentinel markers (0x01..0x02) that the html builder turns into
+// <b> tags. Marking before escaping guarantees valid markup.
+QString markedSnippet(const QString &body, const QStringList &terms, int radius = 70)
+{
+    const QString flat = flattenWhitespace(body);
+    if (flat.isEmpty()) {
+        return {};
+    }
+    const QString lower = flat.toLower();
+
+    int firstHit = -1;
+    for (const QString &term : terms) {
+        const int idx = lower.indexOf(term);
+        if (idx >= 0 && (firstHit < 0 || idx < firstHit)) {
+            firstHit = idx;
+        }
+    }
+    // Matched only on routine name / result: show the opening of the note.
+    const int anchor = firstHit < 0 ? 0 : firstHit;
+    int start = qMax(0, anchor - radius);
+    int end = qMin(flat.size(), anchor + radius * 2);
+    QString window = flat.mid(start, end - start);
+
+    // Re-mark matches within the window (indices shifted by `start`).
+    QString marked;
+    marked.reserve(window.size() + 16);
+    const QString windowLower = window.toLower();
+    for (int i = 0; i < window.size();) {
+        int matchLen = 0;
+        for (const QString &term : terms) {
+            if (!term.isEmpty()
+                && windowLower.mid(i, term.size()) == term) {
+                matchLen = term.size();
+                break;
+            }
+        }
+        if (matchLen > 0) {
+            marked += QChar(0x01);
+            marked += window.mid(i, matchLen);
+            marked += QChar(0x02);
+            i += matchLen;
+        } else {
+            marked += window.at(i);
+            ++i;
+        }
+    }
+
+    if (start > 0) {
+        marked.prepend(QStringLiteral("… "));
+    }
+    if (end < flat.size()) {
+        marked.append(QStringLiteral(" …"));
+    }
+    return marked;
+}
+
+QString htmlFromMarked(const QString &marked)
+{
+    QString escaped = marked.toHtmlEscaped();
+    escaped.replace(QChar(0x01), QStringLiteral("<b>"));
+    escaped.replace(QChar(0x02), QStringLiteral("</b>"));
+    return escaped;
+}
+
+QString plainFromMarked(QString marked)
+{
+    marked.remove(QChar(0x01));
+    marked.remove(QChar(0x02));
+    return marked;
+}
+
+// A human, *unique-per-day* label for grouping the mission log: "TODAY",
+// "YESTERDAY", else the weekday + date ("MONDAY · JUN 2", with the year added
+// once it differs from the current one). Uniqueness matters because the UI
+// keys day-section headers off this string.
+QString friendlyDayLabel(const QDate &date)
+{
+    if (!date.isValid()) {
+        return QStringLiteral("UNDATED");
+    }
+    const QDate today = QDate::currentDate();
+    const qint64 delta = date.daysTo(today);
+    if (delta == 0) {
+        return QStringLiteral("TODAY");
+    }
+    if (delta == 1) {
+        return QStringLiteral("YESTERDAY");
+    }
+    const QString pattern = date.year() == today.year()
+                                ? QStringLiteral("dddd · MMM d")
+                                : QStringLiteral("dddd · MMM d, yyyy");
+    return date.toString(pattern).toUpper();
 }
 
 } // namespace
@@ -140,6 +243,8 @@ QVariantList NotesStore::sessionHistory() const
         entry.insert(QStringLiteral("startedAt"), note.startedAt.toLocalTime().toString(Qt::ISODate));
         entry.insert(QStringLiteral("endedAt"), note.endedAt.toLocalTime().toString(Qt::ISODate));
         entry.insert(QStringLiteral("dateLabel"), note.endedAt.toLocalTime().date().toString(QStringLiteral("yyyy-MM-dd")));
+        entry.insert(QStringLiteral("dayKey"), note.endedAt.toLocalTime().date().toString(Qt::ISODate));
+        entry.insert(QStringLiteral("dateGroup"), friendlyDayLabel(note.endedAt.toLocalTime().date()));
         entry.insert(QStringLiteral("timeLabel"), note.endedAt.toLocalTime().toString(QStringLiteral("HH:mm")));
         entry.insert(QStringLiteral("minutes"), note.minutes);
         entry.insert(QStringLiteral("result"), note.result);
@@ -311,6 +416,68 @@ QVariantMap NotesStore::sessionNote(const QString &sessionId) const
         return entry;
     }
     return {};
+}
+
+QVariantList NotesStore::searchNotes(const QString &query) const
+{
+    QVariantList results;
+    const QStringList terms = query.toLower().split(QRegularExpression(QStringLiteral("\\s+")),
+                                                    Qt::SkipEmptyParts);
+    if (terms.isEmpty()) {
+        return results;
+    }
+
+    // Build the candidate set: every archived session plus today's live draft, so
+    // an in-progress note is searchable the moment it's typed.
+    QVector<SessionNote> candidates = m_archive;
+    if (draftIsForToday()) {
+        SessionNote draft;
+        draft.sessionId = QStringLiteral("draft");
+        draft.routineId = m_draftRoutineId;
+        draft.routineName = m_draftRoutineName.isEmpty() ? QStringLiteral("CURRENT DRAFT")
+                                                         : m_draftRoutineName;
+        draft.startedAt = m_draftStartedAt.isValid() ? m_draftStartedAt : QDateTime::currentDateTime();
+        draft.endedAt = QDateTime::currentDateTime();
+        draft.result = QStringLiteral("draft");
+        draft.text = m_text;
+        candidates.append(draft);
+    }
+
+    // Newest first, like sessionHistory.
+    for (int i = candidates.size() - 1; i >= 0; --i) {
+        const SessionNote &note = candidates.at(i);
+        const QString haystack = (note.routineName + QLatin1Char(' ') + note.result
+                                  + QLatin1Char(' ') + note.text).toLower();
+        bool all = true;
+        for (const QString &term : terms) {
+            if (!haystack.contains(term)) {
+                all = false;
+                break;
+            }
+        }
+        if (!all) {
+            continue;
+        }
+
+        const QString marked = markedSnippet(note.text, terms);
+        QVariantMap entry;
+        entry.insert(QStringLiteral("sessionId"), note.sessionId);
+        entry.insert(QStringLiteral("routineId"), note.routineId);
+        entry.insert(QStringLiteral("routineName"), note.routineName);
+        entry.insert(QStringLiteral("startedAt"), note.startedAt.toLocalTime().toString(Qt::ISODate));
+        entry.insert(QStringLiteral("endedAt"), note.endedAt.toLocalTime().toString(Qt::ISODate));
+        entry.insert(QStringLiteral("dateLabel"), note.endedAt.toLocalTime().date().toString(QStringLiteral("yyyy-MM-dd")));
+        entry.insert(QStringLiteral("dayKey"), note.endedAt.toLocalTime().date().toString(Qt::ISODate));
+        entry.insert(QStringLiteral("dateGroup"), friendlyDayLabel(note.endedAt.toLocalTime().date()));
+        entry.insert(QStringLiteral("timeLabel"), note.endedAt.toLocalTime().toString(QStringLiteral("HH:mm")));
+        entry.insert(QStringLiteral("minutes"), note.minutes);
+        entry.insert(QStringLiteral("result"), note.result);
+        entry.insert(QStringLiteral("hasNote"), !note.text.trimmed().isEmpty());
+        entry.insert(QStringLiteral("snippet"), plainFromMarked(marked));
+        entry.insert(QStringLiteral("snippetHtml"), htmlFromMarked(marked));
+        results.append(entry);
+    }
+    return results;
 }
 
 bool NotesStore::updateSessionNote(const QString &sessionId, const QString &text)

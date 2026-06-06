@@ -280,6 +280,12 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     loadConfig();
     loadRoutines();
 
+    // The lockdown watchdog (backend) calls this on the main thread each time it
+    // newly catches the user reaching for a blocked launcher during a routine.
+    if (m_backend) {
+        m_backend->setDistractionAttemptCallback([this] { noteDistractionAttempt(); });
+    }
+
     connect(&m_routineTimer, &FocusTimer::remainingSecondsChanged, this, [this] {
         emit remainingSecondsChanged();
         emitRowsChanged();
@@ -759,6 +765,23 @@ bool RoutineManager::activeRoutineHasLaunchTargets() const
     }
     const Routine &routine = m_routines.at(routineIndex);
     return !routine.apps.isEmpty() || !routine.allowedUrls.isEmpty();
+}
+
+int RoutineManager::sessionDistractionsBlocked() const
+{
+    return m_sessionDistractionsBlocked;
+}
+
+void RoutineManager::noteDistractionAttempt()
+{
+    // Only meaningful while a routine is live — the watchdog shouldn't fire
+    // otherwise, but guard so a stray callback can't inflate the tally.
+    if (!active()) {
+        return;
+    }
+    ++m_sessionDistractionsBlocked;
+    emit distractionsBlockedChanged();
+    emit distractionAttemptBlocked();
 }
 
 QString RoutineManager::statusMessage() const
@@ -2250,6 +2273,11 @@ bool RoutineManager::finishEngage(const Routine &routine, bool networkApplied, Q
     m_activeRoutineId = routine.id;
     m_activeStartedAt = QDateTime::currentDateTimeUtc();
     m_manualPause = false;
+    // Fresh session — clear the distraction tally so MissionView starts at zero.
+    if (m_sessionDistractionsBlocked != 0) {
+        m_sessionDistractionsBlocked = 0;
+        emit distractionsBlockedChanged();
+    }
     emit activeChanged();
     emitRowsChanged();
     m_routineTimer.start(routine.timeLimitMinutes * 60);

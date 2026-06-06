@@ -18,6 +18,15 @@ Item {
     readonly property var graphRanges: [7, 14, 30, 60, 90]
     property string selectedSessionId: ""
     property bool sessionsExpanded: false
+    property string sessionSearchQuery: ""
+    // MISSION LOG result filter: "all" | "completed" | "unlocked" | "interrupted".
+    property string sessionResultFilter: "all"
+    readonly property var sessionFilters: [
+        {"label": "ALL", "key": "all"},
+        {"label": "DONE", "key": "completed"},
+        {"label": "UNLOCKED", "key": "unlocked"},
+        {"label": "ENDED", "key": "interrupted"}
+    ]
     property bool todayNotesExpanded: true
     property int todayNotesMinHeight: 260
     property int todayNotesMaxHeight: 540
@@ -25,6 +34,54 @@ Item {
     property int sessionListMaxHeight: 560
     property string timelineDate: todayIsoDate()
     property int notesRevision: 0
+    // The MISSION LOG list shows the full history, or — when a search is active —
+    // the matching sessions (newest first, with snippets). Re-evaluates as new
+    // sessions land (notesRevision) or the query changes.
+    readonly property bool sessionSearchActive: sessionSearchQuery.trim().length > 0
+    readonly property bool sessionFilterActive: sessionResultFilter !== "all"
+    // The raw matching rows (search and/or result filter applied), newest first.
+    readonly property var filteredSessionRows: {
+        const revision = notesRevision
+        let rows = sessionSearchActive
+                   ? notesStore.searchNotes(sessionSearchQuery)
+                   : notesStore.sessionHistory
+        if (sessionResultFilter !== "all") {
+            rows = rows.filter(function(r) {
+                return String(r.result).toLowerCase() === root.sessionResultFilter
+            })
+        }
+        return rows
+    }
+    // The list model the MISSION LOG renders: the filtered rows with a lightweight
+    // day-section header object spliced in wherever the day changes, so months of
+    // history read as clean dated groups instead of one undifferentiated scroll.
+    readonly property var activeSessionModel: {
+        const rows = filteredSessionRows
+        const totals = {}
+        for (let i = 0; i < rows.length; ++i) {
+            const g = rows[i].dateGroup || "—"
+            if (!totals[g]) totals[g] = { count: 0, minutes: 0 }
+            totals[g].count += 1
+            totals[g].minutes += Number(rows[i].minutes || 0)
+        }
+        const out = []
+        let last = null
+        for (let i = 0; i < rows.length; ++i) {
+            const g = rows[i].dateGroup || "—"
+            if (g !== last) {
+                out.push({
+                    "_header": true,
+                    "sessionId": "_hdr_" + g,
+                    "groupLabel": g,
+                    "groupCount": totals[g].count,
+                    "groupMinutes": totals[g].minutes
+                })
+                last = g
+            }
+            out.push(rows[i])
+        }
+        return out
+    }
     readonly property var sidebarTabs: [
         {"label": "ROUTINES", "idx": 0},
         {"label": "NOTES", "idx": 1},
@@ -80,7 +137,9 @@ Item {
 
     // Build the month grid: leading blanks to align the 1st under its weekday,
     // then one cell per day with the per-day summary so days with focus time get
-    // a marker. Depends on notesRevision so it refreshes as sessions land.
+    // a marker. Each focused day also carries an `intensity` (0..1, relative to
+    // the month's busiest day) so the grid reads as a focus heatmap at a glance.
+    // Depends on notesRevision so it refreshes as sessions land.
     function calendarCells() {
         const revision = notesRevision
         const cells = []
@@ -89,18 +148,28 @@ Item {
         for (let i = 0; i < firstWeekday; ++i) {
             cells.push({ "blank": true })
         }
+        let monthMax = 0
         for (let day = 1; day <= daysInMonth; ++day) {
             const iso = isoForYmd(calendarYear, calendarMonth, day)
             const summary = notesStore.timelineSummaryForDate(iso)
+            const minutes = Number(summary.focusMinutes || 0)
+            monthMax = Math.max(monthMax, minutes)
             cells.push({
                 "blank": false,
                 "day": day,
                 "iso": iso,
-                "focusMinutes": Number(summary.focusMinutes || 0),
+                "focusMinutes": minutes,
                 "sessions": Number(summary.sessions || 0),
                 "isToday": iso === todayIsoDate(),
                 "isSelected": iso === timelineDate
             })
+        }
+        // Second pass: normalise to the month's peak so the heatmap is readable
+        // regardless of whether a "big day" is 1h or 8h.
+        for (let i = 0; i < cells.length; ++i) {
+            if (!cells[i].blank) {
+                cells[i].intensity = monthMax > 0 ? cells[i].focusMinutes / monthMax : 0
+            }
         }
         return cells
     }
@@ -127,6 +196,29 @@ Item {
             return Math.floor(value / 60) + "H " + Theme.pad2(value % 60) + "M"
         }
         return value + "M"
+    }
+
+    // The detail panel's subheader: "FRI JUN 6  ■  10:00–10:45  ■  45M  ■  COMPLETED".
+    function sessionMetaLine(data) {
+        if (!data || !data.sessionId) {
+            return ""
+        }
+        const dayNames = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
+        const monNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                          "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+        function hm(d) { return Theme.pad2(d.getHours()) + ":" + Theme.pad2(d.getMinutes()) }
+        const start = new Date(data.startedAt)
+        const end = new Date(data.endedAt)
+        const parts = []
+        if (!isNaN(end.getTime())) {
+            parts.push(dayNames[end.getDay()] + " " + monNames[end.getMonth()] + " " + end.getDate())
+        }
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+            parts.push(hm(start) + "–" + hm(end))
+        }
+        parts.push((data.minutes || 0) + "M")
+        parts.push(String(data.result).toUpperCase())
+        return parts.join("  ■  ")
     }
 
     function focusHistory() {
@@ -219,15 +311,23 @@ Item {
         return total
     }
 
+    // Count of real sessions matching the current search/filter (headers excluded).
     function sessionHistoryCount() {
-        const sessions = notesStore.sessionHistory
-        return sessions ? sessions.length : 0
+        const rows = filteredSessionRows
+        return rows ? rows.length : 0
     }
 
     function sessionListHeight() {
-        const count = sessionHistoryCount()
-        const rowExtent = 66
-        const desired = count > 0 ? count * rowExtent + 8 : sessionListMinHeight
+        const model = activeSessionModel
+        if (!model || model.length === 0) {
+            return sessionListMinHeight
+        }
+        // Headers are short dividers; search rows carry an extra snippet line.
+        const rowExtent = sessionSearchActive ? 86 : 66
+        let desired = 8
+        for (let i = 0; i < model.length; ++i) {
+            desired += model[i]._header ? 34 : rowExtent
+        }
         return Math.min(sessionListMaxHeight, Math.max(sessionListMinHeight, desired))
     }
 
@@ -721,6 +821,97 @@ Item {
                 }
             }
 
+            // ---- Mission insights ----
+            // A compact at-a-glance progress panel: week total, your best single
+            // day, the longest streak you've ever held, and your average run.
+            // These make momentum visible without opening the full graph.
+            Rectangle {
+                width: parent.width
+                visible: root.activeTab === 0
+                height: insightsTitle.height + insightsGrid.implicitHeight + 26
+                color: "#dd0d0d18"
+                border.width: 1
+                border.color: Theme.goldDim
+
+                Text {
+                    id: insightsTitle
+                    anchors.left: parent.left
+                    anchors.leftMargin: 14
+                    anchors.top: parent.top
+                    anchors.topMargin: 10
+                    text: "MISSION INSIGHTS"
+                    color: Theme.goldDim
+                    font.family: root.headerFont
+                    font.pixelSize: 11
+                }
+
+                Grid {
+                    id: insightsGrid
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: insightsTitle.bottom
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    anchors.topMargin: 8
+                    columns: 2
+                    rowSpacing: 8
+                    columnSpacing: 8
+
+                    Repeater {
+                        model: [
+                            {"label": "THIS WEEK", "value": root.formatMinutes(statsStore.weekFocusMinutes), "sub": "LAST 7 DAYS"},
+                            {"label": "BEST DAY", "value": root.formatMinutes(statsStore.bestDayMinutes), "sub": statsStore.bestDayLabel.length > 0 ? statsStore.bestDayLabel : "—"},
+                            {"label": "LONGEST STREAK", "value": statsStore.longestStreakDays + "D", "sub": "RECORD"},
+                            {"label": "AVG / RUN", "value": root.formatMinutes(statsStore.averageSessionMinutes), "sub": "PER SESSION"},
+                            {"label": "AVG FOCUS", "value": statsStore.averageFocusRating > 0 ? statsStore.averageFocusRating.toFixed(1) + " / 5" : "—", "sub": statsStore.ratedSessions + " RATED"},
+                            {"label": "TOTAL RUNS", "value": "" + statsStore.totalSessions, "sub": "ALL TIME"}
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            width: (insightsGrid.width - 8) / 2
+                            height: 58
+                            color: "#dd0a0a14"
+                            border.width: 1
+                            border.color: Theme.textGhost
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 10
+                                anchors.top: parent.top
+                                anchors.topMargin: 8
+                                text: modelData.label
+                                color: Theme.goldDim
+                                font.family: root.headerFont
+                                font.pixelSize: 9
+                            }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 10
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 9
+                                text: modelData.value
+                                color: Theme.textPrimary
+                                font.family: root.headerFont
+                                font.pixelSize: 17
+                            }
+
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 10
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 11
+                                text: modelData.sub
+                                color: Theme.textGhost
+                                elide: Text.ElideLeft
+                                font.family: root.bodyFont
+                                font.pixelSize: 9
+                            }
+                        }
+                    }
+                }
+            }
+
             // ---- Production graph (click to reveal) ----
             Rectangle {
                 id: graphCard
@@ -1181,7 +1372,7 @@ Item {
                 border.width: 1
                 border.color: Theme.goldDim
                 height: root.sessionsExpanded
-                        ? sessionsHeader.height + root.sessionListHeight() + (detailPanel.visible ? detailPanel.height + 6 : 0) + 24
+                        ? sessionsHeader.height + 38 + root.sessionListHeight() + (detailPanel.visible ? detailPanel.height + 6 : 0) + 24
                         : 44
 
                 Behavior on height {
@@ -1199,7 +1390,10 @@ Item {
                         anchors.left: parent.left
                         anchors.leftMargin: 14
                         anchors.verticalCenter: parent.verticalCenter
-                        text: (root.sessionsExpanded ? "▴ " : "▾ ") + "MISSION LOG  ■  " + notesStore.sessionHistory.length
+                        text: (root.sessionsExpanded ? "▴ " : "▾ ") + "MISSION LOG  ■  "
+                              + ((root.sessionSearchActive || root.sessionFilterActive)
+                                 ? root.sessionHistoryCount() + " / " + notesStore.sessionHistory.length
+                                 : notesStore.sessionHistory.length)
                         color: Theme.gold
                         font.family: root.headerFont
                         font.pixelSize: 12
@@ -1223,79 +1417,275 @@ Item {
                     anchors.bottomMargin: 12
                     spacing: 6
 
+                    // Full-text recall across every logged session. Typing here
+                    // swaps the list for matching sessions (newest first) with the
+                    // hit highlighted in a snippet — so "what did I note about X"
+                    // is one query, not a scroll through months of the log.
+                    Rectangle {
+                        width: parent.width
+                        height: 32
+                        color: Theme.voidColor
+                        border.width: 1
+                        border.color: searchField.activeFocus ? Theme.gold : Theme.textGhost
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "⌕"
+                            color: root.sessionSearchActive ? Theme.gold : Theme.textGhost
+                            font.family: root.headerFont
+                            font.pixelSize: 14
+                        }
+
+                        TextField {
+                            id: searchField
+                            anchors.left: parent.left
+                            anchors.leftMargin: 30
+                            anchors.right: clearSearch.left
+                            anchors.rightMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.sessionSearchQuery
+                            placeholderText: "SEARCH ALL NOTES…"
+                            placeholderTextColor: Theme.textGhost
+                            color: Theme.textPrimary
+                            selectionColor: Theme.gold
+                            selectedTextColor: Theme.voidColor
+                            font.family: root.bodyFont
+                            font.pixelSize: 12
+                            background: null
+                            onTextChanged: root.sessionSearchQuery = text
+                        }
+
+                        Rectangle {
+                            id: clearSearch
+                            anchors.right: parent.right
+                            anchors.rightMargin: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 20
+                            height: 20
+                            visible: root.sessionSearchActive
+                            color: clearSearchMouse.containsMouse ? Theme.crimson : "transparent"
+                            border.width: 1
+                            border.color: Theme.goldDim
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✕"
+                                color: Theme.gold
+                                font.family: root.headerFont
+                                font.pixelSize: 10
+                            }
+
+                            MouseArea {
+                                id: clearSearchMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    searchField.text = ""
+                                    root.sessionSearchQuery = ""
+                                }
+                            }
+                        }
+                    }
+
+                    // Outcome filter chips — narrow the log to how sessions ended
+                    // (completed / unlocked early / interrupted) without scrolling.
+                    Row {
+                        width: parent.width
+                        height: 26
+                        spacing: 6
+
+                        Repeater {
+                            model: root.sessionFilters
+                            delegate: Rectangle {
+                                required property var modelData
+                                readonly property bool selected: root.sessionResultFilter === modelData.key
+                                width: (parent.width - 18) / 4
+                                height: 26
+                                color: selected ? Theme.crimson
+                                       : (chipMouse.containsMouse ? Theme.steel : Theme.voidColor)
+                                border.width: 1
+                                border.color: selected ? Theme.gold : Theme.goldDim
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    color: selected ? Theme.gold : Theme.textDim
+                                    elide: Text.ElideRight
+                                    font.family: root.headerFont
+                                    font.pixelSize: 9
+                                    font.letterSpacing: 0
+                                }
+
+                                MouseArea {
+                                    id: chipMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.sessionResultFilter = modelData.key
+                                }
+                            }
+                        }
+                    }
+
                     ListView {
                         id: sessionList
                         width: parent.width
                         height: root.sessionListHeight()
                         clip: true
                         spacing: 6
-                        model: notesStore.sessionHistory
+                        model: root.activeSessionModel
 
-                        delegate: Rectangle {
+                        delegate: Item {
+                            id: sessionRow
                             required property var modelData
+                            readonly property bool isHeader: modelData._header === true
+                            readonly property bool hasSnippet: !isHeader
+                                                               && modelData.snippet !== undefined
+                                                               && String(modelData.snippet).length > 0
                             width: sessionList.width
-                            height: 60
-                            color: root.selectedSessionId === modelData.sessionId
-                                   ? "#ee1a1024"
-                                   : (sessionMouse.containsMouse ? "#dd141420" : "#dd0a0a14")
-                            border.width: 1
-                            border.color: root.selectedSessionId === modelData.sessionId
-                                          ? Theme.gold
-                                          : (sessionMouse.containsMouse ? Theme.goldDim : Theme.textGhost)
+                            height: isHeader ? 28 : (hasSnippet ? 80 : 60)
 
-                            Behavior on color { ColorAnimation { duration: 120 } }
-
-                            Text {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: rowMinutes.left
-                                anchors.rightMargin: 8
-                                anchors.top: parent.top
-                                anchors.topMargin: 8
-                                elide: Text.ElideRight
-                                text: modelData.routineName
-                                color: Theme.textPrimary
-                                font.family: root.headerFont
-                                font.pixelSize: 12
-                            }
-
-                            Text {
-                                id: rowMinutes
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.top: parent.top
-                                anchors.topMargin: 8
-                                text: modelData.minutes + "M"
-                                color: Theme.gold
-                                font.family: root.headerFont
-                                font.pixelSize: 12
-                            }
-
-                            Text {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: 8
-                                elide: Text.ElideRight
-                                text: modelData.dateLabel + " " + modelData.timeLabel + "  ■  " + String(modelData.result).toUpperCase()
-                                      + (modelData.hasNote ? "  ■  ✎" : "")
-                                color: Theme.textDim
-                                font.family: root.bodyFont
-                                font.pixelSize: 10
-                            }
-
-                            MouseArea {
-                                id: sessionMouse
+                            // ── Day section header ──
+                            Item {
+                                visible: sessionRow.isHeader
                                 anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (root.selectedSessionId === modelData.sessionId) {
-                                        root.selectedSessionId = ""
-                                    } else {
-                                        root.selectedSessionId = modelData.sessionId
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: sessionRow.isHeader ? modelData.groupLabel : ""
+                                    color: Theme.gold
+                                    font.family: root.headerFont
+                                    font.pixelSize: 10
+                                    font.letterSpacing: 1
+                                }
+
+                                Text {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: sessionRow.isHeader
+                                          ? (modelData.groupCount + (modelData.groupCount === 1 ? " RUN  ■  " : " RUNS  ■  ") + root.formatMinutes(modelData.groupMinutes))
+                                          : ""
+                                    color: Theme.textDim
+                                    font.family: root.bodyFont
+                                    font.pixelSize: 9
+                                }
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 1
+                                    color: Theme.goldDim
+                                    opacity: 0.5
+                                }
+                            }
+
+                            // ── Session row ──
+                            Rectangle {
+                                visible: !sessionRow.isHeader
+                                anchors.fill: parent
+                                color: root.selectedSessionId === modelData.sessionId
+                                       ? "#ee1a1024"
+                                       : (sessionMouse.containsMouse ? "#dd141420" : "#dd0a0a14")
+                                border.width: 1
+                                border.color: root.selectedSessionId === modelData.sessionId
+                                              ? Theme.gold
+                                              : (sessionMouse.containsMouse ? Theme.goldDim : Theme.textGhost)
+
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                // A thin outcome stripe down the left edge — green-ish
+                                // gold for completed, crimson for unlocked/interrupted —
+                                // so the result reads at a glance before the label.
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    width: 3
+                                    color: {
+                                        const r = String(modelData.result).toLowerCase()
+                                        if (r === "completed") return Theme.gold
+                                        if (r === "interrupted") return Theme.crimsonHot
+                                        if (r === "unlocked") return Theme.crimson
+                                        return Theme.goldDim
+                                    }
+                                }
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.right: rowMinutes.left
+                                    anchors.rightMargin: 8
+                                    anchors.top: parent.top
+                                    anchors.topMargin: 8
+                                    elide: Text.ElideRight
+                                    text: modelData.routineName
+                                    color: Theme.textPrimary
+                                    font.family: root.headerFont
+                                    font.pixelSize: 12
+                                }
+
+                                // Search snippet: the matching note context with the hit
+                                // bolded (StyledText renders the <b> from snippetHtml).
+                                Text {
+                                    visible: sessionRow.hasSnippet
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 12
+                                    anchors.top: parent.top
+                                    anchors.topMargin: 27
+                                    elide: Text.ElideRight
+                                    textFormat: Text.StyledText
+                                    text: modelData.snippetHtml !== undefined ? modelData.snippetHtml : ""
+                                    color: Theme.textDim
+                                    font.family: root.bodyFont
+                                    font.pixelSize: 10
+                                }
+
+                                Text {
+                                    id: rowMinutes
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 12
+                                    anchors.top: parent.top
+                                    anchors.topMargin: 8
+                                    text: modelData.minutes + "M"
+                                    color: Theme.gold
+                                    font.family: root.headerFont
+                                    font.pixelSize: 12
+                                }
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 12
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 8
+                                    elide: Text.ElideRight
+                                    text: modelData.timeLabel + "  ■  " + String(modelData.result).toUpperCase()
+                                          + (modelData.hasNote ? "  ■  ✎ NOTE" : "")
+                                    color: Theme.textDim
+                                    font.family: root.bodyFont
+                                    font.pixelSize: 10
+                                }
+
+                                MouseArea {
+                                    id: sessionMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (root.selectedSessionId === modelData.sessionId) {
+                                            root.selectedSessionId = ""
+                                        } else {
+                                            root.selectedSessionId = modelData.sessionId
+                                        }
                                     }
                                 }
                             }
@@ -1306,7 +1696,7 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             visible: sessionList.count === 0
-                            text: "NO MISSIONS LOGGED"
+                            text: (root.sessionSearchActive || root.sessionFilterActive) ? "NO MATCHES" : "NO MISSIONS LOGGED"
                             color: Theme.textGhost
                             font.family: root.headerFont
                             font.pixelSize: 11
@@ -1357,11 +1747,26 @@ Item {
                             text: {
                                 const data = notesStore.sessionNote(root.selectedSessionId)
                                 if (!data || !data.sessionId) return ""
-                                return data.routineName + "  ■  " + data.minutes + "M"
+                                return data.routineName
                             }
                             color: Theme.gold
                             font.family: root.headerFont
-                            font.pixelSize: 12
+                            font.pixelSize: 13
+                        }
+
+                        Text {
+                            id: detailMeta
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                            anchors.top: detailHeader.bottom
+                            anchors.topMargin: 3
+                            elide: Text.ElideRight
+                            text: root.sessionMetaLine(notesStore.sessionNote(root.selectedSessionId))
+                            color: Theme.textDim
+                            font.family: root.bodyFont
+                            font.pixelSize: 10
                         }
 
                         Rectangle {
@@ -1399,10 +1804,10 @@ Item {
                         ScrollView {
                             anchors.left: parent.left
                             anchors.right: parent.right
-                            anchors.top: detailHeader.bottom
+                            anchors.top: detailMeta.bottom
                             anchors.bottom: detailFooter.top
                             anchors.margins: 8
-                            anchors.topMargin: 6
+                            anchors.topMargin: 8
                             clip: true
 
                             TextArea {
@@ -1571,6 +1976,7 @@ Item {
                             model: root.calendarCells()
                             delegate: Rectangle {
                                 required property var modelData
+                                readonly property real heat: Number(modelData.intensity || 0)
                                 width: Math.floor((calendarGrid.width - 24) / 7)
                                 height: 34
                                 color: modelData.blank ? "transparent"
@@ -1578,6 +1984,18 @@ Item {
                                        : (dayMouse.containsMouse ? Theme.steel : Theme.voidColor)
                                 border.width: modelData.blank ? 0 : 1
                                 border.color: modelData.isToday ? Theme.gold : Theme.goldDim
+
+                                // Heat wash — opacity scales with the day's focus
+                                // relative to the month's busiest day. Capped so the
+                                // day number stays legible. Hidden when the cell is
+                                // already the crimson "selected" fill.
+                                Rectangle {
+                                    visible: !modelData.blank && parent.heat > 0 && !modelData.isSelected
+                                    anchors.fill: parent
+                                    anchors.margins: 1
+                                    color: Theme.crimsonHot
+                                    opacity: 0.12 + parent.heat * 0.42
+                                }
 
                                 Text {
                                     visible: !modelData.blank
@@ -1592,10 +2010,10 @@ Item {
 
                                 Rectangle {
                                     visible: !modelData.blank && modelData.focusMinutes > 0
-                                    width: 4
-                                    height: 4
-                                    radius: 2
-                                    color: modelData.isSelected ? Theme.gold : Theme.crimsonHot
+                                    width: 3 + Math.round(parent.heat * 4)
+                                    height: width
+                                    radius: width / 2
+                                    color: modelData.isSelected ? Theme.gold : Theme.gold
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     anchors.bottom: parent.bottom
                                     anchors.bottomMargin: 3
@@ -1924,6 +2342,7 @@ Item {
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: 10
                     text: "DONE " + statsStore.completedSessions + "  ■  UNLOCKED " + statsStore.unlockedSessions + "  ■  INTERRUPTED " + statsStore.interruptedSessions
+                          + (statsStore.totalDistractionsBlocked > 0 ? "  ■  " + statsStore.totalDistractionsBlocked + " BLOCKED" : "")
                     color: Theme.textGhost
                     font.family: root.bodyFont
                     font.pixelSize: 10

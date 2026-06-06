@@ -145,6 +145,107 @@ int StatsStore::currentStreakDays() const
     return streak;
 }
 
+QMap<QDate, int> StatsStore::minutesByDate() const
+{
+    QMap<QDate, int> byDate;
+    const auto accumulate = [&](const RoutineSession &session) {
+        const QDate date = localDateForSession(session);
+        if (date.isValid()) {
+            byDate[date] += displayMinutesForSeconds(sessionSeconds(session));
+        }
+    };
+    for (const RoutineSession &session : m_sessions) {
+        accumulate(session);
+    }
+    if (m_hasActiveSession) {
+        accumulate(m_activeSession);
+    }
+    return byDate;
+}
+
+int StatsStore::longestStreakDays() const
+{
+    // Longest run of consecutive calendar days that each logged focus time.
+    const QMap<QDate, int> byDate = minutesByDate();
+    int longest = 0;
+    int run = 0;
+    QDate previous;
+    for (auto it = byDate.constBegin(); it != byDate.constEnd(); ++it) {
+        if (it.value() <= 0) {
+            continue;
+        }
+        if (previous.isValid() && previous.addDays(1) == it.key()) {
+            ++run;
+        } else {
+            run = 1;
+        }
+        longest = qMax(longest, run);
+        previous = it.key();
+    }
+    return longest;
+}
+
+int StatsStore::weekFocusMinutes() const
+{
+    int total = 0;
+    const QDate today = QDate::currentDate();
+    for (int offset = 0; offset < 7; ++offset) {
+        total += aggregateForDate(today.addDays(-offset)).value(QStringLiteral("focusMinutes")).toInt();
+    }
+    return total;
+}
+
+int StatsStore::bestDayMinutes() const
+{
+    int best = 0;
+    const QMap<QDate, int> byDate = minutesByDate();
+    for (auto it = byDate.constBegin(); it != byDate.constEnd(); ++it) {
+        best = qMax(best, it.value());
+    }
+    return best;
+}
+
+QString StatsStore::bestDayLabel() const
+{
+    QDate bestDate;
+    int best = 0;
+    const QMap<QDate, int> byDate = minutesByDate();
+    for (auto it = byDate.constBegin(); it != byDate.constEnd(); ++it) {
+        if (it.value() > best) {
+            best = it.value();
+            bestDate = it.key();
+        }
+    }
+    if (!bestDate.isValid()) {
+        return {};
+    }
+    if (bestDate == QDate::currentDate()) {
+        return QStringLiteral("TODAY");
+    }
+    if (bestDate == QDate::currentDate().addDays(-1)) {
+        return QStringLiteral("YESTERDAY");
+    }
+    return bestDate.toString(QStringLiteral("MMM d")).toUpper();
+}
+
+int StatsStore::totalSessions() const
+{
+    int count = m_sessions.size();
+    if (m_hasActiveSession && sessionSeconds(m_activeSession) > 0) {
+        ++count;
+    }
+    return count;
+}
+
+int StatsStore::averageSessionMinutes() const
+{
+    const int sessions = totalSessions();
+    if (sessions <= 0) {
+        return 0;
+    }
+    return totalFocusMinutes() / sessions;
+}
+
 QString StatsStore::lastSessionSummary() const
 {
     if (m_hasActiveSession && sessionSeconds(m_activeSession) > 0) {
@@ -204,6 +305,42 @@ double StatsStore::todayTargetProgress() const
     return double(todayFocusMinutes()) / double(m_dailyTargetMinutes);
 }
 
+double StatsStore::averageFocusRating() const
+{
+    int sum = 0;
+    int count = 0;
+    for (const RoutineSession &session : m_sessions) {
+        if (session.focusRating > 0) {
+            sum += session.focusRating;
+            ++count;
+        }
+    }
+    return count > 0 ? double(sum) / double(count) : 0.0;
+}
+
+int StatsStore::ratedSessions() const
+{
+    int count = 0;
+    for (const RoutineSession &session : m_sessions) {
+        if (session.focusRating > 0) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int StatsStore::totalDistractionsBlocked() const
+{
+    return m_totalDistractionsBlocked;
+}
+
+void StatsStore::noteDistractionBlocked()
+{
+    ++m_totalDistractionsBlocked;
+    save();
+    emit statsChanged();
+}
+
 void StatsStore::recordLastSessionReflection(const QString &reflection)
 {
     if (m_sessions.isEmpty()) {
@@ -216,6 +353,20 @@ void StatsStore::recordLastSessionReflection(const QString &reflection)
     }
 
     m_sessions.last().reflection = trimmed;
+    save();
+    emit statsChanged();
+}
+
+void StatsStore::recordLastSessionFocusRating(int rating)
+{
+    if (m_sessions.isEmpty()) {
+        return;
+    }
+    const int clamped = qBound(0, rating, 5);
+    if (m_sessions.last().focusRating == clamped) {
+        return;
+    }
+    m_sessions.last().focusRating = clamped;
     save();
     emit statsChanged();
 }
@@ -311,6 +462,7 @@ void StatsStore::load()
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
     const QJsonObject rootObject = document.object();
     m_dailyTargetMinutes = qBound(0, rootObject.value(QStringLiteral("daily_target_minutes")).toInt(180), 24 * 60);
+    m_totalDistractionsBlocked = qMax(0, rootObject.value(QStringLiteral("distractions_blocked")).toInt());
     const QJsonArray sessions = rootObject.value(QStringLiteral("sessions")).toArray();
 
     m_sessions.clear();
@@ -323,6 +475,7 @@ void StatsStore::load()
         session.startedAt = QDateTime::fromString(object.value(QStringLiteral("started_at")).toString(), Qt::ISODate);
         session.endedAt = QDateTime::fromString(object.value(QStringLiteral("ended_at")).toString(), Qt::ISODate);
         session.reflection = object.value(QStringLiteral("reflection")).toString().trimmed();
+        session.focusRating = qBound(0, object.value(QStringLiteral("focus_rating")).toInt(), 5);
         session.minutes = qMax(0, object.value(QStringLiteral("minutes")).toInt());
         session.seconds = qMax(0, object.value(QStringLiteral("seconds")).toInt(session.minutes * 60));
         if (!session.routineId.isEmpty() && sessionSeconds(session) > 0) {
@@ -360,6 +513,9 @@ bool StatsStore::save() const
         if (!session.reflection.isEmpty()) {
             object.insert(QStringLiteral("reflection"), session.reflection);
         }
+        if (session.focusRating > 0) {
+            object.insert(QStringLiteral("focus_rating"), session.focusRating);
+        }
         object.insert(QStringLiteral("minutes"), displayMinutesForSeconds(sessionSeconds(session)));
         object.insert(QStringLiteral("seconds"), sessionSeconds(session));
         sessions.append(object);
@@ -368,6 +524,7 @@ bool StatsStore::save() const
     QJsonObject root;
     root.insert(QStringLiteral("sessions"), sessions);
     root.insert(QStringLiteral("daily_target_minutes"), m_dailyTargetMinutes);
+    root.insert(QStringLiteral("distractions_blocked"), m_totalDistractionsBlocked);
     if (m_hasActiveSession) {
         QJsonObject active;
         active.insert(QStringLiteral("routine_id"), m_activeSession.routineId);

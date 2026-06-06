@@ -499,6 +499,48 @@ Item {
             }
         }
 
+        // Distraction-attempt readout. Appears the moment the lockdown watchdog
+        // catches the user reaching for a blocked launcher — a calm, factual
+        // "the pull is real; stay on target" nudge, not a scolding alarm.
+        Rectangle {
+            id: distractionChip
+            visible: routineManager.sessionDistractionsBlocked > 0
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width, distractionText.implicitWidth + 40)
+            height: 28
+            color: "#1a0a0c"
+            border.width: 1
+            border.color: Theme.crimson
+
+            // A brief pulse each time the count ticks up, drawing the eye once
+            // then settling — feedback without nagging.
+            SequentialAnimation {
+                id: distractionPulse
+                NumberAnimation { target: distractionChip; property: "opacity"; from: 0.45; to: 1.0; duration: 220; easing.type: Easing.OutQuad }
+            }
+
+            Connections {
+                target: routineManager
+                function onDistractionsBlockedChanged() {
+                    if (routineManager.sessionDistractionsBlocked > 0) {
+                        distractionPulse.restart()
+                    }
+                }
+            }
+
+            Text {
+                id: distractionText
+                anchors.centerIn: parent
+                text: "⊘ " + routineManager.sessionDistractionsBlocked + " "
+                      + (routineManager.sessionDistractionsBlocked === 1 ? "DISTRACTION" : "DISTRACTIONS")
+                      + " BLOCKED  ■  STAY ON TARGET"
+                color: Theme.gold
+                font.family: root.headerFont
+                font.pixelSize: 11
+                font.letterSpacing: 0
+            }
+        }
+
         Item { width: parent.width; height: 8 }
 
         // Action buttons

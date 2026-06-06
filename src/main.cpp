@@ -1,6 +1,7 @@
 #include "core/AppPaths.h"
 #include "core/InspirationStore.h"
 #include "core/IdleMonitor.h"
+#include "core/Logger.h"
 #include "core/MediaKeys.h"
 #include "core/MusicEngine.h"
 #include "core/NotesStore.h"
@@ -349,6 +350,12 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
 
+    // Tee every Qt log message to a rotating ~/.focusos/logs/focusos.log so a bare
+    // kwin_wayland session (no terminal, no journal viewer in front of the user)
+    // still leaves a trail to debug a misbehaving routine. Installed before the
+    // backends so their init warnings are captured.
+    Logger::install();
+
     const QString focusDataDir = AppPaths::dataDirectory();
     QDir().mkpath(focusDataDir);
     QLockFile instanceLock(focusDataDir + QStringLiteral("/focusos.lock"));
@@ -415,6 +422,10 @@ int main(int argc, char *argv[])
                      &RoutineManager::routineSessionProgress,
                      &statsStore,
                      &StatsStore::recordRoutineSessionProgress);
+    QObject::connect(&routineManager,
+                     &RoutineManager::distractionAttemptBlocked,
+                     &statsStore,
+                     &StatsStore::noteDistractionBlocked);
     QObject::connect(&routineManager,
                      &RoutineManager::routineSessionFinished,
                      &notesStore,

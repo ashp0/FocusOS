@@ -1,6 +1,7 @@
 #include "shell/ShellWindow.h"
 
 #include "core/InspirationStore.h"
+#include "core/Logger.h"
 #include "core/MusicEngine.h"
 #include "core/NotesStore.h"
 #include "core/RoutineManager.h"
@@ -47,6 +48,12 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
     rootContext()->setContextProperty(QStringLiteral("inspirationStore"), inspirationStore);
     rootContext()->setContextProperty(QStringLiteral("updater"), updater);
     rootContext()->setContextProperty(QStringLiteral("idleMonitor"), idleMonitor);
+    // Diagnostics surface for the SYSTEM tab (log tail / reveal logs). Logger is a
+    // process-wide singleton installed in main(); guard in case a future caller
+    // builds the window without it.
+    if (Logger *logger = Logger::instance()) {
+        rootContext()->setContextProperty(QStringLiteral("diagnostics"), logger);
+    }
 
     loadFromModule(QStringLiteral("FocusOS"), QStringLiteral("Main"));
 

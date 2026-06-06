@@ -501,9 +501,13 @@ Item {
         z: 35
         visible: opacity > 0
         opacity: routineManager.sessionPromptVisible ? 1 : 0
+        // Optional 1–5 self-assessment of how focused the session felt, recorded
+        // alongside the written reflection. 0 = not rated.
+        property int focusRating: 0
 
         function finish(quitApps) {
             statsStore.recordLastSessionReflection(reflectionField.text)
+            statsStore.recordLastSessionFocusRating(focusRating)
             notesStore.recordSessionReflection(reflectionField.text)
             if (quitApps) {
                 routineManager.quitFinishedSession()
@@ -511,6 +515,7 @@ Item {
                 routineManager.continueFinishedSession()
             }
             reflectionField.text = ""
+            focusRating = 0
             root.forceActiveFocus()
         }
 
@@ -530,7 +535,7 @@ Item {
         Rectangle {
             id: sessionCard
             width: Math.min(640, parent.width - 64)
-            height: 392
+            height: 462
             anchors.centerIn: parent
             color: Theme.iron
             border.width: 1
@@ -623,6 +628,63 @@ Item {
                 }
             }
 
+            // Focus-quality self-rating (optional). Honest self-assessment is how
+            // a user learns which routines actually hold their attention.
+            Column {
+                anchors.top: reflectionBox.bottom
+                anchors.topMargin: 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 7
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: sessionPrompt.focusRating > 0
+                          ? "FOCUS QUALITY  ■  " + sessionPrompt.focusRating + " / 5"
+                          : "HOW FOCUSED WAS THIS RUN?  (OPTIONAL)"
+                    color: Theme.goldDim
+                    font.family: root.headerFont
+                    font.pixelSize: 11
+                    font.letterSpacing: 0
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 8
+
+                    Repeater {
+                        model: 5
+                        delegate: Rectangle {
+                            required property int index
+                            readonly property bool filled: sessionPrompt.focusRating >= index + 1
+                            width: 34
+                            height: 26
+                            color: filled ? Theme.crimsonHot : Theme.steel
+                            border.width: 1
+                            border.color: (pipMouse.containsMouse || filled) ? Theme.gold : Theme.goldDim
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: index + 1
+                                color: filled ? Theme.gold : Theme.textDim
+                                font.family: root.headerFont
+                                font.pixelSize: 12
+                                font.letterSpacing: 0
+                            }
+
+                            MouseArea {
+                                id: pipMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                // Click the current rating again to clear it.
+                                onClicked: sessionPrompt.focusRating =
+                                    (sessionPrompt.focusRating === index + 1) ? 0 : index + 1
+                            }
+                        }
+                    }
+                }
+            }
+
             Row {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
@@ -672,6 +734,7 @@ Item {
             function onSessionPromptChanged() {
                 if (routineManager.sessionPromptVisible) {
                     reflectionField.text = ""
+                    sessionPrompt.focusRating = 0
                     reflectionField.forceActiveFocus()
                 }
             }

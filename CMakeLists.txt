@@ -117,6 +117,8 @@ set(FOCUSOS_SOURCES
     src/core/InspirationStore.h
     src/core/IdleMonitor.cpp
     src/core/IdleMonitor.h
+    src/core/Logger.cpp
+    src/core/Logger.h
     src/core/MediaKeys.cpp
     src/core/MediaKeys.h
     src/core/RoutineManager.cpp
@@ -208,7 +210,6 @@ qt_add_qml_module(focusos
         src/shell/StarField.qml
         src/shell/IdleScreen.qml
         src/shell/MissionView.qml
-        src/shell/NotesDrawer.qml
         src/shell/UnlockModal.qml
         src/shell/FileBrowser.qml
         src/shell/ProgressOverlay.qml
@@ -319,9 +320,49 @@ target_link_libraries(totp_tests PRIVATE
 
 add_test(NAME totp_tests COMMAND totp_tests)
 
-# Apply the shared warnings / sanitizer / LTO / dead-strip tuning to both targets.
+# NotesStore search + draft-rollover coverage. Pulls in AppPaths (its only
+# dependency); each test points $HOME at a throwaway dir so the real archive is
+# never touched.
+qt_add_executable(notes_tests
+    tests/notes_tests.cpp
+    src/core/NotesStore.cpp
+    src/core/NotesStore.h
+    src/core/AppPaths.cpp
+    src/core/AppPaths.h
+)
+
+target_include_directories(notes_tests PRIVATE src)
+target_link_libraries(notes_tests PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME notes_tests COMMAND notes_tests)
+
+# StatsStore session-log + analytics coverage (streaks, best day, averages,
+# focus-rating round-trip through the on-disk stats.json). Pulls in AppPaths
+# (its only dependency); each test points $HOME at a throwaway dir.
+qt_add_executable(stats_tests
+    tests/stats_tests.cpp
+    src/core/StatsStore.cpp
+    src/core/StatsStore.h
+    src/core/AppPaths.cpp
+    src/core/AppPaths.h
+)
+
+target_include_directories(stats_tests PRIVATE src)
+target_link_libraries(stats_tests PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+
+add_test(NAME stats_tests COMMAND stats_tests)
+
+# Apply the shared warnings / sanitizer / LTO / dead-strip tuning to all targets.
 focusos_tune_target(focusos)
 focusos_tune_target(totp_tests)
+focusos_tune_target(notes_tests)
+focusos_tune_target(stats_tests)
 
 set_target_properties(focusos PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER com.focusos.shell

@@ -87,6 +87,11 @@ class RoutineManager final : public QAbstractListModel
     Q_PROPERTY(bool desktopShellRunning READ desktopShellRunning NOTIFY desktopShellChanged)
     Q_PROPERTY(int routineCount READ routineCount NOTIFY routineCountChanged)
     Q_PROPERTY(bool activeRoutineHasLaunchTargets READ activeRoutineHasLaunchTargets NOTIFY activeChanged)
+    // Count of times the lockdown watchdog caught the user reaching for a
+    // blocked launcher / time-sink during the *current* routine. Resets to 0
+    // each engage. Surfaced live in MissionView as gentle "stay on target"
+    // feedback.
+    Q_PROPERTY(int sessionDistractionsBlocked READ sessionDistractionsBlocked NOTIFY distractionsBlockedChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(bool networkLockPromptVisible READ networkLockPromptVisible NOTIFY networkLockPromptChanged)
     Q_PROPERTY(QString networkLockError READ networkLockError NOTIFY networkLockPromptChanged)
@@ -164,6 +169,7 @@ public:
     bool desktopShellRunning() const;
     int routineCount() const;
     bool activeRoutineHasLaunchTargets() const;
+    int sessionDistractionsBlocked() const;
     QString statusMessage() const;
     bool networkLockPromptVisible() const;
     QString networkLockError() const;
@@ -293,6 +299,12 @@ public slots:
 signals:
     void activeChanged();
     void remainingSecondsChanged();
+    // Live session counter changed (reset on engage, incremented per blocked
+    // launcher reach). Drives the MissionView readout.
+    void distractionsBlockedChanged();
+    // Fired once per distraction attempt the watchdog blocks. Decoupled from the
+    // live counter so StatsStore can accumulate a persisted lifetime total.
+    void distractionAttemptBlocked();
     void accessChanged();
     void configChanged();
     void sessionPromptChanged();
@@ -336,6 +348,9 @@ private:
     bool isWithinBrowseRoots(const QString &path) const;
     void updateDisplaySleepInhibit();
     void resumeActiveSessionIfPresent();
+    // Backend lockdown-watchdog callback target: bumps the live session counter
+    // and re-broadcasts so StatsStore can keep a lifetime tally.
+    void noteDistractionAttempt();
     void onRoutineExpired();
     void tickOtherAccess();
     void finishOtherAccess();
@@ -385,6 +400,8 @@ private:
     QString m_finishedSessionResult;
     QStringList m_finishedSessionApps;
     QStringList m_finishedSessionUrls;
+    // Distraction attempts caught during the current routine (reset on engage).
+    int m_sessionDistractionsBlocked = 0;
     QString m_statusMessage;
     QString m_pendingNetworkRoutineId;
     QString m_networkLockError;
