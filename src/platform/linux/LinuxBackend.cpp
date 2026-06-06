@@ -382,6 +382,59 @@ bool startDetachedWithKdeEnvironment(const QString &program, const QStringList &
     return process.startDetached();
 }
 
+void seedUserServiceEnvironment()
+{
+    // systemd --user services inherit the environment of the *systemd user
+    // manager*, NOT of whoever runs `systemctl --user start`. On a normal
+    // Plasma/GNOME login the session leader seeds that manager (and the D-Bus
+    // activation environment) with WAYLAND_DISPLAY / XDG_CURRENT_DESKTOP / … via
+    // `dbus-update-activation-environment --systemd`. Our bare kwin_wayland
+    // session never does that, so any user service launched from startup.sh —
+    // e.g. Toshy's toshy-<compositor>-dbus.service, which connects to KWin over
+    // the session bus to learn the focused window — comes up with no Wayland
+    // display and no desktop identity and exits non-zero. `toshy-services-restart`
+    // then reports every toshy-*-dbus.service as failed. Seed the manager once,
+    // before we run any startup item, so those services start with the same
+    // canonical KDE identity FocusOS hands its own children in
+    // startDetachedWithKdeEnvironment().
+    const QProcessEnvironment sys = QProcessEnvironment::systemEnvironment();
+    QStringList assignments {
+        QStringLiteral("XDG_CURRENT_DESKTOP=KDE"),
+        QStringLiteral("XDG_SESSION_DESKTOP=KDE"),
+        QStringLiteral("XDG_SESSION_TYPE=wayland"),
+        QStringLiteral("KDE_FULL_SESSION=true"),
+        QStringLiteral("KDE_SESSION_VERSION=6"),
+    };
+    // Pass the live per-session vars through verbatim if FocusOS has them (as a
+    // Wayland client it will): these are what actually let a user service reach
+    // the compositor.
+    for (const QString &key : {QStringLiteral("WAYLAND_DISPLAY"),
+                               QStringLiteral("DISPLAY"),
+                               QStringLiteral("XDG_RUNTIME_DIR")}) {
+        const QString value = sys.value(key);
+        if (!value.isEmpty()) {
+            assignments << (key + QLatin1Char('=') + value);
+        }
+    }
+
+    // dbus-update-activation-environment --systemd pushes into BOTH the D-Bus
+    // activation environment and the systemd --user manager in one shot. Run it
+    // synchronously so the seed lands before startup.sh fires toshy-services-restart.
+    const QString dbusUpdate =
+        QStandardPaths::findExecutable(QStringLiteral("dbus-update-activation-environment"));
+    if (!dbusUpdate.isEmpty()) {
+        QProcess::execute(dbusUpdate, QStringList{QStringLiteral("--systemd")} + assignments);
+    }
+    // Belt-and-braces for installs without dbus-x11's helper: set the same vars
+    // directly on the user manager too.
+    const QString systemctl = QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    if (!systemctl.isEmpty()) {
+        QProcess::execute(
+            systemctl,
+            QStringList{QStringLiteral("--user"), QStringLiteral("set-environment")} + assignments);
+    }
+}
+
 void pkillExact(const QString &processName)
 {
     // pkill -x matches against the 15-char comm field by default, so long
@@ -1993,6 +2046,11 @@ void LinuxBackend::runSessionStartupItems()
     //
     // Run it through a shell so it can be a plain list of commands without a +x
     // bit. Skip an empty/whitespace-only file so we don't spawn a no-op sh.
+    // Seed the systemd --user manager / D-Bus activation environment first, so
+    // user services kicked off by the script (Toshy in particular) inherit a
+    // working Wayland + KDE environment instead of failing on the bare session.
+    seedUserServiceEnvironment();
+
     const QString scriptPath = QDir::homePath() + QStringLiteral("/.focusos/startup.sh");
     QFile script(scriptPath);
     if (script.exists() && script.open(QIODevice::ReadOnly)) {
