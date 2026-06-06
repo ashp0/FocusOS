@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -29,7 +30,9 @@ struct PercentReading
     bool available = false;
 };
 
-QString readTrimmedFile(const QString &path)
+// Used by the Linux sysfs readers below; the macOS branch reads via pmset/
+// osascript instead, so mark it maybe_unused to stay warning-clean there.
+[[maybe_unused]] QString readTrimmedFile(const QString &path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -38,9 +41,28 @@ QString readTrimmedFile(const QString &path)
     return QString::fromLocal8Bit(file.readAll()).trimmed();
 }
 
+// Resolve an executable once and memoise it. QStandardPaths::findExecutable walks
+// every entry in $PATH stat()-ing candidates on each call; the status refresh and
+// every volume/brightness write hit the same handful of tools (pactl,
+// brightnessctl, osascript), so the repeated PATH scan is pure waste. A tool's
+// location is stable for the life of the process — if pactl isn't installed at
+// launch it won't appear mid-session — so caching the result (including the empty
+// "not found" answer) is safe. UI-thread only, so the static needs no locking.
+QString cachedExecutable(const QString &program)
+{
+    static QHash<QString, QString> cache;
+    const auto it = cache.constFind(program);
+    if (it != cache.constEnd()) {
+        return it.value();
+    }
+    const QString path = QStandardPaths::findExecutable(program);
+    cache.insert(program, path);
+    return path;
+}
+
 bool runTextCommand(const QString &program, const QStringList &arguments, QString *stdoutText, int timeoutMs = 800)
 {
-    const QString path = QStandardPaths::findExecutable(program);
+    const QString path = cachedExecutable(program);
     if (path.isEmpty()) {
         return false;
     }
@@ -249,7 +271,7 @@ PercentReading readBrightness()
 void writeSystemVolume(int percent)
 {
     const int clamped = clampedPercent(percent);
-    const QString pactl = QStandardPaths::findExecutable(QStringLiteral("pactl"));
+    const QString pactl = cachedExecutable(QStringLiteral("pactl"));
     if (!pactl.isEmpty()) {
         // Detached so dragging the volume slider doesn't stall the UI thread on
         // a synchronous pactl round-trip for every step.
@@ -260,7 +282,7 @@ void writeSystemVolume(int percent)
 
 void writeMuteToggle()
 {
-    const QString pactl = QStandardPaths::findExecutable(QStringLiteral("pactl"));
+    const QString pactl = cachedExecutable(QStringLiteral("pactl"));
     if (!pactl.isEmpty()) {
         QProcess::startDetached(pactl, {QStringLiteral("set-sink-mute"), QStringLiteral("@DEFAULT_SINK@"), QStringLiteral("toggle")});
     }
@@ -275,7 +297,7 @@ void writeBrightness(int percent)
     // sysfs write below silently fails for a normal user — /sys/class/backlight/
     // */brightness is root-owned. brightnessctl is detached so dragging the
     // slider never blocks the UI thread.
-    const QString brightnessctl = QStandardPaths::findExecutable(QStringLiteral("brightnessctl"));
+    const QString brightnessctl = cachedExecutable(QStringLiteral("brightnessctl"));
     if (!brightnessctl.isEmpty()) {
         // "-n" keeps a 1% floor so the screen never goes fully black.
         const int floored = qMax(1, clamped);
@@ -456,6 +478,25 @@ void SystemStatus::setBrightness(int percent)
 void SystemStatus::refresh()
 {
     refreshStatus();
+}
+
+void SystemStatus::setLowPowerMode(bool enabled)
+{
+    if (m_lowPowerMode == enabled) {
+        return;
+    }
+    m_lowPowerMode = enabled;
+    if (enabled) {
+        // Deep idle: stop the periodic refresh so a "sleeping" machine stays truly
+        // quiescent (no 30s CPU wake, no pactl spawn). The last-read values stay on
+        // the indicators — nothing is looking at them behind the black idle screen.
+        m_statusTimer.stop();
+    } else {
+        // Woke: reconcile the indicators with reality (volume/brightness may have
+        // changed via media keys during sleep) before resuming periodic polling.
+        refreshStatus();
+        m_statusTimer.start();
+    }
 }
 
 void SystemStatus::refreshStatus()

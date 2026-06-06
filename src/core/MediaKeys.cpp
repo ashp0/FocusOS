@@ -20,9 +20,11 @@ Q_LOGGING_CATEGORY(lcMediaKeys, "focusos.mediakeys")
 
 namespace {
 // Matches the per-key step used by the in-shell handler in Main.qml so the
-// physical keys and the on-screen sliders move in the same increments.
-constexpr int kVolumeStep = 5;
-constexpr int kBrightnessStep = 5;
+// physical keys and the on-screen sliders move in the same increments. Only
+// referenced from the KGlobalAccel callbacks, which are compiled out on builds
+// without it (e.g. macOS) — hence maybe_unused to stay warning-clean there.
+[[maybe_unused]] constexpr int kVolumeStep = 5;
+[[maybe_unused]] constexpr int kBrightnessStep = 5;
 } // namespace
 
 MediaKeys::MediaKeys(SystemStatus *systemStatus, PlatformBackend *backend, QObject *parent)

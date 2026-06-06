@@ -476,6 +476,50 @@ bool processRunning(const QString &processName)
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
+// In-process /proc scan: true if any live process's comm matches one of
+// `denyComms`. This is the lockdown watchdog's cheap pre-check — it runs every
+// 1.5s and lets us SKIP fork+exec'ing `sh -c "pkill …"` when there is nothing to
+// kill (the steady state of an engaged routine). `comm` is the kernel's
+// executable basename truncated to TASK_COMM_LEN-1 (15) chars, which is exactly
+// what `pkill -x` compares against — so callers pass names pre-truncated to 15
+// bytes and this mirrors pkill's matching. No uid filter (pkill scans all users;
+// comm is world-readable). Cost: one tiny read per pid, no spawn, no allocation
+// beyond a reused small QByteArray — far cheaper than the three process creations
+// (sh + 2× pkill, each of which walks all of /proc itself) it replaces.
+//
+// Faithfulness note: a process that overrode its comm via prctl(PR_SET_NAME) to
+// something other than its executable basename could evade this pre-check. None
+// of the outlawed launchers/time-sinks do that, and the watchdog forces a full
+// pkill sweep every ~30s regardless (see tickLockdownWatchdog) so even that
+// theoretical case is bounded — it can never become a permanent lockdown hole.
+bool anyOutlawedProcessPresent(const QSet<QByteArray> &denyComms)
+{
+    if (denyComms.isEmpty()) {
+        return false;
+    }
+    QDir procDir(QStringLiteral("/proc"));
+    const QStringList entries = procDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::NoSort);
+    for (const QString &entry : entries) {
+        bool isPid = false;
+        const qint64 pid = entry.toLongLong(&isPid);
+        if (!isPid || pid <= 1) {
+            continue; // not a pid dir, or kernel/init — never a launcher
+        }
+        QFile commFile(QStringLiteral("/proc/") + entry + QStringLiteral("/comm"));
+        if (!commFile.open(QIODevice::ReadOnly)) {
+            continue; // process raced away between readdir and open
+        }
+        QByteArray comm = commFile.readAll();
+        while (comm.endsWith('\n')) {
+            comm.chop(1); // strip comm's trailing newline (in place, no realloc)
+        }
+        if (denyComms.contains(comm)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void killTrackedPids(QList<qint64> &pids)
 {
     for (qint64 pid : pids) {
@@ -1539,10 +1583,35 @@ void LinuxBackend::tickLockdownWatchdog()
         // -f anchored to the command start (matches pkillExact's long-name path).
         commands.append(QStringLiteral("pkill -f -- '^(%1)($| )'").arg(longNames.join(QLatin1Char('|'))));
     }
-    if (!commands.isEmpty()) {
-        QProcess::startDetached(QStringLiteral("sh"),
-                                {QStringLiteral("-c"), commands.join(QStringLiteral("; "))});
+    if (commands.isEmpty()) {
+        return; // everything outlawed is on the allow-list this session
     }
+
+    // Steady-state fast path: in the overwhelmingly common case nothing on the
+    // deny-list is running, so spawning `sh -c "pkill …; pkill …"` every 1.5s for
+    // the whole routine is pure waste — three process creations (and two full
+    // /proc walks inside pkill) per tick, hours on end, on a machine that's
+    // supposed to be sipping power. First check in-process whether any outlawed
+    // process is actually present; only then pay for the spawn. A forced full
+    // sweep every ~20 ticks (~30s) is a belt-and-suspenders backstop so a process
+    // that somehow evades the comm pre-check can't survive longer than that.
+    const bool forceSweep = (m_lockdownSweepCounter++ % 20 == 0);
+    if (!forceSweep) {
+        QSet<QByteArray> denyComms;
+        denyComms.reserve(exactNames.size() + longNames.size());
+        for (const QString &name : exactNames) {
+            denyComms.insert(name.toLatin1().left(15));
+        }
+        for (const QString &name : longNames) {
+            denyComms.insert(name.toLatin1().left(15));
+        }
+        if (!anyOutlawedProcessPresent(denyComms)) {
+            return; // nothing to kill — skip the fork+exec entirely
+        }
+    }
+
+    QProcess::startDetached(QStringLiteral("sh"),
+                            {QStringLiteral("-c"), commands.join(QStringLiteral("; "))});
 }
 
 // The native host rewrites ~/.focusos/blocker/host-alive every ~1.5s while a

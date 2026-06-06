@@ -20,6 +20,65 @@ if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
     set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "Build Apple Silicon by default" FORCE)
 endif()
 
+# ── Build acceleration & dev tooling ─────────────────────────────────────────
+# Everything here is opt-in or auto-degrading, so the default Debug build the
+# user runs (`cmake --build build`) is unchanged unless a tool/flag is requested.
+# See docs/build-and-perf.md for the rationale.
+
+# ccache transparently memoises object files — the single biggest win for the
+# edit/rebuild loop on the Fedora iMac. A no-op when it isn't installed.
+find_program(FOCUSOS_CCACHE ccache)
+if(FOCUSOS_CCACHE)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${FOCUSOS_CCACHE}")
+    set(CMAKE_OBJCXX_COMPILER_LAUNCHER "${FOCUSOS_CCACHE}")
+    message(STATUS "FocusOS: ccache enabled (${FOCUSOS_CCACHE})")
+endif()
+
+option(FOCUSOS_WARNINGS "Compile the FocusOS targets with -Wall -Wextra" ON)
+# Off by default: production/Release and the kiosk binary are never slowed. Turn
+# on for a debugging session:  cmake -B build -DFOCUSOS_SANITIZE=ON
+option(FOCUSOS_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+
+# Link-time optimization for Release (leaner, faster binary). Probed so a
+# toolchain without LTO degrades cleanly instead of erroring the configure.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT FOCUSOS_IPO_OK OUTPUT FOCUSOS_IPO_MSG)
+if(NOT FOCUSOS_IPO_OK)
+    message(STATUS "FocusOS: LTO unavailable (${FOCUSOS_IPO_MSG}) — Release builds skip it")
+endif()
+
+# Shared compile/link tuning applied to each FocusOS target. Generator
+# expressions keep Release-only flags out of the Debug build entirely.
+function(focusos_tune_target target)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        if(FOCUSOS_WARNINGS)
+            target_compile_options(${target} PRIVATE -Wall -Wextra)
+        endif()
+        # Keep frame pointers in Debug so `perf`/Instruments stacks stay readable.
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Debug>:-fno-omit-frame-pointer>)
+        # Dead-strip unreachable code/data in Release for a smaller binary.
+        if(APPLE)
+            target_link_options(${target} PRIVATE $<$<CONFIG:Release>:-Wl,-dead_strip>)
+        else()
+            target_compile_options(${target} PRIVATE
+                $<$<CONFIG:Release>:-ffunction-sections>
+                $<$<CONFIG:Release>:-fdata-sections>)
+            target_link_options(${target} PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections>)
+        endif()
+    endif()
+
+    if(FOCUSOS_SANITIZE AND (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"))
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer
+            -fno-sanitize-recover=undefined)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endif()
+
+    if(FOCUSOS_IPO_OK)
+        set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    endif()
+endfunction()
+
 find_package(Qt6 6.7 REQUIRED COMPONENTS
     Concurrent
     Core
@@ -90,9 +149,15 @@ if(APPLE)
     # under MRC, where a captured NSError* is not retained and gets deallocated
     # when the run-loop's autorelease pool drains — leaving a dangling pointer
     # that crashes when the error message is later read. Compile it under ARC.
+    # SKIP_PRECOMPILE_HEADERS: the target's precompiled header (added below) is
+    # built without ARC, but this shim is compiled WITH -fobjc-arc — Clang rejects
+    # consuming an ARC-mismatched PCH. The shim is a single TU, so it gains nothing
+    # from the PCH anyway; just exclude it.
     set_source_files_properties(
         src/platform/macos/MacBackendNative.mm
-        PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
+        PROPERTIES
+            COMPILE_OPTIONS "-fobjc-arc"
+            SKIP_PRECOMPILE_HEADERS ON
     )
 elseif(UNIX)
     list(APPEND FOCUSOS_SOURCES
@@ -117,6 +182,20 @@ qt_add_executable(focusos
 )
 
 target_include_directories(focusos PRIVATE src)
+
+# Precompile the handful of Qt headers nearly every translation unit pulls in.
+# These are cheap, ubiquitous, and stable, so precompiling them once shaves a
+# meaningful slice off a clean build without the fragility of PCH'ing the heavy
+# QtQuick/QtQml headers. (Applies to C++ TUs only; the ObjC++ shim is excluded.)
+target_precompile_headers(focusos PRIVATE
+    <QObject>
+    <QString>
+    <QStringList>
+    <QByteArray>
+    <QHash>
+    <QTimer>
+    <QDebug>
+)
 
 qt_add_qml_module(focusos
     URI FocusOS
@@ -239,6 +318,10 @@ target_link_libraries(totp_tests PRIVATE
 )
 
 add_test(NAME totp_tests COMMAND totp_tests)
+
+# Apply the shared warnings / sanitizer / LTO / dead-strip tuning to both targets.
+focusos_tune_target(focusos)
+focusos_tune_target(totp_tests)
 
 set_target_properties(focusos PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER com.focusos.shell

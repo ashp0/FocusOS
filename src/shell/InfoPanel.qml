@@ -299,7 +299,9 @@ Item {
             border.color: Theme.gold
 
             SequentialAnimation on opacity {
-                running: true
+                // Decorative pulse — no reason to keep ticking while the panel is
+                // collapsed (hidden) or the idle screensaver covers everything.
+                running: root.visible && !idleMonitor.idle
                 loops: Animation.Infinite
                 NumberAnimation { to: 0.35; duration: 1100; easing.type: Easing.InOutQuad }
                 NumberAnimation { to: 1.0; duration: 1100; easing.type: Easing.InOutQuad }
@@ -341,7 +343,16 @@ Item {
             }
 
             Component.onCompleted: recompute()
-            Timer { interval: 1000; running: true; repeat: true; onTriggered: stardateText.recompute() }
+            // A clock nobody can see needn't tick: pause while the panel is
+            // collapsed or the idle screen is up. recompute() on re-show (below)
+            // snaps it back to the real time, so it's never shown stale.
+            Timer {
+                interval: 1000
+                running: root.visible && !idleMonitor.idle
+                repeat: true
+                onTriggered: stardateText.recompute()
+                onRunningChanged: if (running) stardateText.recompute()
+            }
         }
 
         Rectangle {
@@ -449,7 +460,9 @@ Item {
             opacity: 0.7
 
             SequentialAnimation on x {
-                running: true
+                // Sweeping footer marker — purely decorative, so freeze it when the
+                // panel is hidden or the idle screensaver has taken over.
+                running: root.visible && !idleMonitor.idle
                 loops: Animation.Infinite
                 NumberAnimation {
                     from: 0

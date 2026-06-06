@@ -71,7 +71,11 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
   no-op on Linux now; ShellWindow raises the shell back to the foreground when a
   routine ends.
 - During a routine, LinuxBackend runs a ~1.5s lockdown watchdog that pkills
-  launchers (krunner/plasmashell/kickoff/rofi/dmenu/wofi/etc.).
+  launchers (krunner/plasmashell/kickoff/rofi/dmenu/wofi/etc.). To avoid a
+  `fork`/`exec` storm it first does an in-process `/proc` `comm` scan
+  (`anyOutlawedProcessPresent`) and only spawns `pkill` when something matches,
+  with a forced full sweep every ~20 ticks as a backstop. See
+  [docs/build-and-perf.md](docs/build-and-perf.md).
 - nftables blocking needs `CAP_NET_ADMIN`.
 - Bare kwin_wayland session has no Plasma daemons: media keys need KGlobalAccel
   (KGlobalAccel is inert unless `kglobalacceld` runs, so `main()` starts it via
@@ -88,7 +92,11 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
   suspend stays opt-in (`deep_sleep_suspend`) and is pinned to s2idle/freeze via
   `packaging/linux/90-focusos-sleep.conf` so it's safe on hardware that
   black-screens out of S3 (e.g. the 2017 iMac). Freeze only runs on the home
-  screen (idle is suppressed during a routine).
+  screen (idle is suppressed during a routine). On `deepIdle` the shell also
+  quiesces its own pollers so it stops waking the CPU behind the black screen:
+  `systemStatus.setLowPowerMode(true)` stops the 30s status refresh (no more
+  `pactl` spawn) and `MusicEngine::setSleeping` parks the 4s playback watchdog;
+  both resume on wake.
 - No Plasma session = nothing runs the user's autostart items. `main()` calls
   `backend.runSessionStartupItems()` once per login (XDG_RUNTIME_DIR marker guards
   against re-running on watchdog respawn): it runs ONLY the user-editable

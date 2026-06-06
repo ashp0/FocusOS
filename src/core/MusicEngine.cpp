@@ -690,11 +690,17 @@ void MusicEngine::setSleeping(bool sleeping)
         // returns false, so the stall watchdog won't fight this and try to
         // re-kick playback while the machine is suspending.
         fadeTo(0.0, 600, true);
+        // Park the 4s stall watchdog too: playback can't stall while it's
+        // intentionally paused, so leaving the timer running would just wake the
+        // CPU every 4s behind the black idle screen — exactly the drain deep-idle
+        // sleep exists to avoid. It's re-armed on wake below.
+        m_playbackWatchdog.stop();
         return;
     }
 
     // Woke up: resume whatever the engaged state calls for (home idle volume, or
     // the routine's low/same level), unless music is disabled or has no tracks.
+    m_playbackWatchdog.start();
     if (m_enabled && available()) {
         applyEngagedState(2500);
     }

@@ -456,6 +456,9 @@ int main(int argc, char *argv[])
             // suspend is involved, so there's no black-screen-on-wake risk and any
             // input recovers it instantly via the deepIdle=false branch below.
             musicEngine.setSleeping(true);
+            // Stop FocusOS's own 30s status poll so the shell itself stops waking
+            // the CPU (and spawning pactl) while everything else is parked.
+            systemStatus.setLowPowerMode(true);
             backend.freezeBackgroundProcesses();
             backend.sleepDisplay();
             // Whole-machine suspend is opt-in (deep_sleep_suspend, default off):
@@ -466,10 +469,12 @@ int main(int argc, char *argv[])
                 QTimer::singleShot(700, &routineManager, [&backend] { backend.suspendSystem(); });
             }
         } else {
-            // Coming back: relight the panel, resume the frozen apps, restart music.
+            // Coming back: relight the panel, resume the frozen apps, restart music,
+            // and resume status polling (which reconciles the indicators on wake).
             backend.wakeDisplay();
             backend.thawBackgroundProcesses();
             musicEngine.setSleeping(false);
+            systemStatus.setLowPowerMode(false);
         }
     });
 

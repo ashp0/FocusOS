@@ -99,6 +99,10 @@ private:
     QList<qint64> m_frozenPids;
     QTimer m_lockdownTimer;
     bool m_lockdownActive = false;
+    // Counts lockdown-watchdog ticks. Used to force a full pkill sweep every Nth
+    // tick (a safety backstop) while the in-process comm pre-check skips the
+    // pkill fork+exec on the other ticks. See tickLockdownWatchdog.
+    int m_lockdownSweepCounter = 0;
     // Network-lock state, tracked so the watchdog can restore the routine
     // allowlist after an extension-disabled full-deny clamp.
     bool m_networkLockActive = false;

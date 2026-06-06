@@ -39,6 +39,14 @@ public:
     Q_INVOKABLE void setBrightness(int percent);
     Q_INVOKABLE void refresh();
 
+    // Quiesce background polling while the machine is in deep idle ("sleep"). The
+    // 30s status refresh otherwise keeps waking the CPU — and spawning pactl — even
+    // after deep-idle has parked every other process and turned the display off,
+    // which partly defeats the point of the sleep (and spins a sleeping laptop's /
+    // all-in-one's boot drive). main.cpp toggles this off IdleMonitor::deepIdle.
+    // Resuming forces an immediate refresh so the indicators are correct on wake.
+    void setLowPowerMode(bool enabled);
+
     // User session startup script (~/.focusos/startup.sh) — edited from the admin
     // Settings pane and run once per login by the platform backend. These let the
     // QML editor read/write the file without its own filesystem access.
@@ -79,6 +87,7 @@ private:
 
     QTimer m_statusTimer;
     QTimer m_volumeWriteThrottle;
+    bool m_lowPowerMode = false;
     bool m_elevatedLaunchEnabled = false;
     int m_pendingVolume = -1;
     int m_lastWrittenVolume = -1;
