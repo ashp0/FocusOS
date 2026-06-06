@@ -99,6 +99,18 @@ Each entry is a shell-quoted command string (`QProcess::splitCommand`). Dispatch
   with a forced full sweep every ~20 ticks as a backstop. See
   [docs/build-and-perf.md](docs/build-and-perf.md).
 - nftables blocking needs `CAP_NET_ADMIN`.
+- **Black screen / software-render fallback.** If the scene graph can't get a
+  usable GL/EGL context (a bare kwin_wayland session with a broken/missing GPU
+  stack), the window maps but every frame is just the `#050508` clear colour — an
+  all-black screen. `main()` arms a `~/.focusos/gpu-render-probe` marker before
+  show and clears it on the first painted frame (`frameSwapped`); a launch that
+  never renders leaves the marker behind, so the *next* launch auto-falls-back to
+  the Qt Quick software renderer (`QT_QUICK_BACKEND=software`). `FOCUSOS_SAFE_GRAPHICS=1`
+  forces it manually. In software mode the two procedural `ShaderEffect`s (starfield
+  + scanlines, gated on the `safeGraphics` context property) are skipped — the rest
+  of the UI renders on the CPU. `ShellWindow` logs `sceneGraphError`, QML load
+  errors, and the chosen `graphicsApi` to `~/.focusos/logs/focusos.log`, so a black
+  screen is diagnosable rather than silent.
 - Bare kwin_wayland session has no Plasma daemons: media keys need KGlobalAccel
   (KGlobalAccel is inert unless `kglobalacceld` runs, so `main()` starts it via
   `backend.ensureGlobalShortcutsDaemon()` before MediaKeys registers), audio needs

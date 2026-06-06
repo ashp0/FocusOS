@@ -1211,6 +1211,10 @@ Item {
     ShaderEffect {
         anchors.fill: parent
         z: 40
+        // Skipped under the software renderer (FOCUSOS_SAFE_GRAPHICS): the software
+        // backend can't run a fragment shader, so hide it rather than warn each
+        // frame. typeof-guarded so it stays valid if the flag isn't set.
+        visible: !((typeof safeGraphics !== 'undefined') && safeGraphics === true)
         opacity: 0.35
         blending: true
         layer.enabled: true

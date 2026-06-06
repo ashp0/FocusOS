@@ -23,8 +23,11 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QLockFile>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -348,6 +351,31 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
+    // Graphics safe mode. On a bare kwin_wayland session a missing or broken
+    // GL/EGL stack leaves the Qt Quick scene graph unable to render anything — the
+    // window still maps (so "FocusOS" shows in the compositor) but every frame is
+    // just the clear colour, i.e. an all-black screen. Forcing Qt Quick's software
+    // renderer draws the whole UI on the CPU and works on any setup (the decorative
+    // GPU starfield / scanline shaders are simply skipped).
+    //
+    // Two triggers: the explicit FOCUSOS_SAFE_GRAPHICS=1 escape hatch, and an
+    // automatic self-heal modelled on the crash-loop→Plasma fallback. We arm a
+    // "gpu-render-probe" marker just before showing the window and clear it on the
+    // first frame the GPU actually paints. If a launch goes black (no frame ever
+    // renders) the marker survives, and the NEXT launch sees it and falls back to
+    // software on its own — so a broken GPU costs at most one restart, not a brick.
+    // Must happen before QApplication constructs the platform integration; we never
+    // stomp an explicit QT_QUICK_BACKEND the user set themselves.
+    const QString gpuProbePath = AppPaths::filePath(QStringLiteral("gpu-render-probe"));
+    bool softwareGraphics = qEnvironmentVariableIsSet("FOCUSOS_SAFE_GRAPHICS");
+    const bool priorGpuRenderFailed = !softwareGraphics && QFileInfo::exists(gpuProbePath);
+    if (priorGpuRenderFailed) {
+        softwareGraphics = true;
+    }
+    if (softwareGraphics && !qEnvironmentVariableIsSet("QT_QUICK_BACKEND")) {
+        qputenv("QT_QUICK_BACKEND", QByteArrayLiteral("software"));
+    }
+
     QApplication app(argc, argv);
 
     // Tee every Qt log message to a rotating ~/.focusos/logs/focusos.log so a bare
@@ -556,6 +584,25 @@ int main(int argc, char *argv[])
                        &inspirationStore,
                        &updater,
                        &idleMonitor);
+
+    if (softwareGraphics) {
+        qInfo().noquote() << "FocusOS: software-render safe mode active"
+                          << (priorGpuRenderFailed
+                                  ? "(auto: previous GPU launch never rendered a frame; remove "
+                                    + gpuProbePath + " to retry the GPU path)"
+                                  : "(FOCUSOS_SAFE_GRAPHICS)");
+    } else {
+        // Arm the GPU-render probe and clear it on the first painted frame. A black
+        // launch leaves the marker behind, auto-tripping software mode next time.
+        QFile probe(gpuProbePath);
+        if (probe.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            probe.close();
+        }
+        QObject::connect(&window, &QQuickWindow::frameSwapped, &window, [gpuProbePath] {
+            QFile::remove(gpuProbePath);
+        }, Qt::SingleShotConnection);
+    }
+
     window.showFocusShell();
 
     // Launching FocusOS acts like a lock. Raise the locked home-screen posture

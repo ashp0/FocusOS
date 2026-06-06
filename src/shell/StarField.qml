@@ -74,15 +74,24 @@ Item {
     // Stop rendering when the app is unfocused/minimised, this layer is hidden
     // or transparent — so the screensaver burns nothing behind a focused routine
     // app or once the panel has been put to sleep.
-    property bool animationActive: (root.ignoreApplicationActive || Qt.application.active) &&
+    property bool animationActive: !root.safeGraphicsMode &&
+                                   (root.ignoreApplicationActive || Qt.application.active) &&
                                    root.visible &&
                                    root.opacity > 0.01 &&
                                    (Window.window ? Window.window.visibility !== Window.Minimized
                                                   && Window.window.visibility !== Window.Hidden : true)
 
+    // Software-render safe mode (FOCUSOS_SAFE_GRAPHICS): the Qt Quick software
+    // backend can't run a ShaderEffect at all, so the procedural starfield would
+    // just be skipped with a warning. Detect the safeGraphics context flag (guarded
+    // with typeof so this stays valid in any context that doesn't set it) and drop
+    // the shader entirely — the gradient backdrop shows through instead.
+    readonly property bool safeGraphicsMode: (typeof safeGraphics !== 'undefined') && safeGraphics === true
+
     ShaderEffect {
         id: sky
         anchors.fill: parent
+        visible: !root.safeGraphicsMode
         blending: true
 
         // Rasterise into a smaller FBO and bilinear-upscale to fill — this is

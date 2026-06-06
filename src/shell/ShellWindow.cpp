@@ -14,6 +14,8 @@
 #include <QGuiApplication>
 #include <QProcess>
 #include <QQmlContext>
+#include <QQmlError>
+#include <QSGRendererInterface>
 #include <QScreen>
 #include <QStandardPaths>
 #include <QSurfaceFormat>
@@ -37,7 +39,42 @@ ShellWindow::ShellWindow(RoutineManager *routineManager,
     setResizeMode(QQuickView::SizeRootObjectToView);
     setFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
 
+    // ── Black-screen diagnosis ──
+    // A bare kwin_wayland session can hand Qt a window surface (so the compositor
+    // lists "FocusOS") while failing to give the scene graph a usable GL/EGL
+    // context — every frame is then just the clear colour, i.e. an all-black
+    // screen with no error in front of the user. These hooks put the real reason
+    // in ~/.focusos/logs/focusos.log so a black screen is never a silent mystery.
+    connect(this, &QQuickWindow::sceneGraphError, this,
+            [](QQuickWindow::SceneGraphError error, const QString &message) {
+        qCritical("FocusOS scene-graph error (%d): %s — the screen will be black. "
+                  "Re-launch with FOCUSOS_SAFE_GRAPHICS=1 to force software rendering.",
+                  int(error), qUtf8Printable(message));
+    });
+    connect(this, &QQuickView::statusChanged, this, [this](QQuickView::Status status) {
+        if (status != QQuickView::Error) {
+            return;
+        }
+        const QList<QQmlError> loadErrors = errors();
+        for (const QQmlError &error : loadErrors) {
+            qCritical("FocusOS QML load error: %s", qUtf8Printable(error.toString()));
+        }
+    });
+    connect(this, &QQuickWindow::sceneGraphInitialized, this, [this] {
+        if (QSGRendererInterface *renderer = rendererInterface()) {
+            qInfo("FocusOS scene graph initialised (graphicsApi=%d) — rendering live.",
+                  int(renderer->graphicsApi()));
+        }
+    }, Qt::SingleShotConnection);
+
+    // Tell QML whether we're in software-render safe mode so the GPU-only
+    // procedural shaders (starfield / scanlines) can skip themselves cleanly
+    // rather than emit per-frame "unsupported" warnings. Set before the QML loads.
+    const bool safeGraphics = qEnvironmentVariableIsSet("FOCUSOS_SAFE_GRAPHICS");
+
     m_routineManager = routineManager;
+    rootContext()->setContextProperty(QStringLiteral("safeGraphics"), safeGraphics);
+    m_progressOverlayWindow.rootContext()->setContextProperty(QStringLiteral("safeGraphics"), safeGraphics);
 
     rootContext()->setContextProperty(QStringLiteral("routineManager"), routineManager);
     rootContext()->setContextProperty(QStringLiteral("notesStore"), notesStore);
