@@ -127,8 +127,12 @@ Item {
         // what is meant to be a power-saving screensaver. showMedia:false tears
         // the player down (see AmbientLayer).
         showMedia: !routineManager.active && !idleMonitor.idle
-        // Pausing a routine stills the wallpaper's fly-through (twinkle remains).
+        // Pausing a routine stills the wallpaper entirely (twinkle remains).
         paused: routineManager.paused
+        // During an active routine the user is engaged — run the full warp
+        // (zoom + rotation + twinkle). On the home screen they aren't exploring,
+        // so drop the zoom: the field just rotates and twinkles in place.
+        flyThrough: routineManager.active
     }
 
     Rectangle {
@@ -220,6 +224,9 @@ Item {
         // keeps the drifting motion from competing with on-screen text.
         starDensity: 0.5
         paused: routineManager.paused
+        // Match the backdrop: full warp during a routine, rotate + twinkle in
+        // place (no zoom) on the home screen.
+        flyThrough: routineManager.active
     }
 
     UnlockModal {

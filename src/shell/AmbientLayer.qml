@@ -24,6 +24,10 @@ Item {
     // Halt the starfield's fly-through motion (keep twinkle) while a routine is
     // paused — forwarded to the shared StarField.
     property bool paused: false
+    // Whether the starfield runs the forward fly-through ("zoom-in"). The home
+    // backdrop sets this false so the field rotates + twinkles in place without
+    // zooming (the user isn't exploring on the home screen); forwarded to StarField.
+    property bool flyThrough: true
     // Star-count multiplier passed to the shared StarField (the thin overlay
     // field over the panels runs at a lower density to save power).
     property real starDensity: 1
@@ -293,6 +297,7 @@ Item {
         fieldOpacity: root.starOpacityScale
         densityScale: root.starDensity
         paused: root.paused
+        flyThrough: root.flyThrough
     }
 
     Timer {

@@ -13,9 +13,14 @@ layout(location = 0) out vec4 fragColor;
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
-    float iTime;          // warp/motion clock — FROZEN by QML while paused
+    float iTime;          // fly-through/zoom clock — FROZEN by QML while paused AND
+                          // on the home screen (where we want rotation but no zoom)
     float twinkleTime;    // twinkle clock — keeps advancing even while paused, so
                           // a halted (paused) field still shimmers
+    float spinTime;       // rotation clock — independent of the fly-through. Advances
+                          // on the home screen (rotation, no zoom) and during the full
+                          // warp; FROZEN only when fully paused, so a paused field is
+                          // dead-still apart from the twinkle.
     vec2  iResolution;    // pixel size, used only for aspect correction (DPI-safe)
     float fieldOpacity;   // master brightness (dims the thin overlay field)
     float density;        // 0.04..1 — thins stars for the lighter overlay layer
@@ -73,9 +78,12 @@ void main() {
     vec2 uv = qt_TexCoord0 - 0.5;
     uv.x *= iResolution.x / max(1.0, iResolution.y);
 
-    // Slow rotation + lateral drift: the sense of travelling between galaxies.
-    float ca = cos(iTime * 0.008), sa = sin(iTime * 0.008);
+    // Slow rotation: the sense of slowly turning between galaxies. Driven by the
+    // independent spin clock so the home screen can rotate without the fly-through.
+    float ca = cos(spinTime * 0.008), sa = sin(spinTime * 0.008);
     uv = mat2(ca, -sa, sa, ca) * uv;
+    // Lateral drift rides the fly-through clock (part of the travelling motion), so
+    // it freezes with the zoom on the home screen and leaves pure rotation.
     uv += 0.05 * vec2(sin(iTime * 0.05), cos(iTime * 0.037));
 
     float t = iTime * 0.05;   // fly-through speed
