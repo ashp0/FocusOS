@@ -320,6 +320,10 @@ signals:
     void persistentKioskChanged();
     void displayStaysAwakeChanged();
     void screenLockedChanged();
+    // Emitted when the manual "Sleep" button blanks the display. main.cpp wires
+    // it to IdleMonitor::beginSleepGrace so an accidental cursor twitch (or the
+    // click-release itself) right after the press doesn't flick the panel back on.
+    void displaySleepRequested();
     void desktopAccessRequested();
     void routineSessionFinished(const QString &routineId,
                                 const QString &routineName,
@@ -386,10 +390,22 @@ private:
     // it's purely a work-mode signal (drives the pulsing/indeterminate overlay and
     // the twinkling background), since there's no logged time to actually hold.
     bool m_openEndedPaused = false;
+    // Open-ended momentum has no countdown timer, so a 1-second count-up timer
+    // tracks the continuation time instead. m_openEndedBaseSeconds is the time
+    // already logged by the original (expired) session; m_openEndedElapsedSeconds
+    // is what's been worked since "Continue". The displayed + logged total is the
+    // sum, so the full session time is recorded rather than just the first segment.
+    QTimer m_openEndedTimer;
+    int m_openEndedBaseSeconds = 0;
+    int m_openEndedElapsedSeconds = 0;
     // Smart pause (Task 4): true while the current pause is a manual pause (no
     // auto-resume). Meaningless when the timer isn't paused.
     bool m_manualPause = false;
     QString m_finishedRoutineId;
+    // The original session's start, captured when the finish prompt is raised so a
+    // "Continue" can re-open the SAME logged session (extending it) rather than
+    // starting a fresh, separately-counted record.
+    QDateTime m_finishedSessionStartedAt;
     // In-app screen lock (Task 6).
     bool m_screenLocked = false;
     int m_accessRemainingSeconds = 0;

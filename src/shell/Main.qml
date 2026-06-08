@@ -509,6 +509,9 @@ Item {
             statsStore.recordLastSessionReflection(reflectionField.text)
             statsStore.recordLastSessionFocusRating(focusRating)
             notesStore.recordSessionReflection(reflectionField.text)
+            // Mirror the rating into the mission-log note too, so the log shows the
+            // focus quality next to the written debrief.
+            notesStore.recordSessionFocusRating(focusRating)
             if (quitApps) {
                 routineManager.quitFinishedSession()
             } else {

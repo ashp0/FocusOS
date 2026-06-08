@@ -402,6 +402,28 @@ void StatsStore::recordRoutineSession(const QString &routineId,
     }
 
     session.minutes = displayMinutesForSeconds(session.seconds);
+
+    // Open-ended continuation: after a routine expires the user can "Continue"
+    // into indefinite momentum, then finish it. That finish re-fires with the
+    // SAME routine id + start and a LARGER total, so update the record already
+    // logged at expiry in place instead of appending a duplicate — otherwise the
+    // first segment would be counted twice and the log would show two rows for one
+    // unbroken session. (A coincidental same-routine/same-second collision between
+    // two genuinely different sessions is not possible — engages can't share a
+    // start instant — so matching on id + start is safe.)
+    for (int i = m_sessions.size() - 1; i >= 0; --i) {
+        RoutineSession &existing = m_sessions[i];
+        if (existing.routineId == session.routineId && existing.startedAt == session.startedAt) {
+            existing.seconds = qMax(sessionSeconds(existing), session.seconds);
+            existing.minutes = displayMinutesForSeconds(existing.seconds);
+            existing.endedAt = session.endedAt;
+            existing.result = session.result;
+            save();
+            emit statsChanged();
+            return;
+        }
+    }
+
     m_sessions.append(session);
     save();
     emit statsChanged();

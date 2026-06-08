@@ -383,10 +383,17 @@ void ShellWindow::setRootWindowBackground()
 
 void ShellWindow::updateProgressOverlay()
 {
-    const bool shouldShow = m_routineManager &&
-                            m_routineManager->active() &&
-                            (m_routineManager->overlayProgressEnabled() ||
-                             m_routineManager->pauseMode() == 2);
+    // Map the overlay for the WHOLE routine and never re-map mid-routine. Whether
+    // the border, the work-mode breathing or the manual-pause banner actually draw
+    // is decided inside ProgressOverlay.qml (off routineManager state) by opacity —
+    // the window stays a single mapped, input-transparent, click-through surface.
+    //
+    // This is deliberate: keying the *window* on overlayProgressEnabled / pauseMode
+    // (as before) re-mapped it every time those changed during a routine, and on
+    // KWin/Wayland re-mapping an already-mapped Tool window leaves the previous
+    // surface behind as a ghost — the "duplicate border" artifact. Tying map/unmap
+    // to the active edge alone keeps exactly one overlay surface on screen.
+    const bool shouldShow = m_routineManager && m_routineManager->active();
 
     if (shouldShow) {
         // Only (re)apply geometry + map the surface on the hidden→visible edge.

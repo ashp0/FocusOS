@@ -529,6 +529,19 @@ void MusicEngine::startPlayback(int fadeMs)
         m_currentSourceIndex = 0;
     }
 
+    // Re-acquire the current default sink before resuming. While music is paused —
+    // e.g. for the whole length of a "stop" routine — PipeWire/PulseAudio can
+    // idle-suspend the output, leaving QAudioOutput bound to a stale stream that
+    // plays silently. The stall watchdog can't fix this case because it bails when
+    // the player is already in PlayingState (which a silent-sink resume satisfies),
+    // so music would never come back on the home screen and toggling the button
+    // would have no effect. Forcing the device re-bind here un-suspends the sink.
+    // Re-bind first, then zero the volume so the fade below ramps up from silence
+    // rather than blipping at the device's default level the instant the stream
+    // re-acquires (setDevice can reset the output volume).
+    m_audioOutput.setDevice(QMediaDevices::defaultAudioOutput());
+    m_audioOutput.setVolume(0.0);
+
     if (m_player.source().isEmpty()) {
         playCurrentSource();
     }

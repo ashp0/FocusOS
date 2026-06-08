@@ -525,6 +525,15 @@ int main(int argc, char *argv[])
     QObject::connect(&idleMonitor, &IdleMonitor::lockIdle,
                      &routineManager, &RoutineManager::lockScreen);
 
+    // Manual "Sleep" button debounce: arm a short grace window when the panel is
+    // blanked, and during it re-issue the DPMS-off blank whenever input arrives
+    // (the compositor wakes DPMS on its own), so an accidental cursor twitch or
+    // the click-release itself doesn't flick the screen straight back on.
+    QObject::connect(&routineManager, &RoutineManager::displaySleepRequested,
+                     &idleMonitor, &IdleMonitor::beginSleepGrace);
+    QObject::connect(&idleMonitor, &IdleMonitor::reblankRequested,
+                     &routineManager, [&backend] { backend.sleepDisplay(); });
+
 #if defined(Q_OS_LINUX)
     // Power-key → screen lock (Task 6). logind is configured (90-focusos-logind
     // .conf) so HandlePowerKey=lock: instead of powering the machine off, the

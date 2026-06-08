@@ -278,7 +278,7 @@ Item {
         Item {
             visible: root.openEnded
             width: parent.width
-            height: 96
+            height: 150
 
             Text {
                 id: momentumLabel
@@ -291,6 +291,35 @@ Item {
                 font.letterSpacing: 6
             }
 
+            // Total time worked this session (the original timed segment PLUS this
+            // continuation) — so the indefinite mode still shows the full elapsed
+            // time, not just the part after the timer ran out.
+            Text {
+                id: momentumElapsed
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: momentumLabel.bottom
+                anchors.topMargin: 10
+                text: root.formatSecondsClock(routineManager.elapsedSeconds)
+                color: routineManager.paused ? Theme.goldDim : Theme.gold
+                font.family: root.headerFont
+                font.pixelSize: 52
+                font.letterSpacing: 2
+
+                Behavior on color { ColorAnimation { duration: 200 } }
+            }
+
+            Text {
+                id: momentumElapsedLabel
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: momentumElapsed.bottom
+                anchors.topMargin: 2
+                text: routineManager.paused ? "PAUSED  ■  ELAPSED" : "ELAPSED"
+                color: Theme.goldDim
+                font.family: root.headerFont
+                font.pixelSize: 11
+                font.letterSpacing: 4
+            }
+
             // Drifting flow band — a soft highlight that sweeps left→right
             // forever, the visual stand-in for "still moving forward".
             Rectangle {
@@ -299,7 +328,7 @@ Item {
                 anchors.right: parent.right
                 anchors.leftMargin: 20
                 anchors.rightMargin: 20
-                anchors.top: momentumLabel.bottom
+                anchors.top: momentumElapsedLabel.bottom
                 anchors.topMargin: 22
                 height: 2
                 color: Theme.textGhost
@@ -631,16 +660,27 @@ Item {
             // routine has its BROWSE MENU toggle on — the in-app folder browser
             // ("browse computer"). See ActivitiesPanel's bottom-right button.
             Rectangle {
+                // Open-ended momentum is finished deliberately, not bailed out of
+                // early — so the button reads "COMPLETE" and takes the calmer gold
+                // treatment there, while a timed routine keeps the crimson "END
+                // EARLY". Both raise the reflection/rating prompt (which also offers
+                // quit-or-continue, so an accidental tap is recoverable).
                 width: 160
                 height: 40
-                color: endHover.containsMouse ? Theme.crimsonHot : "#33141420"
+                color: endHover.containsMouse
+                       ? (root.openEnded ? Theme.steel : Theme.crimsonHot)
+                       : "#33141420"
                 border.width: 1
-                border.color: endHover.containsMouse ? Theme.gold : Theme.crimson
+                border.color: root.openEnded
+                              ? (endHover.containsMouse ? Theme.gold : Theme.goldDim)
+                              : (endHover.containsMouse ? Theme.gold : Theme.crimson)
 
                 Text {
                     anchors.centerIn: parent
-                    text: "⏹ END EARLY"
-                    color: endHover.containsMouse ? Theme.gold : Theme.crimson
+                    text: root.openEnded ? "✓ COMPLETE" : "⏹ END EARLY"
+                    color: root.openEnded
+                           ? Theme.gold
+                           : (endHover.containsMouse ? Theme.gold : Theme.crimson)
                     font.family: root.headerFont
                     font.pixelSize: 13
                     font.letterSpacing: 2

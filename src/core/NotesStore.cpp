@@ -248,6 +248,7 @@ QVariantList NotesStore::sessionHistory() const
         entry.insert(QStringLiteral("timeLabel"), note.endedAt.toLocalTime().toString(QStringLiteral("HH:mm")));
         entry.insert(QStringLiteral("minutes"), note.minutes);
         entry.insert(QStringLiteral("result"), note.result);
+        entry.insert(QStringLiteral("focusRating"), note.focusRating);
         entry.insert(QStringLiteral("hasNote"), !note.text.trimmed().isEmpty());
         const QString trimmed = note.text.trimmed();
         entry.insert(QStringLiteral("preview"), trimmed.left(140));
@@ -360,11 +361,17 @@ QVariantList NotesStore::timelineForDate(const QString &date) const
         entry.insert(QStringLiteral("timeLabel"), QStringLiteral("%1-%2")
                                                   .arg(started.toString(QStringLiteral("HH:mm")),
                                                        ended.toString(QStringLiteral("HH:mm"))));
-        entry.insert(QStringLiteral("detail"), QStringLiteral("%1M  ■  %2")
-                                               .arg(QString::number(qMax(0, note.minutes)),
-                                                    note.result.toUpper()));
+        entry.insert(QStringLiteral("detail"), note.focusRating > 0
+                         ? QStringLiteral("%1M  ■  %2  ■  FOCUS %3/5")
+                               .arg(QString::number(qMax(0, note.minutes)),
+                                    note.result.toUpper(),
+                                    QString::number(note.focusRating))
+                         : QStringLiteral("%1M  ■  %2")
+                               .arg(QString::number(qMax(0, note.minutes)),
+                                    note.result.toUpper()));
         entry.insert(QStringLiteral("minutes"), qMax(0, note.minutes));
         entry.insert(QStringLiteral("result"), note.result);
+        entry.insert(QStringLiteral("focusRating"), note.focusRating);
         entry.insert(QStringLiteral("noteText"), note.text.trimmed());
         entry.insert(QStringLiteral("hasNote"), !note.text.trimmed().isEmpty());
         entry.insert(QStringLiteral("sortKey"), started.isValid() ? started.toMSecsSinceEpoch() : ended.toMSecsSinceEpoch());
@@ -412,6 +419,7 @@ QVariantMap NotesStore::sessionNote(const QString &sessionId) const
         entry.insert(QStringLiteral("endedAt"), note.endedAt.toLocalTime().toString(Qt::ISODate));
         entry.insert(QStringLiteral("minutes"), note.minutes);
         entry.insert(QStringLiteral("result"), note.result);
+        entry.insert(QStringLiteral("focusRating"), note.focusRating);
         entry.insert(QStringLiteral("text"), note.text);
         return entry;
     }
@@ -472,6 +480,7 @@ QVariantList NotesStore::searchNotes(const QString &query) const
         entry.insert(QStringLiteral("timeLabel"), note.endedAt.toLocalTime().toString(QStringLiteral("HH:mm")));
         entry.insert(QStringLiteral("minutes"), note.minutes);
         entry.insert(QStringLiteral("result"), note.result);
+        entry.insert(QStringLiteral("focusRating"), note.focusRating);
         entry.insert(QStringLiteral("hasNote"), !note.text.trimmed().isEmpty());
         entry.insert(QStringLiteral("snippet"), plainFromMarked(marked));
         entry.insert(QStringLiteral("snippetHtml"), htmlFromMarked(marked));
@@ -522,6 +531,22 @@ bool NotesStore::recordSessionReflection(const QString &reflection)
     return true;
 }
 
+bool NotesStore::recordSessionFocusRating(int rating)
+{
+    if (m_archive.isEmpty()) {
+        return false;
+    }
+    const int clamped = qBound(0, rating, 5);
+    SessionNote &note = m_archive.last();
+    if (note.focusRating == clamped) {
+        return false;
+    }
+    note.focusRating = clamped;
+    writeSessionFile(note);
+    emit archiveChanged();
+    return true;
+}
+
 void NotesStore::onRoutineEngaged(const QString &routineId, const QString &routineName)
 {
     m_draftRoutineId = routineId;
@@ -542,13 +567,50 @@ void NotesStore::onRoutineSessionFinished(const QString &routineId,
                                           const QDateTime &startedAt,
                                           const QDateTime &endedAt)
 {
+    const QDateTime startedLocal = startedAt.isValid()
+                                       ? startedAt.toLocalTime()
+                                       : (m_draftStartedAt.isValid() ? m_draftStartedAt : QDateTime::currentDateTime());
+    const QDateTime endedLocal = endedAt.isValid() ? endedAt.toLocalTime() : QDateTime::currentDateTime();
+
+    // Open-ended continuation: the same logical session (same routine + start) is
+    // finalized again after a "Continue", with a larger total. Fold it into the
+    // note already archived at expiry — extend its time, append any new debrief
+    // text typed during the continuation — instead of writing a second note for
+    // one unbroken session.
+    if (!m_archive.isEmpty()) {
+        SessionNote &existing = m_archive.last();
+        if (existing.routineId == routineId && existing.startedAt == startedLocal) {
+            existing.minutes = qMax(existing.minutes, qMax(0, minutes));
+            existing.endedAt = endedLocal;
+            existing.result = result;
+            const QString addition = m_text.trimmed();
+            if (!addition.isEmpty()) {
+                const QString prior = existing.text.trimmed();
+                existing.text = prior.isEmpty() ? addition
+                                                : prior + QStringLiteral("\n\n") + addition;
+            }
+            writeSessionFile(existing);
+
+            m_text.clear();
+            m_draftRoutineId.clear();
+            m_draftRoutineName.clear();
+            m_draftStartedAt = {};
+            saveDraft();
+
+            emit textChanged();
+            emit draftChanged();
+            emit archiveChanged();
+            return;
+        }
+    }
+
     SessionNote note;
     note.routineId = routineId;
     note.routineName = routineName;
     note.minutes = qMax(0, minutes);
     note.result = result;
-    note.startedAt = startedAt.isValid() ? startedAt.toLocalTime() : (m_draftStartedAt.isValid() ? m_draftStartedAt : QDateTime::currentDateTime());
-    note.endedAt = endedAt.isValid() ? endedAt.toLocalTime() : QDateTime::currentDateTime();
+    note.startedAt = startedLocal;
+    note.endedAt = endedLocal;
     note.sessionId = sessionIdFromTimestamp(note.endedAt) + QStringLiteral("-") + safeSlug(routineName);
     note.text = m_text;
 
@@ -691,6 +753,7 @@ void NotesStore::loadArchive()
             note.minutes = object.value(QStringLiteral("minutes")).toInt();
             note.result = object.value(QStringLiteral("result")).toString();
             note.text = object.value(QStringLiteral("text")).toString();
+            note.focusRating = qBound(0, object.value(QStringLiteral("focus_rating")).toInt(), 5);
             if (note.sessionId.isEmpty()) {
                 note.sessionId = fileInfo.completeBaseName();
             }
@@ -729,6 +792,9 @@ void NotesStore::writeSessionFile(const SessionNote &note) const
     root.insert(QStringLiteral("minutes"), note.minutes);
     root.insert(QStringLiteral("result"), note.result);
     root.insert(QStringLiteral("text"), note.text);
+    if (note.focusRating > 0) {
+        root.insert(QStringLiteral("focus_rating"), note.focusRating);
+    }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     file.commit();
 
@@ -742,7 +808,11 @@ void NotesStore::writeSessionFile(const SessionNote &note) const
         stream << "- started: " << note.startedAt.toString(Qt::ISODate) << "\n";
         stream << "- ended:   " << note.endedAt.toString(Qt::ISODate) << "\n";
         stream << "- minutes: " << note.minutes << "\n";
-        stream << "- result:  " << note.result << "\n\n";
+        stream << "- result:  " << note.result << "\n";
+        if (note.focusRating > 0) {
+            stream << "- focus:   " << note.focusRating << "/5\n";
+        }
+        stream << "\n";
         stream << note.text << "\n";
         mdFile.commit();
     }

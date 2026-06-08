@@ -17,6 +17,10 @@ struct SessionNote
     int minutes = 0;
     QString result;
     QString text;
+    // 1–5 self-assessment of how focused the run felt (0 = not rated), mirrored
+    // from the MISSION COMPLETE prompt so the mission log can show it next to the
+    // written debrief. Persisted alongside the note.
+    int focusRating = 0;
 };
 
 class NotesStore final : public QObject
@@ -50,6 +54,9 @@ public:
     Q_INVOKABLE QVariantList searchNotes(const QString &query) const;
     Q_INVOKABLE bool updateSessionNote(const QString &sessionId, const QString &text);
     Q_INVOKABLE bool recordSessionReflection(const QString &reflection);
+    // Fold the MISSION COMPLETE focus-quality rating (1–5; 0 clears) into the most
+    // recent archived session note, so the mission log shows it beside the debrief.
+    Q_INVOKABLE bool recordSessionFocusRating(int rating);
     Q_INVOKABLE QString combinedNotesForDate(const QString &date) const;
     Q_INVOKABLE QVariantMap timelineSummaryForDate(const QString &date) const;
     Q_INVOKABLE QVariantList timelineForDate(const QString &date) const;

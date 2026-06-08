@@ -303,6 +303,19 @@ RoutineManager::RoutineManager(PlatformBackend *backend, QObject *parent)
     m_accessTimer.setInterval(1000);
     connect(&m_accessTimer, &QTimer::timeout, this, &RoutineManager::tickOtherAccess);
 
+    // Open-ended momentum count-up: ticks once a second while a continuation is
+    // running and not paused, so the displayed elapsed (and the final logged time)
+    // reflects the FULL time worked, not just the original timed segment.
+    m_openEndedTimer.setInterval(1000);
+    connect(&m_openEndedTimer, &QTimer::timeout, this, [this] {
+        if (!m_openEnded || m_openEndedPaused) {
+            return;
+        }
+        ++m_openEndedElapsedSeconds;
+        // Refreshes elapsedSeconds() in the UI (MissionView's open-ended readout).
+        emit remainingSecondsChanged();
+    });
+
     // Unlock-panel inactivity auto-lock: 30 minutes with no input revokes
     // access and re-locks settings (finishOtherAccess re-locks the modal).
     m_inactivityTimer.setSingleShot(true);
@@ -513,6 +526,11 @@ int RoutineManager::remainingSeconds() const
 
 int RoutineManager::elapsedSeconds() const
 {
+    // Open-ended continuation has no countdown: report the full time worked
+    // (original timed segment + this continuation) so the UI shows the real total.
+    if (m_openEnded) {
+        return m_openEndedBaseSeconds + m_openEndedElapsedSeconds;
+    }
     return qMax(0, activeRoutineTotalSeconds() - m_routineTimer.remainingSeconds());
 }
 
@@ -552,6 +570,9 @@ void RoutineManager::sleepDisplay()
     if (m_backend) {
         m_backend->sleepDisplay();
     }
+    // Arm the idle monitor's debounce so the immediate cursor twitch / click
+    // release doesn't bounce the panel straight back on (see IdleMonitor).
+    emit displaySleepRequested();
 }
 
 void RoutineManager::handlePrepareForSleep(bool aboutToSleep)
@@ -885,21 +906,46 @@ void RoutineManager::endActiveRoutine()
         return;
     }
 
-    // Open-ended momentum (Task 5): no min-time floor, no extra record (the
-    // session was logged at expiry). Just stand down to the console.
+    // Open-ended momentum (Task 5): "Complete/Finish" deliberately ends the
+    // continuation. No min-time floor. Finalize the FULL session time (the original
+    // timed segment + everything worked since "Continue") by updating the record
+    // logged at expiry — so the log shows the real time worked, not just the first
+    // hour — then raise the usual reflection/rating prompt (which also offers
+    // quit-or-continue, so an accidental tap can be undone by continuing again).
     if (m_openEnded) {
-        m_openEnded = false;
-        const bool wasPaused = m_openEndedPaused;
-        m_openEndedPaused = false;
-        m_manualPause = false;
-        m_activeRoutineId.clear();
-        m_activeStartedAt = {};
+        const int routineIndex = indexOfRoutine(m_activeRoutineId);
+        const int totalSeconds = m_openEndedBaseSeconds + m_openEndedElapsedSeconds;
+        const int totalMinutes = totalSeconds <= 0 ? 0 : (totalSeconds + 59) / 60;
+
+        m_openEndedTimer.stop();
         if (m_backend) {
             // Open-ended momentum carried the lockdown sweep over from the
             // original routine; stand it down now so launchers work at home.
             m_backend->endRoutineLockdown();
             m_backend->restoreShellPlacement();
         }
+
+        if (routineIndex >= 0) {
+            const Routine &routine = m_routines.at(routineIndex);
+            emit routineSessionFinished(routine.id,
+                                        routine.name,
+                                        totalMinutes,
+                                        QStringLiteral("completed"),
+                                        m_activeStartedAt,
+                                        QDateTime::currentDateTimeUtc());
+            // Captures m_finishedSessionStartedAt = m_activeStartedAt while it's
+            // still valid, so a further "Continue" keeps extending this session.
+            setFinishedSessionPrompt(routine, totalMinutes, QStringLiteral("completed"));
+        }
+
+        const bool wasPaused = m_openEndedPaused;
+        m_openEnded = false;
+        m_openEndedPaused = false;
+        m_manualPause = false;
+        m_openEndedBaseSeconds = 0;
+        m_openEndedElapsedSeconds = 0;
+        m_activeRoutineId.clear();
+        m_activeStartedAt = {};
         updateDisplaySleepInhibit();
         if (wasPaused) {
             emit pausedChanged();
@@ -1172,15 +1218,24 @@ void RoutineManager::unlockOtherAccess()
         // TOTP unlock past the min-time floor counts as a legitimate end —
         // retire the checkpoint so the respawn watchdog releases.
         clearActiveSession();
-        // Open-ended momentum was already recorded at expiry; don't write a
-        // phantom "unlocked" record for it (its timer reads remaining=0).
-        const int routineIndex = m_openEnded ? -1 : indexOfRoutine(m_activeRoutineId);
+        const bool wasOpenEnded = m_openEnded;
+        const int routineIndex = indexOfRoutine(m_activeRoutineId);
         m_openEnded = false;
+        m_openEndedTimer.stop();
         if (routineIndex >= 0) {
             const Routine &routine = m_routines.at(routineIndex);
-            const int elapsedSeconds = qMax(0, routine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
-            const int elapsedMinutes = elapsedSeconds <= 0 ? 0 : (elapsedSeconds + 59) / 60;
-            emitActiveSessionProgress();
+            int elapsedMinutes;
+            if (wasOpenEnded) {
+                // Record the FULL continuation time (original + momentum) so a TOTP
+                // exit doesn't lose what was worked after "Continue". This extends
+                // the record already logged at expiry rather than duplicating it.
+                const int totalSeconds = m_openEndedBaseSeconds + m_openEndedElapsedSeconds;
+                elapsedMinutes = totalSeconds <= 0 ? 0 : (totalSeconds + 59) / 60;
+            } else {
+                const int elapsedSeconds = qMax(0, routine.timeLimitMinutes * 60 - m_routineTimer.remainingSeconds());
+                elapsedMinutes = elapsedSeconds <= 0 ? 0 : (elapsedSeconds + 59) / 60;
+                emitActiveSessionProgress();
+            }
             emit routineSessionFinished(routine.id,
                                         routine.name,
                                         elapsedMinutes,
@@ -1188,6 +1243,8 @@ void RoutineManager::unlockOtherAccess()
                                         m_activeStartedAt,
                                         QDateTime::currentDateTimeUtc());
         }
+        m_openEndedBaseSeconds = 0;
+        m_openEndedElapsedSeconds = 0;
         // Clear active state BEFORE stopping the timer — stop emits
         // remainingSecondsChanged, and our handler would otherwise treat
         // remaining=0 as a full elapsed session and write a phantom record.
@@ -1347,6 +1404,12 @@ void RoutineManager::continueFinishedSession()
     // carry over (the completed session was recorded at expiry). END EARLY
     // leaves this state.
     const QString routineId = m_finishedRoutineId;
+    // Capture the original session's time/start before the prompt state is cleared
+    // so the continuation extends the SAME logged record instead of starting a
+    // separate one (which is how the first segment's time used to be the only thing
+    // recorded).
+    const int baseMinutes = m_finishedSessionMinutes;
+    const QDateTime originalStart = m_finishedSessionStartedAt;
     clearFinishedSessionPrompt();
 
     if (routineId.isEmpty() || active() || accessGranted()) {
@@ -1359,12 +1422,18 @@ void RoutineManager::continueFinishedSession()
     m_openEnded = true;
     m_openEndedPaused = false;
     m_manualPause = false;
+    m_openEndedBaseSeconds = qMax(0, baseMinutes) * 60;
+    m_openEndedElapsedSeconds = 0;
     m_activeRoutineId = routineId;
-    m_activeStartedAt = QDateTime::currentDateTimeUtc();
+    // Reuse the original start so finishing the continuation extends that session's
+    // record rather than forking a new one.
+    m_activeStartedAt = originalStart.isValid() ? originalStart : QDateTime::currentDateTimeUtc();
+    m_openEndedTimer.start();
     // No checkpoint / respawn watchdog: open-ended momentum is not a strict
     // routine, so a crash simply returns to the console rather than re-locking.
     updateDisplaySleepInhibit();
     emit activeChanged();
+    emit remainingSecondsChanged();
     emitRowsChanged();
 }
 
@@ -2358,6 +2427,8 @@ void RoutineManager::setFinishedSessionPrompt(const Routine &routine, int minute
     m_finishedSessionName = routine.name;
     m_finishedSessionMinutes = qMax(0, minutes);
     m_finishedSessionResult = result;
+    // Snapshot the session's start so a "Continue" can extend this exact record.
+    m_finishedSessionStartedAt = m_activeStartedAt;
     m_finishedSessionApps = routine.apps;
     m_finishedSessionUrls = routine.allowedUrls;
     emit sessionPromptChanged();

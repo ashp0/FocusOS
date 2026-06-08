@@ -172,6 +172,66 @@ private slots:
         QCOMPARE(hits.first().toMap().value(QStringLiteral("dateGroup")).toString(),
                  QStringLiteral("TODAY"));
     }
+
+    // The MISSION COMPLETE focus rating is folded into the most recent note and
+    // surfaces in the history rows (and survives a reload), so the mission log can
+    // show it next to the debrief.
+    void focusRatingFoldsIntoNoteAndPersists()
+    {
+        QTemporaryDir home;
+        QVERIFY(home.isValid());
+        qputenv("HOME", home.path().toLocal8Bit());
+
+        const QDateTime base = QDateTime(QDate(2026, 6, 1), QTime(9, 0));
+        {
+            NotesStore store;
+            logSession(store, "r1", "Deep Work", "shipped the parser fix",
+                       45, "completed", base, base.addSecs(45 * 60));
+            QVERIFY(store.recordSessionFocusRating(4));
+            QCOMPARE(store.sessionHistory().first().toMap()
+                         .value(QStringLiteral("focusRating")).toInt(), 4);
+        }
+
+        NotesStore reopened;
+        QCOMPARE(reopened.sessionHistory().first().toMap()
+                     .value(QStringLiteral("focusRating")).toInt(), 4);
+    }
+
+    // Open-ended "Continue": finishing the continuation re-fires
+    // onRoutineSessionFinished with the SAME routine id + start and a larger total.
+    // That must extend the original note (more minutes, appended debrief) — one
+    // mission-log entry for one unbroken session, not two.
+    void openEndedContinuationExtendsNote()
+    {
+        QTemporaryDir home;
+        QVERIFY(home.isValid());
+        qputenv("HOME", home.path().toLocal8Bit());
+
+        NotesStore store;
+        const QDateTime started = QDateTime(QDate(2026, 6, 2), QTime(8, 0));
+
+        // Original 60-minute session, archived at expiry with its in-session notes.
+        store.onRoutineEngaged("deep", "Deep Work");
+        store.setText("first hour notes");
+        store.onRoutineSessionFinished("deep", "Deep Work", 60, "completed",
+                                       started, started.addSecs(60 * 60));
+        QCOMPARE(store.sessionHistory().size(), 1);
+
+        // Continuation: fresh draft for the same routine, then finish with the full
+        // 90-minute total and the original start.
+        store.onRoutineEngaged("deep", "Deep Work");
+        store.setText("continuation notes");
+        store.onRoutineSessionFinished("deep", "Deep Work", 90, "completed",
+                                       started, started.addSecs(90 * 60));
+
+        const QVariantList rows = store.sessionHistory();
+        QCOMPARE(rows.size(), 1);
+        const QVariantMap row = rows.first().toMap();
+        QCOMPARE(row.value(QStringLiteral("minutes")).toInt(), 90);
+        const QString text = store.sessionNoteText(row.value(QStringLiteral("sessionId")).toString());
+        QVERIFY(text.contains(QStringLiteral("first hour notes")));
+        QVERIFY(text.contains(QStringLiteral("continuation notes")));
+    }
 };
 
 QTEST_GUILESS_MAIN(NotesTests)

@@ -20,6 +20,10 @@ IdleMonitor::IdleMonitor(QObject *parent)
     m_lockTimer.setInterval(m_lockTimeoutMs);
     connect(&m_lockTimer, &QTimer::timeout, this, &IdleMonitor::goLockIdle);
 
+    m_sleepGraceTimer.setSingleShot(true);
+    m_sleepGraceTimer.setInterval(kSleepGraceMs);
+    connect(&m_sleepGraceTimer, &QTimer::timeout, this, &IdleMonitor::endSleepGrace);
+
     if (qApp) {
         qApp->installEventFilter(this);
     }
@@ -65,6 +69,28 @@ void IdleMonitor::wake()
     noteActivity();
 }
 
+void IdleMonitor::beginSleepGrace()
+{
+    m_inSleepGrace = true;
+    m_reblankThrottle.invalidate();
+    m_sleepGraceTimer.start();
+}
+
+void IdleMonitor::endSleepGrace()
+{
+    m_sleepGraceTimer.stop();
+    m_inSleepGrace = false;
+}
+
+void IdleMonitor::requestReblank()
+{
+    if (m_reblankThrottle.isValid() && m_reblankThrottle.elapsed() < kReblankThrottleMs) {
+        return;
+    }
+    m_reblankThrottle.restart();
+    emit reblankRequested();
+}
+
 void IdleMonitor::setSuppressed(bool suppressed)
 {
     if (m_suppressed == suppressed) {
@@ -84,6 +110,30 @@ void IdleMonitor::setSuppressed(bool suppressed)
 
 bool IdleMonitor::eventFilter(QObject *watched, QEvent *event)
 {
+    if (m_inSleepGrace) {
+        switch (event->type()) {
+        case QEvent::MouseMove:
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+        case QEvent::Wheel:
+        case QEvent::TabletMove:
+            // The compositor already woke DPMS on this input; swallow it and
+            // re-blank so an accidental twitch / the click-release doesn't bounce
+            // the panel back on. Not counted as activity.
+            requestReblank();
+            return true;
+        case QEvent::KeyPress:
+        case QEvent::KeyRelease:
+        case QEvent::TouchBegin:
+            // A deliberate keypress / tap means the user really wants the screen:
+            // end the grace early and fall through to normal wake handling.
+            endSleepGrace();
+            break;
+        default:
+            break;
+        }
+    }
+
     switch (event->type()) {
     case QEvent::KeyPress:
     case QEvent::KeyRelease:

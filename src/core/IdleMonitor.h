@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QPointF>
 #include <Qt>
@@ -37,6 +38,14 @@ public:
     // Force-clear the idle state (e.g. the idle overlay swallowing the first tap).
     Q_INVOKABLE void wake();
 
+    // Debounce a manual "Sleep" press. The compositor wakes DPMS on the very next
+    // input, so the click-release or a stray cursor twitch right after the press
+    // would flick the freshly-blanked panel back on. For a short grace window after
+    // this is called, mouse input is swallowed and the panel is re-blanked
+    // (reblankRequested) instead of waking; a deliberate keypress/tap ends the
+    // window early and wakes normally. Wired to RoutineManager::displaySleepRequested.
+    void beginSleepGrace();
+
     bool suppressed() const { return m_suppressed; }
     // Suppress idle DETECTION (the starfield screensaver + display-sleep-on-idle)
     // while a routine is engaged: a focused user sitting idle is working, not
@@ -65,9 +74,16 @@ signals:
     // lock so a machine left untended long-term ends up locked, not merely dark.
     // Like the other stages it never fires while suppressed (a routine engaged).
     void lockIdle();
+    // Emitted during the manual-sleep grace window when input arrives that the
+    // compositor will have used to wake DPMS; main.cpp re-issues the panel blank.
+    void reblankRequested();
 
 private:
     void noteActivity();
+    // Re-blank the panel during the grace window, throttled so a continuously
+    // moving cursor doesn't spawn a storm of kscreen-doctor/xset processes.
+    void requestReblank();
+    void endSleepGrace();
     void goIdle();
     void goDeepIdle();
     void goLockIdle();
@@ -93,4 +109,11 @@ private:
     QTimer m_timer;
     QTimer m_deepTimer;
     QTimer m_lockTimer;
+    // Manual-sleep debounce: true for kSleepGraceMs after the Sleep button blanks
+    // the panel. m_reblankThrottle rate-limits the re-blank to one per ~400ms.
+    bool m_inSleepGrace = false;
+    QTimer m_sleepGraceTimer;
+    QElapsedTimer m_reblankThrottle;
+    static constexpr int kSleepGraceMs = 4000;
+    static constexpr qint64 kReblankThrottleMs = 400;
 };

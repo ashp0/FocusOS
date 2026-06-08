@@ -96,16 +96,20 @@ Item {
         onTriggered: root.pulsePhase += Math.PI / 10
     }
 
-    // Always-visible faint perimeter track. Without it the only thing drawn is the
-    // progress fill below, whose length is proportional to elapsed time — so the
-    // border was a near-invisible sliver early in a routine, and entirely invisible
-    // for open-ended momentum (which has no total, hence progressValue === 0). The
-    // track makes the global indicator visible the instant a routine is live, on
-    // every Space; the bright fill grows over it as the countdown advances.
-    property real trackWidth: 5
-    property real trackOpacity: 0.34
+    // The border is exactly two layers, both drawn ONCE around the perimeter (no
+    // stacking, no per-corner duplicates — the four-corner fill used to read as a
+    // doubled border on the Linux/Wayland overlay):
+    //   1. a thin, slightly-transparent yellow border all the way around — the
+    //      always-present track that shows the indicator is live; and
+    //   2. a thicker, more-opaque yellow border that fills in CLOCKWISE from the
+    //      top-left, its length proportional to elapsed time.
+    // In open-ended momentum there's no total, so layer 2 is hidden and the thin
+    // border just breathes; while paused both go quiet and the sweep below takes
+    // over.
+    property real trackWidth: 3
+    property real trackOpacity: 0.3
 
-    // Mode-resolved perimeter look, shared by all four edge tracks:
+    // Mode-resolved look for the thin perimeter, shared by all four edges:
     //  • work mode  → breathing opacity + cycling yellow shades
     //  • paused     → flashing (indeterminate "unpause me" pulse)
     //  • countdown  → the steady faint track
@@ -115,6 +119,18 @@ Item {
                                     : (root.workMode ? root.workOpacity
                                        : (root.pausedMode ? root.pausedFlash : root.trackOpacity))
 
+    // The thicker progress border is a single clockwise trace, so its length is
+    // distributed around the perimeter (top → right → bottom → left) rather than
+    // grown from all four corners at once. Only shown for a real countdown.
+    property bool showProgressFill: root.live && !root.pausedMode && !root.workMode
+                                    && root.progressValue > 0
+    readonly property real perimeter: 2 * (width + height)
+    readonly property real filledLength: root.progressValue * perimeter
+    function segment(consumedBefore, edgeLength) {
+        return Math.max(0, Math.min(edgeLength, root.filledLength - consumedBefore))
+    }
+
+    // ── Layer 1: the thin border, all four edges ──
     Rectangle {
         anchors.top: parent.top
         anchors.left: parent.left
@@ -148,40 +164,42 @@ Item {
         opacity: root.trackDrawOpacity
     }
 
+    // ── Layer 2: the thicker progress border, traced clockwise ──
+    // Top edge, left → right.
     Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
-        width: root.barWidth
-        height: parent.height * root.progressValue
-        color: root.trackColor
-        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
+        width: root.segment(0, parent.width)
+        height: root.barWidth
+        color: "#E8A020"
+        opacity: root.showProgressFill ? root.barOpacity : 0
     }
-
+    // Right edge, top → bottom.
     Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
-        width: parent.width * root.progressValue
-        height: root.barWidth
-        color: root.trackColor
-        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
+        width: root.barWidth
+        height: root.segment(parent.width, parent.height)
+        color: "#E8A020"
+        opacity: root.showProgressFill ? root.barOpacity : 0
     }
-
+    // Bottom edge, right → left.
     Rectangle {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        width: root.barWidth
-        height: parent.height * root.progressValue
-        color: root.trackColor
-        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
+        width: root.segment(parent.width + parent.height, parent.width)
+        height: root.barWidth
+        color: "#E8A020"
+        opacity: root.showProgressFill ? root.barOpacity : 0
     }
-
+    // Left edge, bottom → top.
     Rectangle {
         anchors.left: parent.left
         anchors.bottom: parent.bottom
-        width: parent.width * root.progressValue
-        height: root.barWidth
-        color: root.trackColor
-        opacity: (root.live && !root.pausedMode) ? root.barOpacity : 0
+        width: root.barWidth
+        height: root.segment(2 * parent.width + parent.height, parent.height)
+        color: "#E8A020"
+        opacity: root.showProgressFill ? root.barOpacity : 0
     }
 
     // Indeterminate "loading" sweep while paused. A bright segment tracks back

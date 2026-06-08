@@ -218,6 +218,9 @@ Item {
         }
         parts.push((data.minutes || 0) + "M")
         parts.push(String(data.result).toUpperCase())
+        if (data.focusRating > 0) {
+            parts.push("★ " + data.focusRating + "/5")
+        }
         return parts.join("  ■  ")
     }
 
@@ -1669,6 +1672,7 @@ Item {
                                     anchors.bottomMargin: 8
                                     elide: Text.ElideRight
                                     text: modelData.timeLabel + "  ■  " + String(modelData.result).toUpperCase()
+                                          + ((modelData.focusRating > 0) ? "  ■  ★ " + modelData.focusRating + "/5" : "")
                                           + (modelData.hasNote ? "  ■  ✎ NOTE" : "")
                                     color: Theme.textDim
                                     font.family: root.bodyFont

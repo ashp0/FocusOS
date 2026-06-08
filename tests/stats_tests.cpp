@@ -137,6 +137,46 @@ private slots:
         reopened.noteDistractionBlocked();
         QCOMPARE(reopened.totalDistractionsBlocked(), 4);
     }
+
+    // Open-ended "Continue": after a routine expires and is logged, finishing the
+    // continuation re-fires recordRoutineSession with the SAME routine id + start
+    // and a larger total. That must EXTEND the existing record (the full time
+    // worked), never append a second one — otherwise the first segment is counted
+    // twice and the log shows the session split in two.
+    void openEndedContinuationExtendsRecord()
+    {
+        QTemporaryDir home;
+        QVERIFY(home.isValid());
+        qputenv("HOME", home.path().toLocal8Bit());
+
+        const QDateTime started = dayAt(0, 9);
+
+        StatsStore store;
+        // Original 60-minute session, logged at expiry.
+        store.recordRoutineSession("deep", "Deep Work", 60, "completed",
+                                   started, started.addSecs(60 * 60));
+        QCOMPARE(store.totalSessions(), 1);
+        QCOMPARE(store.totalFocusMinutes(), 60);
+
+        // Finish the continuation: same id + start, 90-minute total (the user
+        // worked another half hour). One record, full time, no duplicate.
+        store.recordRoutineSession("deep", "Deep Work", 90, "completed",
+                                   started, started.addSecs(90 * 60));
+        QCOMPARE(store.totalSessions(), 1);
+        QCOMPARE(store.totalFocusMinutes(), 90);
+        QCOMPARE(store.todayFocusMinutes(), 90);
+
+        // A genuinely different session (distinct start) still appends normally.
+        store.recordRoutineSession("deep", "Deep Work", 15, "completed",
+                                   dayAt(0, 14), dayAt(0, 14).addSecs(15 * 60));
+        QCOMPARE(store.totalSessions(), 2);
+        QCOMPARE(store.totalFocusMinutes(), 105);
+
+        // And the extension survives a reload.
+        StatsStore reopened;
+        QCOMPARE(reopened.totalSessions(), 2);
+        QCOMPARE(reopened.totalFocusMinutes(), 105);
+    }
 };
 
 QTEST_GUILESS_MAIN(StatsTests)
